@@ -17,6 +17,7 @@ const { app, BrowserWindow, ipcMain, safeStorage, shell, Notification } = requir
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const os = require('os');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 
@@ -135,7 +136,7 @@ function writeBoards(boards) {
   const clean = boards.map((b) => ({
     id: String(b.id || ''), name: String(b.name || ''), emoji: String(b.emoji || '📁'),
     desc: String(b.desc || ''), skillIds: Array.isArray(b.skillIds) ? b.skillIds : [],
-    defaultEngine: String(b.defaultEngine || ''), color: String(b.color || '#2a746c'),
+    defaultEngine: String(b.defaultEngine || ''), color: String(b.color || '#7c6fd6'),
   })).filter((b) => b.id && b.name);
   writeJson('boards.json', clean);
   return clean;
@@ -180,7 +181,7 @@ const WEB_PREFS = {
 function createMainWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 960, minHeight: 600,
-    title: "Ingrid's AI Agents", backgroundColor: '#f6f8f7', show: false,
+    title: "Ingrid's AI Agents", backgroundColor: '#f7f6f9', show: false,
     webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
   });
   win.loadFile('index.html');
@@ -195,7 +196,7 @@ function openAgentWindow(href) {
   if (typeof href !== 'string' || !href || href.includes('..')) return;
   const win = new BrowserWindow({
     width: 1200, height: 820, minWidth: 720, minHeight: 520,
-    title: "Ingrid's AI Agents", backgroundColor: '#f6f8f7',
+    title: "Ingrid's AI Agents", backgroundColor: '#f7f6f9',
     webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
   });
   win.loadFile(path.join(__dirname, href));
@@ -426,6 +427,19 @@ ipcMain.handle('cli:run', (_e, engineId) => {
   const cmd = CLI_CMDS[engineId];
   return cmd ? launchCli(cmd) : false;
 });
+// 只读 codex 登录态（不返回 token，仅判断是否已登录 ChatGPT 会员账号）
+ipcMain.handle('cli:auth', (_e, engineId) => {
+  if (engineId !== 'codex') return { loggedIn: false, mode: '', accountId: '' };
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.codex', 'auth.json'), 'utf8'));
+    const loggedIn = !!(j.tokens && j.tokens.access_token);
+    const mode = j.auth_mode === 'chatgpt' ? 'ChatGPT 账号（会员额度）' : String(j.auth_mode || '');
+    const accountId = ((j.tokens && j.tokens.account_id) || '').slice(0, 8);
+    return { loggedIn: loggedIn, mode: mode, accountId: accountId };
+  } catch (e) {
+    return { loggedIn: false, mode: '', accountId: '' };
+  }
+});
 
 /* ---------------- IPC：设置 ---------------- */
 ipcMain.handle('settings:get', () => decryptSettings(readSettingsRaw()));
@@ -489,7 +503,7 @@ ipcMain.handle('presets:save', (_e, list) => {
   return true;
 });
 
-/* ---------------- IPC：监督者（核心需求 / 开关 / 纠偏） ---------------- */
+/* ---------------- IPC：监事（核心需求 / 开关 / 纠偏） ---------------- */
 ipcMain.on('supervisor:list-sync', (e) => {
   e.returnValue = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '' });
 });

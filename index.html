@@ -6,21 +6,21 @@
 <title>Ingrid's AI Agents</title>
 <style>
   :root {
-    /* 主色（青绿，品牌色 500）—— 只给最重要动作与选中态 */
-    --accent: #2a746c;        /* primary-500 */
-    --accent-2: #1f5a54;      /* primary-600 hover/按下 */
-    --accent-soft: #dceee9;   /* primary-100 浅底（非透明度） */
-    --accent-softer: #eef6f4; /* primary-50 更浅底 */
-    --deep: #17453f;          /* primary-700 渐变深端 */
+    /* 主色（柔和高级紫·丁香紫，低饱和）—— 只给最重要动作与选中态 */
+    --accent: #7c6fd6;        /* 柔和灰紫 主紫 */
+    --accent-2: #6355c4;      /* hover/按下 */
+    --accent-soft: #ebe7f7;   /* 浅紫底（非透明度） */
+    --accent-softer: #f4f1fb; /* 更浅紫底 */
+    --deep: #4a3f8c;          /* 渐变深端（沉稳深紫，不浓艳） */
 
-    /* 中性色（8 档，带一点青绿相） */
-    --ink: #1c2a27;           /* neutral-900 主文字 */
-    --ink-soft: #4c5a56;      /* neutral-600 次要文字 */
-    --ink-faint: #8a9894;     /* neutral-400 禁用/占位 */
-    --line: #e3e9e7;          /* neutral-200 分割线/描边 */
-    --bg: #f6f8f7;            /* neutral-50 页面底 */
+    /* 中性色（8 档，干净的中性灰带一丝冷调） */
+    --ink: #26232e;           /* neutral-900 主文字 */
+    --ink-soft: #55515e;      /* neutral-600 次要文字 */
+    --ink-faint: #8f8b98;     /* neutral-400 禁用/占位 */
+    --line: #e6e4ec;          /* neutral-200 分割线/描边 */
+    --bg: #f7f6f9;            /* neutral-50 页面底 */
     --card: #ffffff;          /* neutral-0 卡片底 */
-    --surface-2: #eef2f0;     /* neutral-100 次面层 */
+    --surface-2: #efeef3;     /* neutral-100 次面层 */
 
     /* 语义色（4 个，约定俗成） */
     --success: #16a34a;
@@ -32,13 +32,13 @@
     --danger-soft: #fbe9e6;
     --info-soft: #e7f4fc;
 
-    /* 强调色（仅用于「预设」等最高优先级点缀，用量 <5%） */
-    --gold: #b8935a;
-    --gold-text: #8a6d3d;
-    --gold-soft: #f6efe2;
+    /* 强调色（仅用于「预设」等最高优先级点缀，用量 <5%）—— 同色系更沉稳的紫，与主色协调 */
+    --gold: #8b7ec8;
+    --gold-text: #5b4f9e;
+    --gold-soft: #efeaf8;
 
-    --shadow: 0 1px 2px rgba(28,42,39,.05), 0 8px 22px rgba(28,42,39,.06);
-    --shadow-lg: 0 24px 56px rgba(28,42,39,.16);
+    --shadow: 0 1px 2px rgba(38,35,46,.05), 0 8px 22px rgba(38,35,46,.06);
+    --shadow-lg: 0 24px 56px rgba(38,35,46,.16);
     --radius: 18px;
   }
 
@@ -67,7 +67,7 @@
     width: 52px; height: 52px; border-radius: 15px;
     display: grid; place-items: center; font-size: 26px;
     background: linear-gradient(135deg, var(--accent), var(--deep));
-    color: #fff; box-shadow: 0 8px 20px rgba(42,116,108,.30);
+    color: #fff; box-shadow: 0 8px 20px rgba(124,111,214,.28);
   }
   .brand .titles h1 { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
   .brand .titles h1 .accent { color: var(--accent); }
@@ -79,7 +79,7 @@
     padding: 8px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
     background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
   }
-  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(42,116,108,.15); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(124,111,214,.15); }
   .chip.warn .dot { background: var(--warning); box-shadow: 0 0 0 3px rgba(217,119,6,.15); }
   .chip.chip-btn { cursor: pointer; font-weight: 600; transition: border-color .15s ease, background .15s ease; }
   .chip.chip-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
@@ -117,7 +117,7 @@
     padding: 3px 8px; border-radius: 999px; color: #fff;
   }
   .badge.new { background: var(--accent); }
-  .badge.soon { background: #c7cdd3; color: #fff; }
+  .badge.soon { background: #c4c1d3; color: #fff; }
 
   .tile.featured {
     border: 1.5px solid var(--accent);
@@ -126,15 +126,15 @@
   .tile.featured .emoji { background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; }
 
   .tile.placeholder { opacity: .8; }
-  .tile.placeholder .emoji { background: #eef1ef; filter: grayscale(.35); }
+  .tile.placeholder .emoji { background: #eceaf2; filter: grayscale(.35); }
   .tile.placeholder .name { color: var(--ink-soft); }
-  .tile.placeholder .engine { color: var(--ink-faint); background: #f1f3f2; border-color: var(--line); }
+  .tile.placeholder .engine { color: var(--ink-faint); background: #efedf5; border-color: var(--line); }
 
-  .tile.add { border-style: dashed; border-color: #cfd6d3; box-shadow: none; background: transparent; }
+  .tile.add { border-style: dashed; border-color: #cfcbe0; box-shadow: none; background: transparent; }
   .tile.add .plus { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 30px; color: var(--accent); background: var(--accent-soft); }
   .tile.add .name { color: var(--ink-soft); font-weight: 600; }
 
-  .tile.preset { border-color: var(--gold); background: #fffdf8; }
+  .tile.preset { border-color: var(--gold); background: #faf8fd; }
   .tile.preset .emoji { background: var(--gold-soft); }
   .badge.preset { background: var(--gold-text); }
 
@@ -247,7 +247,7 @@
     <footer class="router">
       <div class="label"><span class="ic">🏠</span>local-first · 每个 Agent 绑定自己的引擎</div>
       <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 记账</span>
-      <span class="pill"><span class="st"></span>👁️ 监督者 · 🕊️ 秘书 · 悬浮窗</span>
+      <span class="pill"><span class="st"></span>👁️ 监事 · 🕊️ 秘书 · 右上角入口</span>
       <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent · local-first</span>
     </footer>
   </div>
@@ -440,6 +440,10 @@ const agentCount = document.getElementById('agentCount');
 function engineLabelOf(a) {
   return a.engineLabel || (router.resolve(a).meta ? router.resolve(a).meta.name : (a.engine || '待绑定'));
 }
+function engineOptionsHtml(selected) {
+  return Object.keys(core.ENGINES).map(id =>
+    `<option value="${id}"${id === selected ? ' selected' : ''}>${core.ENGINES[id].name}（${core.ENGINES[id].tag}）</option>`).join('');
+}
 
 /* ---------- v3：板块 / 预设读取（桌面走文件，浏览器走 localStorage） ---------- */
 function escHtml(v) {
@@ -531,6 +535,12 @@ function openModal(a) {
   const routeHtml = d.route && d.route.length
     ? `<section><h3>引擎 / 模型</h3><div class="route-line">` +
       d.route.map((r, i) => `${i > 0 ? '<span class="arrow">→</span>' : ''}<span class="node">${r.kind}：${r.label}</span>`).join('') + `</div></section>` : '';
+  const engineEditHtml = `<section><h3>绑定引擎</h3>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select id="m-engine" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;background:#fff;color:var(--ink)">${engineOptionsHtml(a.engine)}</select>
+        <button id="m-save-engine" style="padding:9px 16px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13px;font-weight:650;cursor:pointer;white-space:nowrap">保存引擎</button>
+      </div>
+      <div class="localnote">改完立即生效并写回本机。api 类引擎需先在「引擎设置」配 Key；codex / claude-code / grok 需本机已装并登录对应 CLI。</div></section>`;
 
   modal.innerHTML = `
     <header>
@@ -539,8 +549,14 @@ function openModal(a) {
       <button class="close" id="close">✕</button>
     </header>
     <section><h3>简介</h3><p class="desc">${d.desc || '暂无描述'}</p></section>
-    ${stepsHtml}${capsHtml}${routeHtml}`;
+    ${stepsHtml}${capsHtml}${routeHtml}${engineEditHtml}`;
   document.getElementById('close').addEventListener('click', closeModal);
+  document.getElementById('m-save-engine').addEventListener('click', () => {
+    const engine = document.getElementById('m-engine').value;
+    registry.update(a.id, { engine: engine, engineLabel: core.ENGINES[engine] ? core.ENGINES[engine].name : engine });
+    closeModal();
+    renderAgents();
+  });
   mask.classList.add('open');
 }
 function closeModal() { mask.classList.remove('open'); }
@@ -590,10 +606,20 @@ function openCreateModal() {
 const API_ENGINE_IDS = ['deepseek', 'gpt', 'qwen'];
 const CLI_ENGINE_IDS = ['claude-code', 'codex', 'grok'];
 
-function engineKindBadge(kind) {
-  if (kind === 'cli') return '<span class="e-kind cli">本机 CLI</span>';
-  if (kind === 'api') return '<span class="e-kind api">云端 API</span>';
-  return '<span class="e-kind local">本地推理</span>';
+// 每个引擎的接法标注：明确区分「会员额度 vs API Key」，避免 GPT / Codex 混淆
+const ENGINE_ACCESS = {
+  'claude-code': { text: 'Claude 会员', cls: 'cli' },
+  'codex':       { text: 'ChatGPT 会员额度', cls: 'cli' },
+  'grok':        { text: 'X 会员', cls: 'cli' },
+  'deepseek':    { text: 'API Key', cls: 'api' },
+  'gpt':         { text: 'API Key', cls: 'api' },
+  'qwen':        { text: 'API Key', cls: 'api' },
+  'local-llm':   { text: '本地 · 免费', cls: 'local' },
+  'funasr':      { text: '本地 · 免费', cls: 'local' },
+};
+function engineAccessBadge(id, kind) {
+  const a = ENGINE_ACCESS[id] || { text: kind === 'api' ? 'API Key' : (kind === 'cli' ? '本机 CLI' : '本地'), cls: kind };
+  return `<span class="e-kind ${a.cls}">${a.text}</span>`;
 }
 
 function openSettings() {
@@ -625,7 +651,7 @@ function openSettings() {
     row.innerHTML = `
       <div class="e-ic">${id === 'claude-code' ? '🧠' : id === 'codex' ? '💻' : '🤖'}</div>
       <div class="e-body"><div class="e-name">${meta.name}</div><div class="e-tag">${meta.tag}</div></div>
-      ${engineKindBadge(meta.kind)}
+      ${engineAccessBadge(id, meta.kind)}
       <span class="status-pill wait" data-st>检测中</span>
       <span class="e-action off" data-act>—</span>`;
     cliList.appendChild(row);
@@ -645,6 +671,18 @@ function openSettings() {
         act.textContent = '启动';
         act.className = 'e-action';
         act.addEventListener('click', () => window.ingrid.runCli(id));
+        // codex 额外显示登录态（吃 ChatGPT 会员额度，不是 API Key）
+        if (id === 'codex' && window.ingrid.authCli) {
+          window.ingrid.authCli(id).then(a => {
+            if (a && a.loggedIn) {
+              st.textContent = '已安装 · 已登录';
+              st.title = a.mode + ' · 账号 ' + a.accountId + '…';
+            } else {
+              st.textContent = '已安装 · 未登录';
+              st.className = 'status-pill miss';
+            }
+          });
+        }
       } else {
         st.textContent = '未安装';
         st.className = 'status-pill miss';
@@ -663,7 +701,7 @@ function openSettings() {
     div.innerHTML = `
       <div class="e-ic">🔑</div>
       <div class="e-body"><div class="e-name">${meta.name}</div><div class="e-tag">${meta.tag}</div></div>
-      ${engineKindBadge(meta.kind)}
+      ${engineAccessBadge(id, meta.kind)}
       <input data-key="${id}" type="password" placeholder="sk-…（未设置）" style="flex:1;padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:12.5px;background:#fff;color:var(--ink)">`;
     apiList.appendChild(div);
   });

@@ -2,7 +2,7 @@
  * ============================================================
  *  secretary.js — 秘书悬浮面板（渲染层，零依赖）
  *  ============================================================
- *  · 可拖拽、浮在窗口左侧（与右侧监督者并排）。
+ *  · 可拖拽、浮在窗口左侧（与右侧监事并排）。
  *  · 随时对话：写想法 → 秘书记住 → 一键「分配给合适的 Agent」。
  *  · 日程：列表 + 添加 + 提醒（系统通知）+ 从邮件截图加日历。
  *  · 邮件：导入 + 自动分类分级 + 重要信息及时告知。
@@ -116,6 +116,7 @@
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button></div></div>' +
     '</div>';
   document.body.appendChild(panel);
+  panel.style.display = 'none';   // 默认收起，从右上角入口打开
 
   var modalMask = document.createElement('div');
   modalMask.id = 'secModalMask';
@@ -132,7 +133,9 @@
   chip.title = '日程提醒 · 邮件分类 · 记想法并分配';
   var meta = document.querySelector('.topbar .meta');
   if (meta) meta.insertBefore(chip, document.getElementById('btnSupervisor') || document.getElementById('btnSettings'));
-  chip.addEventListener('click', function () { panel.style.display = 'block'; });
+  chip.addEventListener('click', function () {
+    panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
+  });
 
   /* ---------- 渲染 ---------- */
   function fmtAt(at) {

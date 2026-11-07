@@ -30,11 +30,11 @@ npm start
 ├── agents-core.js          # 零依赖多 Agent 核心(引擎 / 注册表 / 路由 / 账本 / 编排器)
 ├── skills-core.js          # 零依赖技能核心(板块 / 注册表 / 推荐 / 渐进式载入 / 预设)
 ├── task-router.js          # 零依赖任务类型路由(ra 判断「派谁 + 挂哪些 skill」)
-├── supervisor-core.js      # 零依赖监督者核心(核心需求 / 漂移检测 / 纠偏)
+├── supervisor-core.js      # 零依赖监事核心(核心需求 / 漂移检测 / 纠偏)
 ├── orchestrator.js         # 调度中枢面板(渲染层:委派 + 技能挂载 + 预设 + ra 路由)
-├── supervisor.js           # 监督者悬浮面板(渲染层:可拖拽浮层)
+├── supervisor.js           # 监事悬浮面板(渲染层:可拖拽浮层)
 ├── secretary-core.js       # 零依赖秘书核心(日程 / 邮件分类 / 想法 / 事件提取 / 简报)
-├── secretary.js            # 秘书悬浮面板(渲染层:左侧浮层,与监督者并排)
+├── secretary.js            # 秘书悬浮面板(渲染层:左侧浮层,与监事并排)
 ├── skills/
 │   ├── boards.json         # 板块模板(首次运行复制到用户数据目录)
 │   ├── research/           # Research 板块的 17 个内置 Skill
@@ -205,7 +205,7 @@ window.__skills       // { boards, skills, presets, scan }
                       //   skills : SkillRegistry:inBoard() / recommend() / buildContext()
                       //   presets: PresetStore:create() / list() / remove()
 window.__taskRouter   // TaskRouter:classifyTask() / route()（ra 任务类型路由）
-window.__supervisor   // Supervisor:reminder() / supervise()（监督者）
+window.__supervisor   // Supervisor:reminder() / supervise()（监事）
 window.__supGoals     // GoalStore:add() / update() / remove() / setActive()
 
 // 例:在 Research 板块里按任务推荐技能
@@ -232,20 +232,20 @@ await __orchestrator.delegate({
 
 整个过程只依据给定的 Agent / Skill / 任务文字,**不臆造**,每一步都给出可解释的 reasons,你可以手动微调后再「开始委派」。注意:路由靠 Agent 的名字/简介关键词,建议给自己每个用途配一个名字贴切的 Agent,ra 才能派得准。
 
-## 监督者 Agent:防止 LLM 跑偏(借鉴 Steering Agent)
+## 监事 Agent:防止 LLM 跑偏(借鉴 Steering Agent)
 
-借鉴 NUS / USTC / 阿里 Qwen 的 **Steering Agent**(arXiv:2610.22316)的「双路径」思路,解决长程任务里的目标漂移(goal drift)。右上角有一个**可拖拽的悬浮卡片 👁️ 监督者**,你可以:
+借鉴 NUS / USTC / 阿里 Qwen 的 **Steering Agent**(arXiv:2610.22316)的「双路径」思路,解决长程任务里的目标漂移(goal drift)。右上角有一个**可拖拽的悬浮卡片 👁️ 监事**,你可以:
 
 - **随时增减「核心需求」**:每一条都可以停用/删除/加权;
-- **先「对话确认」**:写一句模糊需求 → 监督者抛 3 个澄清问题(要什么结果 / 边界红线 / 成功标准)→ 拼出结构化确认稿 → 你确认后写进核心需求;
+- **先「对话确认」**:写一句模糊需求 → 监事抛 3 个澄清问题(要什么结果 / 边界红线 / 成功标准)→ 拼出结构化确认稿 → 你确认后写进核心需求;
 - **开始监督**:打开开关后,每一轮委派的结果都会做**快路径**漂移检测(便宜、同步:空输出/报错/半数以上需求零命中即报警);确认偏离后走**慢路径**生成一句纠偏指令(真实模式调用模型,演练模式用模板);
 - **自动纠偏**:下一轮委派时,核心需求 + 纠偏指令会自动挂到任务最前面(「📣 提醒当前工作」也可手动注入)。
 
-监督者**旁路监督、不改动执行 Agent**,日常轻量,只在真正偏离时才深度介入。`supervisor-core.js` 的 `GoalStore`/`Supervisor` 与 `fastDriftCheck`/`buildReminder` 零依赖,可在控制台直接玩。
+监事**旁路监督、不改动执行 Agent**,日常轻量,只在真正偏离时才深度介入。`supervisor-core.js` 的 `GoalStore`/`Supervisor` 与 `fastDriftCheck`/`buildReminder` 零依赖,可在控制台直接玩。
 
 ## 秘书 Agent:日程提醒 · 邮件分类 · 记想法分配
 
-左侧有一个**可拖拽的悬浮卡片 🕊️ 秘书**,与右侧监督者并排。它做三件事:
+左侧有一个**可拖拽的悬浮卡片 🕊️ 秘书**,与右侧监事并排。它做三件事:
 
 - **随时对话 / 记想法**:写一句想法,点「记住」存进 `ThoughtStore`;点「🧭 记住并分配给合适的 Agent」会用 `TaskRouter` 判断该派给谁、挂哪些 skill,并自动把调度中枢填好。
 - **日程 + 提醒**:本地日程列表,支持添加、提前提醒(15 分钟 / 1 小时 / 1 天 / 3 天),到点发系统通知(主进程 `Notification`)。
@@ -263,7 +263,7 @@ await __orchestrator.delegate({
 - 带脚本的可执行型 Skill 目前只注入说明书;若要运行脚本,需先做逐项授权与沙箱。
 - 更多 Agent(音乐创作、数据分析、翻译)与更多任务类型的自动路由。
 - 让 Agent 操作本机文件 / 屏幕(需逐项授权,当前 `computer: 'off'`)。
-- 监督者的「慢路径纠偏」与 ra 路由在真实模式下可改用模型做语义判断(当前为关键词启发式,免费、可解释)。
+- 监事的「慢路径纠偏」与 ra 路由在真实模式下可改用模型做语义判断(当前为关键词启发式,免费、可解释)。
 - 秘书的 IMAP / Gmail 实时同步、Apple Calendar / Google 双向同步(需邮箱/日历凭据与授权)。
 - 秘书「截图 → 自动 OCR 识别」接入视觉模型(当前为手动确认 + 文字启发式提取)。
 

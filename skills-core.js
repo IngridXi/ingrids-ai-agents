@@ -127,7 +127,7 @@
       desc: String(b.desc || ''),
       skillIds: Array.isArray(b.skillIds) ? b.skillIds.slice() : [],
       defaultEngine: b.defaultEngine || '',
-      color: b.color || '#2a746c',
+      color: b.color || '#7c6fd6',
     };
   }
   function BoardRegistry(boards, storage) {

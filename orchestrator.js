@@ -33,7 +33,7 @@
   var DEMO_BOARDS = [{
     id: 'research', name: 'Research', emoji: '🔬', desc: '学术研究与论文写作',
     skillIds: ['demo:reviewer', 'demo:deai', 'demo:writing', 'demo:lit', 'demo:mentor'],
-    defaultEngine: 'claude-code', color: '#2a746c',
+    defaultEngine: 'claude-code', color: '#7c6fd6',
   }];
   var DEMO_SKILLS = [
     { id: 'demo:reviewer', name: '审稿人', description: '以期刊同行评审标准审查论文，列出重大问题与证据缺口', category: 'research', boardIds: ['research'], enabled: true, scope: 'builtin', bytes: 3200, body: '你是期刊审稿人。只依据给定文本判断，不臆造文献与数据。按研究问题、论证链、方法、证据、贡献、表达、局限逐项审查，输出重大问题与可执行的修改建议。' },
@@ -163,6 +163,8 @@
     '.orch-stat .k{font-size:11px;color:var(--ink-faint);font-weight:600;}',
     '.orch-stat .v{font-size:17px;font-weight:700;margin-top:3px;color:var(--ink);}',
     '.orch-stat.alert{background:var(--warning-soft);border-color:var(--warning);} .orch-stat.alert .v{color:var(--warning);}',
+    '.orch-stat.warn{background:var(--info-soft);border-color:var(--info);} .orch-stat.warn .v{color:var(--info);}',
+    '.orch-stat .n{font-size:10.5px;color:var(--ink-faint);margin-top:3px;line-height:1.35;} .orch-stat.alert .n,.orch-stat.warn .n{color:inherit;opacity:.92;}',
     '.orch-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;}',
     '@media(max-width:720px){.orch-cols{grid-template-columns:1fr;}}',
     '.orch-field{margin-bottom:12px;}',
@@ -268,11 +270,18 @@
   function budgetHtml() {
     var b = ledger.budgetStatus();
     var m = ledger.summary({ month: ledger.currentMonth() });
+    var PLUS = 20; // ChatGPT Plus 月费参考价（美元），用于对照「会员 vs API」是否划算
+    var pct = m.spent > 0 ? Math.round(m.spent / PLUS * 100) : 0;
+    var cls = pct >= 100 ? ' alert' : (pct >= 60 ? ' warn' : '');
+    var note = pct >= 100 ? '已超 Plus 月费，切会员更划算'
+      : (pct >= 60 ? '接近 Plus 月费，留意用量' : '距 Plus 月费还远，API 更省');
     return '<div class="orch-stat"><div class="k">本月实际花费</div><div class="v">' + usd(m.spent) + '</div></div>' +
       '<div class="orch-stat"><div class="k">演练估算（未花钱）</div><div class="v">' + usd(m.simulated) + '</div></div>' +
       '<div class="orch-stat' + (b.exceeded ? ' alert' : '') + '"><div class="k">月度预算</div><div class="v">' +
         (b.budget > 0 ? usd(b.budget) + (b.exceeded ? ' · 已超' : '') : '未设置') + '</div></div>' +
-      '<div class="orch-stat"><div class="k">调用次数</div><div class="v">' + m.count + '</div></div>';
+      '<div class="orch-stat"><div class="k">调用次数</div><div class="v">' + m.count + '</div></div>' +
+      '<div class="orch-stat' + cls + '"><div class="k">会员对照（Plus $20/月）</div><div class="v">' +
+        (pct >= 100 ? '≥100%' : pct + '%') + '</div><div class="n">' + note + '</div></div>';
   }
 
   /* ---------- 技能区（独立重绘，不重建整个面板，任务文字不丢） ---------- */
@@ -642,10 +651,10 @@
     if (!ids.length) { tip('⚠ 请至少勾选一个目标 Agent'); return; }
     if (!task) { tip('⚠ 请填写任务内容'); return; }
 
-    // 监督者开着时：把核心需求 + 纠偏提醒自动挂在本次任务前（不断提醒、防止跑偏）
+    // 监事开着时：把核心需求 + 纠偏提醒自动挂在本次任务前（不断提醒、防止跑偏）
     var supRem = (typeof window.__supervisorReminder === 'function') ? window.__supervisorReminder() : '';
     var finalTask = task;
-    if (supRem && task.indexOf('【监督者 · 核心需求】') < 0) {
+    if (supRem && task.indexOf('【监事 · 核心需求】') < 0) {
       finalTask = supRem + '\n\n【任务】\n' + task;
     }
 
@@ -663,7 +672,7 @@
       document.getElementById('orch-bar').innerHTML = budgetHtml();
       tip('完成：成功 ' + out.succeeded + ' / 失败 ' + out.failed +
         ' · 注入 ' + out.skillTokens + ' token' + (out.switched ? ' · ' + out.switched + ' 次限额切换' : ''));
-      // 监督者：对每一轮产出做漂移检测（快路径），偏离则生成纠偏指令（慢路径）
+      // 监事：对每一轮产出做漂移检测（快路径），偏离则生成纠偏指令（慢路径）
       if (typeof window.__superviseResult === 'function') {
         out.results.forEach(function (r) { window.__superviseResult(r, task); });
       }

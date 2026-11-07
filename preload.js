@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   // 本机 CLI（bring-your-own-agent）
   detectCli: (engineId) => ipcRenderer.invoke('cli:detect', engineId),
   runCli: (engineId) => ipcRenderer.invoke('cli:run', engineId),
+  authCli: (engineId) => ipcRenderer.invoke('cli:auth', engineId),
 
   // 设置（API key 加密存储）+ 真实执行开关
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -45,7 +46,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   loadPresetsSync: () => ipcRenderer.sendSync('presets:list-sync'),
   savePresets: (list) => ipcRenderer.invoke('presets:save', list),
 
-  // 监督者（核心需求 / 开关 / 纠偏指令，local-first 文件持久化）
+  // 监事（核心需求 / 开关 / 纠偏指令，local-first 文件持久化）
   loadSupervisorSync: () => ipcRenderer.sendSync('supervisor:list-sync'),
   saveSupervisor: (state) => ipcRenderer.invoke('supervisor:save', state),
 

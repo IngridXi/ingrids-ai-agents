@@ -1,6 +1,6 @@
 /**
  * ============================================================
- *  supervisor.js — 监督者悬浮面板（渲染层，零依赖）
+ *  supervisor.js — 监事悬浮面板（渲染层，零依赖）
  *  ============================================================
  *  · 可拖拽、浮在窗口表面的卡片；随时增删「核心需求」；
  *  · 先「对话确认」把模糊需求讲清楚，确认后写入 GoalStore；
@@ -50,8 +50,8 @@
   var sup = new SC.Supervisor({
     goals: goals, executor: judgeExecutor, realMode: false,
     judgeAgent: {
-      name: '监督者', emoji: '👁️', engine: 'deepseek', fallbacks: ['gpt', 'qwen'],
-      soul: '你是监督者（Steering Agent）。职责：判断工作 Agent 的产出是否偏离用户的核心需求，若偏离则给一句可执行的纠偏指令；不代做工作本身，只把关方向。',
+      name: '监事', emoji: '👁️', engine: 'deepseek', fallbacks: ['gpt', 'qwen'],
+      soul: '你是监事（Steering Agent）。职责：判断工作 Agent 的产出是否偏离用户的核心需求，若偏离则给一句可执行的纠偏指令；不代做工作本身，只把关方向。',
     },
     onLog: function () { renderLog(); },
   });
@@ -119,7 +119,7 @@
   panel.id = 'supPanel'; panel.className = 'sup-panel';
   panel.innerHTML =
     '<div class="sup-head" id="supHead">' +
-      '<span class="sup-title">👁️ 监督者</span>' +
+      '<span class="sup-title">👁️ 监事</span>' +
       '<span class="sup-status" id="supStatus">已暂停</span>' +
       '<span class="sup-btns">' +
         '<button id="supMin" title="收起/展开">—</button>' +
@@ -137,6 +137,7 @@
       '<div class="sup-sec"><label>监督日志</label><div class="sup-log" id="supLog"></div></div>' +
     '</div>';
   document.body.appendChild(panel);
+  panel.style.display = 'none';   // 默认收起，从右上角入口打开
 
   /* 澄清对话弹窗 */
   var clarifyMask = document.createElement('div');
@@ -146,11 +147,13 @@
   /* 顶栏入口 */
   var chip = document.createElement('button');
   chip.className = 'chip chip-btn'; chip.id = 'btnSupervisor';
-  chip.textContent = '👁️ 监督者';
+  chip.textContent = '👁️ 监事';
   chip.title = '告诉它核心需求，让它监督其他 Agent 不跑偏';
   var meta = document.querySelector('.topbar .meta');
   if (meta) meta.insertBefore(chip, document.getElementById('btnSettings'));
-  chip.addEventListener('click', function () { panel.style.display = 'block'; });
+  chip.addEventListener('click', function () {
+    panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
+  });
 
   /* ---------- 渲染 ---------- */
   function targetOptions() {

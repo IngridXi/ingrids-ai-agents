@@ -1,6 +1,6 @@
 /**
  * ============================================================
- *  supervisor-core.js — 监督者 Agent（零依赖）
+ *  supervisor-core.js — 监事 Agent（零依赖）
  *  ============================================================
  *
  *  借鉴「Steering Agent」（NUS / USTC / Alibaba Qwen，arXiv:2610.22316）
@@ -11,7 +11,7 @@
  *    慢路径 slow path（昂贵）：确认为偏离后，才生成一句明确的「纠偏指令」，
  *      挂回下一次委派，把跑偏的 Agent 拉回正轨。旁路监督，不改动执行 Agent。
  *
- *  另含「先对话确认」：用户给一句模糊需求 → 监督者抛 3 个澄清问题 →
+ *  另含「先对话确认」：用户给一句模糊需求 → 监事抛 3 个澄清问题 →
  *  根据回答拼出结构化「核心需求确认」→ 用户确认后写进 GoalStore。
  *
  *  核心对象：
@@ -132,10 +132,10 @@
     var active = (goals || []).filter(function (g) { return g.active !== false; });
     var parts = [];
     if (active.length) {
-      parts.push('【监督者 · 核心需求】本次工作必须始终对齐以下需求，不要偏离：\n' +
+      parts.push('【监事 · 核心需求】本次工作必须始终对齐以下需求，不要偏离：\n' +
         active.map(function (g, i) { return (i + 1) + '. ' + g.text; }).join('\n'));
     }
-    if (correction) parts.push('【监督者 · 纠偏提醒】上一轮发现偏离，务必先纠正：\n' + correction);
+    if (correction) parts.push('【监事 · 纠偏提醒】上一轮发现偏离，务必先纠正：\n' + correction);
     return parts.join('\n\n');
   }
 
@@ -175,7 +175,7 @@
    *   goals     GoalStore
    *   executor  async (agent, task, ctx) => { text, ... }  （慢路径纠偏用；不传则用模板）
    *   realMode  boolean（true 才调用模型做纠偏）
-   *   judgeAgent { name, soul, engine, fallbacks }（监督者自己的人设）
+   *   judgeAgent { name, soul, engine, fallbacks }（监事自己的人设）
    *   onLog     (entry) => void
    */
   function Supervisor(opts) {
@@ -183,7 +183,7 @@
     this.goals = o.goals || new GoalStore();
     this.executor = o.executor || null;
     this.realMode = !!o.realMode;
-    this.judgeAgent = o.judgeAgent || { name: '监督者', soul: '', engine: 'deepseek', fallbacks: ['gpt'] };
+    this.judgeAgent = o.judgeAgent || { name: '监事', soul: '', engine: 'deepseek', fallbacks: ['gpt'] };
     this.log = [];
     this.onLog = o.onLog || function () {};
     this._listeners = {};
@@ -239,22 +239,22 @@
   Supervisor.prototype._correct = function (name, task, text, sig) {
     var self = this;
     var template = '请回到核心需求，纠正以下偏离：' + (sig.reasons.join('；') || '上一轮输出偏离了目标') +
-      '。重做这一部分，并逐条对齐监督者列出的每一条核心需求。';
+      '。重做这一部分，并逐条对齐监事列出的每一条核心需求。';
     if (!this.executor || !this.realMode) {
       this.goals.setCorrection(template);
       this.addLog('correct', '↩ 纠偏（模板）：' + template);
       this.emit('corrected', { text: template, from: 'template' });
       return;
     }
-    // 慢路径：让监督者用模型写一条更精准的纠偏指令
+    // 慢路径：让监事用模型写一条更精准的纠偏指令
     var activeGoals = this.goals.list().filter(function (g) { return g.active !== false; });
-    var prompt = '你是监督者。以下是用户的核心需求：\n' +
+    var prompt = '你是监事。以下是用户的核心需求：\n' +
       activeGoals.map(function (g, i) { return (i + 1) + '. ' + g.text; }).join('\n') +
       '\n\n工作 Agent「' + name + '」在任务「' + String(task || '').slice(0, 500) + '」中产出了：\n' +
       String(text || '').slice(0, 3000) +
       '\n\n请判断它是否偏离核心需求。若偏离，用一句话给出明确的纠偏指令（告诉它现在该做什么、回到哪个需求上）；若没偏离，只回复 OK。';
     var agent = Object.assign({}, this.judgeAgent);
-    var ctx = { engine: agent.engine, soul: agent.soul || '你是监督者：只判断是否偏离核心需求，并给一句可执行的纠偏指令。', dryRun: false };
+    var ctx = { engine: agent.engine, soul: agent.soul || '你是监事：只判断是否偏离核心需求，并给一句可执行的纠偏指令。', dryRun: false };
     this.executor(agent, prompt, ctx).then(function (res) {
       var reply = String((res && res.text) || '').trim();
       if (reply && !/^ok\b/i.test(reply)) {
@@ -262,7 +262,7 @@
         self.addLog('correct', '↩ 纠偏（模型）：' + reply);
         self.emit('corrected', { text: reply, from: 'model' });
       } else {
-        self.addLog('ok', '✓ 监督者复核：' + name + ' 未偏离（模型判定）');
+        self.addLog('ok', '✓ 监事复核：' + name + ' 未偏离（模型判定）');
       }
     }).catch(function (e) {
       self.goals.setCorrection(template);
