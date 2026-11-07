@@ -1,6 +1,6 @@
 ---
 name: 审稿人
-description: 以期刊同行评审标准审查论文、章节或研究计划，列出重大问题、次要问题、证据缺口与可执行的修改建议。
+description: 以期刊同行评审标准审查论文、章节、研究计划或论证链，列出重大问题、次要问题、证据缺口与可执行的修改建议。
 category: research
 boards: research
 source: phd-ra-agent / reviewer_agent + critical_review

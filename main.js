@@ -148,7 +148,8 @@ function scanSkills() {
   const enabled = {};
   boards.forEach((b) => (b.skillIds || []).forEach((id) => { enabled[id] = true; }));
   records.forEach((r) => {
-    r.enabled = !!enabled[r.id];
+    // builtin（仓库自带 skills/ 下）默认启用；local/plugin 仅作「可选导入源」，默认不启用，需手动挑进板块
+    r.enabled = r.scope === 'builtin' ? true : !!enabled[r.id];
     // 内置 skill 的 frontmatter 里写了 boards 也自动归入该板块
     boards.forEach((b) => {
       if (r.boardIds.indexOf(b.id) >= 0 && (b.skillIds || []).indexOf(r.id) < 0) b.skillIds.push(r.id);

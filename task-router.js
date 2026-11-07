@@ -24,10 +24,10 @@
   // skillWords  兜底挑 Skill 用的名字关键词（SkillsCore.recommend 不可用时用）
   // engine      默认引擎（与 agents-core 的 TASK_DEFAULTS 对齐）
   var TASK_TYPES = [
-    { id: 'review',    label: '审稿/评审',   words: ['审稿','评审','review','审阅','评阅','匿名评审','同行评审','返修意见','论证','审查','评议','论证链'], agentWords: ['审稿','评审','研究','论文'], boardHint: 'research', skillWords: ['审稿'], engine: 'claude-code' },
-    { id: 'deai',      label: '去 AI 味',    words: ['去ai味','去 ai 味','ai味','ai 味','去AI','机器味','套话','机械化','改写口语','更像人写'], agentWords: ['写作','研究','润色'], boardHint: 'research', skillWords: ['去 ai','去ai','去 AI'], engine: 'claude-code' },
+    { id: 'review',    label: '审稿/评审',   words: ['审稿','评审','review','审阅','评阅','匿名评审','同行评审','返修意见','论证','审查','评议','论证链','引用审计','引用核查','引用','citation','可重复性','复现','reproducib','paper-code','预分析','pre-analysis'], agentWords: ['审稿','评审','研究','论文'], boardHint: 'research', skillWords: ['审稿'], engine: 'claude-code' },
+    { id: 'deai',      label: '去 AI 味',    words: ['去ai味','去 ai 味','ai味','ai 味','去AI','机器味','套话','机械化','改写口语','更像人写','防御性写作','defensive','模棱两可','留退路','hedging','委婉','回避','不敢下判断'], agentWords: ['写作','研究','润色'], boardHint: 'research', skillWords: ['去 ai','去ai','去 AI','防御性写作'], engine: 'claude-code' },
     { id: 'litreview', label: '文献综述',    words: ['文献综述','文献','综述','literature','系统综述','荟萃','元分析','梳理文献','研究现状'], agentWords: ['研究','文献','综述'], boardHint: 'research', skillWords: ['文献综述','文献'], engine: 'deepseek' },
-    { id: 'mentor',    label: '研究指导',    words: ['选题','研究问题','研究设计','开题','方法指导','章节','论文框架','研究计划','指导'], agentWords: ['研究','导师','指导'], boardHint: 'research', skillWords: ['研究导师','导师'], engine: 'deepseek' },
+    { id: 'mentor',    label: '研究指导',    words: ['选题','研究问题','研究设计','开题','方法指导','章节','论文框架','研究计划','指导','拆解','建构','提炼','研究框架','理论框架','假设','变量','项目管理','投稿流程','论文规划','立项','推进','实验','实验设计','随机分组','样本量'], agentWords: ['研究','导师','指导','论文'], boardHint: 'research', skillWords: ['研究导师','导师'], engine: 'deepseek' },
     { id: 'writing',   label: '写作',        words: ['写作','写文章','撰写','论文写作','报告','公文','总结','润色','文笔','成文'], agentWords: ['写作','研究','润色','文章'], boardHint: 'research', skillWords: ['写作'], engine: 'claude-code' },
     { id: 'coding',    label: '编码',        words: ['代码','编程','重构','调试','函数','bug','api','脚本','部署','实现','写个','开发'], agentWords: ['代码','编程','开发'], boardHint: '', skillWords: ['代码'], engine: 'codex' },
     { id: 'transcribe',label: '转写/纪要',   words: ['转写','录音','会议纪要','纪要','语音','字幕','转录','说话人','meeting','分钟'], agentWords: ['会议','纪要','转写','录音','语音'], boardHint: '', skillWords: [], engine: 'funasr' },
