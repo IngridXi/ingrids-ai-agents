@@ -28,6 +28,22 @@
       ],
       "defaultEngine": "claude-code",
       "color": "#2a746c"
+    },
+    {
+      "id": "design",
+      "name": "Design",
+      "emoji": "🎨",
+      "desc": "界面与产品设计：配色、视觉方向、视觉品味、布局字体、动效交互、视觉 QA",
+      "skillIds": [
+        "builtin:design/color-scheme",
+        "builtin:design/visual-direction",
+        "builtin:design/visual-taste",
+        "builtin:design/layout-typography",
+        "builtin:design/motion-interaction",
+        "builtin:design/visual-qa"
+      ],
+      "defaultEngine": "claude-code",
+      "color": "#6366f1"
     }
   ]
 }

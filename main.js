@@ -145,6 +145,11 @@ function scanSkills() {
   const records = [];
   skillRoots().forEach((r) => collectSkills(r, records));
   const boards = readBoards();
+  // 把模板里新增的板块（用户数据里还没有的 id）合并进来，老用户也能拿到新板块
+  const savedIds = boards.map((b) => b.id);
+  defaultBoards().forEach((b) => {
+    if (savedIds.indexOf(b.id) < 0) boards.push(b);
+  });
   const enabled = {};
   boards.forEach((b) => (b.skillIds || []).forEach((id) => { enabled[id] = true; }));
   records.forEach((r) => {

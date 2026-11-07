@@ -6,22 +6,40 @@
 <title>Ingrid's AI Agents</title>
 <style>
   :root {
-    --accent: #2a746c;
-    --accent-2: #1f5a54;
-    --accent-soft: #e2f1ee;
-    --ink: #18313b;
-    --ink-soft: #26434d;
-    --ink-faint: #7b8f96;
-    --deep: #173b49;
-    --gold: #c7ab74;
-    --gold-text: #8a7043;
-    --line: #e3e9e8;
-    --bg: #f6f8f7;
-    --card: #ffffff;
-    --danger: #b04d3d;
-    --shadow: 0 1px 2px rgba(23,59,73,.05), 0 8px 22px rgba(23,59,73,.06);
-    --shadow-lg: 0 24px 56px rgba(23,59,73,.18);
-    --radius: 20px;
+    /* 主色（青绿，品牌色 500）—— 只给最重要动作与选中态 */
+    --accent: #2a746c;        /* primary-500 */
+    --accent-2: #1f5a54;      /* primary-600 hover/按下 */
+    --accent-soft: #dceee9;   /* primary-100 浅底（非透明度） */
+    --accent-softer: #eef6f4; /* primary-50 更浅底 */
+    --deep: #17453f;          /* primary-700 渐变深端 */
+
+    /* 中性色（8 档，带一点青绿相） */
+    --ink: #1c2a27;           /* neutral-900 主文字 */
+    --ink-soft: #4c5a56;      /* neutral-600 次要文字 */
+    --ink-faint: #8a9894;     /* neutral-400 禁用/占位 */
+    --line: #e3e9e7;          /* neutral-200 分割线/描边 */
+    --bg: #f6f8f7;            /* neutral-50 页面底 */
+    --card: #ffffff;          /* neutral-0 卡片底 */
+    --surface-2: #eef2f0;     /* neutral-100 次面层 */
+
+    /* 语义色（4 个，约定俗成） */
+    --success: #16a34a;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --info: #0ea5e9;
+    --success-soft: #e9f7ee;
+    --warning-soft: #fdf3e3;
+    --danger-soft: #fbe9e6;
+    --info-soft: #e7f4fc;
+
+    /* 强调色（仅用于「预设」等最高优先级点缀，用量 <5%） */
+    --gold: #b8935a;
+    --gold-text: #8a6d3d;
+    --gold-soft: #f6efe2;
+
+    --shadow: 0 1px 2px rgba(28,42,39,.05), 0 8px 22px rgba(28,42,39,.06);
+    --shadow-lg: 0 24px 56px rgba(28,42,39,.16);
+    --radius: 18px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -31,10 +49,7 @@
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
       "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
     color: var(--ink);
-    background:
-      radial-gradient(1200px 480px at 6% -10%, #eaf4f2, transparent 60%),
-      radial-gradient(1000px 480px at 100% 0%, #f3ede0, transparent 55%),
-      var(--bg);
+    background: var(--bg);
     -webkit-font-smoothing: antialiased;
     display: flex; flex-direction: column; min-height: 100vh;
   }
@@ -65,7 +80,7 @@
     background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
   }
   .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(42,116,108,.15); }
-  .chip.warn .dot { background: var(--gold); box-shadow: 0 0 0 3px rgba(199,171,116,.18); }
+  .chip.warn .dot { background: var(--warning); box-shadow: 0 0 0 3px rgba(217,119,6,.15); }
   .chip.chip-btn { cursor: pointer; font-weight: 600; transition: border-color .15s ease, background .15s ease; }
   .chip.chip-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
 
@@ -91,8 +106,8 @@
   .tile .name { font-size: 15.5px; font-weight: 650; line-height: 1.2; }
   .tile .tag { font-size: 11.5px; color: var(--ink-faint); line-height: 1.4; }
   .tile .engine {
-    margin-top: 2px; font-size: 10.5px; font-weight: 600; color: var(--gold-text);
-    background: #f7f1e3; border: 1px solid #ecdfc0; padding: 2px 9px; border-radius: 999px;
+    margin-top: 2px; font-size: 10.5px; font-weight: 600; color: var(--ink-soft);
+    background: var(--surface-2); border: 1px solid var(--line); padding: 2px 9px; border-radius: 999px;
     white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   }
 
@@ -101,13 +116,12 @@
     font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
     padding: 3px 8px; border-radius: 999px; color: #fff;
   }
-  .badge.new { background: linear-gradient(135deg, #b04d3d, #d06a55); }
+  .badge.new { background: var(--accent); }
   .badge.soon { background: #c7cdd3; color: #fff; }
 
   .tile.featured {
-    border: 1.5px solid transparent;
-    background: linear-gradient(var(--card), var(--card)) padding-box,
-      linear-gradient(135deg, var(--accent), var(--gold)) border-box;
+    border: 1.5px solid var(--accent);
+    background: var(--card);
   }
   .tile.featured .emoji { background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; }
 
@@ -120,8 +134,8 @@
   .tile.add .plus { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 30px; color: var(--accent); background: var(--accent-soft); }
   .tile.add .name { color: var(--ink-soft); font-weight: 600; }
 
-  .tile.preset { border-color: #ecdfc0; background: #fffdf8; }
-  .tile.preset .emoji { background: #f7f1e3; }
+  .tile.preset { border-color: var(--gold); background: #fffdf8; }
+  .tile.preset .emoji { background: var(--gold-soft); }
   .badge.preset { background: var(--gold-text); }
 
   /* ---------- Footer ---------- */
@@ -132,8 +146,8 @@
   }
   footer.router .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; color: var(--ink); white-space: nowrap; }
   footer.router .label .ic { font-size: 17px; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 11px; border-radius: 9px; background: #f1f5f4; border: 1px solid var(--line); color: var(--ink-soft); }
-  .pill .st { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 11px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-soft); }
+  .pill .st { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
   .hint { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
 
   /* ---------- Modal ---------- */
@@ -149,8 +163,8 @@
   .modal .emoji { width: 62px; height: 62px; border-radius: 18px; display: grid; place-items: center; font-size: 32px; background: var(--accent-soft); flex: none; }
   .modal h2 { font-size: 21px; font-weight: 700; }
   .modal .sub { color: var(--ink-soft); font-size: 13px; margin-top: 4px; }
-  .modal .close { margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: #f3f6f5; color: var(--ink-soft); font-size: 17px; cursor: pointer; line-height: 1; }
-  .modal .close:hover { background: #e8edeb; }
+  .modal .close { margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-soft); font-size: 17px; cursor: pointer; line-height: 1; }
+  .modal .close:hover { background: var(--line); }
 
   .modal section { margin-bottom: 20px; }
   .modal h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint); font-weight: 700; margin-bottom: 10px; }
@@ -167,33 +181,33 @@
   .tagpill { font-size: 12.5px; padding: 6px 12px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 
   .route-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); }
-  .route-line .node { padding: 6px 11px; border-radius: 9px; background: #f1f5f4; border: 1px solid var(--line); font-weight: 600; color: var(--ink); }
+  .route-line .node { padding: 6px 11px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); font-weight: 600; color: var(--ink); }
   .route-line .arrow { color: var(--ink-faint); }
 
-  .localnote { margin-top: 14px; padding: 12px 14px; background: #faf6ec; border: 1px solid #ecdfc0; border-left: 3px solid var(--gold); border-radius: 8px; font-size: 12.5px; color: #6b5a34; line-height: 1.6; }
+  .localnote { margin-top: 14px; padding: 12px 14px; background: var(--accent-softer); border: 1px solid var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 8px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; }
 
   /* ---------- Settings panel ---------- */
   .engines-list { display: flex; flex-direction: column; gap: 10px; }
   .engine-row {
     display: flex; align-items: center; gap: 12px; padding: 13px 14px;
-    background: #f6f9f8; border: 1px solid var(--line); border-radius: 13px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 13px;
   }
   .engine-row .e-ic { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-size: 20px; background: #fff; border: 1px solid var(--line); flex: none; }
   .engine-row .e-body { flex: 1; min-width: 0; }
   .engine-row .e-name { font-size: 14px; font-weight: 650; }
   .engine-row .e-tag { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; }
   .engine-row .e-kind { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex: none; }
-  .engine-row .e-kind.cli { background: #e2f1ee; color: var(--accent); }
-  .engine-row .e-kind.api { background: #f7f1e3; color: var(--gold-text); }
-  .engine-row .e-kind.local { background: #e8eef7; color: #3c5b7d; }
+  .engine-row .e-kind.cli { background: var(--accent-soft); color: var(--accent); }
+  .engine-row .e-kind.api { background: var(--info-soft); color: var(--info); }
+  .engine-row .e-kind.local { background: var(--success-soft); color: var(--success); }
   .engine-row .e-action { flex: none; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; padding: 6px 11px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
   .engine-row .e-action:hover { border-color: var(--accent); background: var(--accent-soft); }
   .engine-row .e-action.off { color: var(--ink-faint); cursor: default; }
   .engine-row .e-action.off:hover { border-color: var(--line); background: #fff; }
   .status-pill { flex: none; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
-  .status-pill.ok { background: #e2f1ee; color: var(--accent); }
-  .status-pill.wait { background: #f7f1e3; color: var(--gold-text); }
-  .status-pill.miss { background: #f1f3f2; color: var(--ink-faint); }
+  .status-pill.ok { background: var(--success-soft); color: var(--success); }
+  .status-pill.wait { background: var(--warning-soft); color: var(--warning); }
+  .status-pill.miss { background: var(--surface-2); color: var(--ink-faint); }
 
   .kv { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .kv label { flex: none; width: 96px; font-size: 13px; font-weight: 650; color: var(--ink-soft); }
@@ -232,11 +246,9 @@
 
     <footer class="router">
       <div class="label"><span class="ic">🏠</span>local-first · 每个 Agent 绑定自己的引擎</div>
-      <span class="pill"><span class="st"></span>会议纪要官 → FunASR + 本地大模型</span>
-      <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 任务路由 · 限额切换 · 记账</span>
-      <span class="pill"><span class="st"></span>👁️ 监督者 → 核心需求 · 防漂移 · 纠偏</span>
-      <span class="pill"><span class="st"></span>🕊️ 秘书 → 日程提醒 · 邮件分类 · 分配任务</span>
-      <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent → 监督者 + 秘书 · local-first</span>
+      <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 记账</span>
+      <span class="pill"><span class="st"></span>👁️ 监督者 · 🕊️ 秘书 · 悬浮窗</span>
+      <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent · local-first</span>
     </footer>
   </div>
 
@@ -335,6 +347,31 @@ const SEED_AGENTS = [
         { kind: '调度', label: 'AgentOrchestrator（agents-core.js）' },
         { kind: '路由', label: 'ModelRouter · 降级链' },
         { kind: '账本', label: 'UsageLedger · data/usage/*.jsonl' },
+      ],
+    },
+  },
+  {
+    name: '界面设计师', emoji: '🎨',
+    tag: '配色方案 · 布局 · 视觉统一',
+    status: 'active', badge: 'UI',
+    engine: 'claude-code', engineLabel: 'Claude Code · 设计',
+    soul: '你是界面/产品设计师。按 Design 板块的方法论出方案：先定视觉方向（一句话气质+目标用户），再统一字体/色彩/组件/动效/页面语言；配色用单色+一个强调色骨架、8 档中性灰、语义色分离、60-30-10、对比度≥4.5:1；布局用 4/8 网格、字号阶≥4、字重≤3；动效全站一套时长缓动；最后按视觉 QA 清单自查对齐/间距/溢出/对比度/空态/加载态。识别并消除模板化 AI 味 UI（渐变滥用、玻璃拟态、通用 emoji）。不照抄他人配色，不堆形容词。',
+    fallbacks: ['gpt', 'qwen'],
+    detail: {
+      sub: 'UI Design · 视觉方向 → 配色 → 排版 → 动效 → QA',
+      desc: '工作台的界面设计师。方法论来自你的本机 skill「ziqidonglai-ui-color-scheme」+ 12 个 GitHub 高星 UI/网页设计 skill（ui-ux-pro-max、taste-skill、huashui-design、MengTo、scroll-world、emikokawasaki、make-interfaces-feel-better、designer-skills、Design OS、Anthropic Frontend Design 等）提炼的 6 项能力：视觉方向、配色、视觉品味（反模板化）、布局字体、动效交互、视觉 QA。',
+      workflow: [
+        { t: '视觉方向', s: '一句话气质 + 目标用户 + 统一五件事' },
+        { t: '配色', s: '单色骨架 + 8 档灰阶 + 语义色 + 对比度' },
+        { t: '视觉品味', s: '消除模板化 AI 味 UI' },
+        { t: '布局字体', s: '4/8 网格 + 字号阶 + 字重层级' },
+        { t: '动效交互', s: '全站一套时长缓动 + 反馈' },
+        { t: '视觉 QA', s: '对齐/间距/溢出/空态/加载态逐项查' },
+      ],
+      capabilities: ['视觉方向', '配色方案', '反模板化', '布局字体', '动效交互', '视觉 QA'],
+      route: [
+        { kind: '方法论', label: 'ziqidonglai-ui-color-scheme + 12 个 UI skill' },
+        { kind: '板块', label: 'Design · 6 个设计 skill' },
       ],
     },
   },
