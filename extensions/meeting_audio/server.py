@@ -124,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_summary(self):
         try:
             data = _read_json(self)
-            out = summarize.live_summary(data.get("transcript", ""), data.get("notes", ""))
+            out = summarize.live_summary(data.get("transcript", ""), data.get("notes", ""), data.get("engine", "ollama"))
             return _json(self, {"ok": True, "summary": out})
         except ValueError as e:
             return _json(self, {"error": str(e)}, 400)
@@ -135,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_minutes(self):
         try:
             data = _read_json(self)
-            out = summarize.minutes(data.get("transcript", ""), data.get("notes", ""), data.get("speakers"))
+            out = summarize.minutes(data.get("transcript", ""), data.get("notes", ""), data.get("speakers"), data.get("engine", "ollama"))
             return _json(self, {"ok": True, "minutes": out})
         except ValueError as e:
             return _json(self, {"error": str(e)}, 400)

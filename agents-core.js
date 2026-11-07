@@ -33,7 +33,7 @@
     'grok':        { name: 'Grok',        kind: 'cli',   tag: '本机 CLI · 输出便宜',   status: 'ready',   price: { in: 2,    out: 6    } },
     'deepseek':    { name: 'DeepSeek',    kind: 'api',   tag: '中文强 · 高性价比',     status: 'pending', price: { in: 0.28, out: 0.42 } },
     'gpt':         { name: 'GPT',         kind: 'api',   tag: '综合 · 推理',           status: 'pending', price: { in: 2,    out: 10   } },
-    'qwen':        { name: 'Qwen',        kind: 'api',   tag: '中文 · 可本地部署',     status: 'pending', price: { in: 0.4,  out: 1.2  } },
+    'qwen':        { name: 'Qwen',        kind: 'api',   tag: '中文 · 新用户有免费额度', status: 'pending', price: { in: 0.4,  out: 1.2  } },
     'local-llm':   { name: '本地大模型',  kind: 'local', tag: '不上云 · 隐私优先',     status: 'ready',   price: { in: 0,    out: 0    } },
     'funasr':      { name: 'FunASR',      kind: 'local', tag: '语音转写（本机）',      status: 'ready',   price: { in: 0,    out: 0    } },
   };

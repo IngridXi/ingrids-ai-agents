@@ -221,6 +221,48 @@
     }
   }
 
+  /* ============ 总结引擎选择 ============ */
+  var API_ENGINE_META = [
+    { id: 'deepseek', name: 'DeepSeek', tag: 'API · 中文强 · 高性价比' },
+    { id: 'gpt', name: 'GPT', tag: 'API · OpenAI' },
+    { id: 'qwen', name: 'Qwen', tag: 'API · 通义千问' }
+  ];
+  var currentEngine = 'ollama';
+
+  function updateEngineHint() {
+    var hint = el('engine-hint'), v = el('summary-engine').value;
+    if (v === 'ollama') {
+      hint.textContent = '本地 Ollama（qwen3:8b）总结，内容不上云';
+      hint.className = 'eb-hint ok';
+    } else {
+      var m = API_ENGINE_META.filter(function (x) { return x.id === v; })[0];
+      hint.textContent = (m ? m.name : v) + ' · 云端 API 按 token 计费（Key 由主程序注入，不经过页面）';
+      hint.className = 'eb-hint warn';
+    }
+  }
+
+  function initEngineSelect() {
+    var sel = el('summary-engine');
+    if (!sel) return;
+    sel.addEventListener('change', function () {
+      currentEngine = sel.value;
+      updateEngineHint();
+    });
+    if (!window.ingrid || !window.ingrid.getSettings) { updateEngineHint(); return; }
+    window.ingrid.getSettings().then(function (s) {
+      s = s || {};
+      API_ENGINE_META.forEach(function (m) {
+        if (s[m.id]) {
+          var opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name + ' · ' + m.tag;
+          sel.appendChild(opt);
+        }
+      });
+      updateEngineHint();
+    }).catch(function () { updateEngineHint(); });
+  }
+
   /* ============ 笔记：本地自动保存 ============ */
   function saveNotes() { try { localStorage.setItem('meeting_audio_notes', el('notes').value); setStatus(el('notes-status'), '已自动保存到本机', 'ok'); } catch (e) {} }
   function restoreNotes() { try { var v = localStorage.getItem('meeting_audio_notes'); if (v) el('notes').value = v; } catch (e) {} }
@@ -229,7 +271,7 @@
   /* ============ AI 总结 / 纪要 / PPT ============ */
   function doSummary() {
     var btn = el('btn-summary'); busy(btn, true, '总结中');
-    postJson('/summary', { transcript: transcriptAccum, notes: el('notes').value }).then(function (j) {
+    postJson('/summary', { transcript: transcriptAccum, notes: el('notes').value, engine: currentEngine }).then(function (j) {
       el('summary-box').classList.remove('hidden');
       el('summary-text').textContent = j.summary;
       setStatus(el('summary-status'), '已生成实时总结', 'ok');
@@ -248,7 +290,7 @@
   function doMinutes() {
     var btn = el('btn-minutes'); busy(btn, true, '生成中');
     var transcript = finalResult ? buildTranscriptText(finalResult) : transcriptAccum.replace(/。/g, '。\n');
-    postJson('/minutes', { transcript: transcript, notes: el('notes').value, speakers: finalResult ? finalResult.speakers : [] })
+    postJson('/minutes', { transcript: transcript, notes: el('notes').value, speakers: finalResult ? finalResult.speakers : [], engine: currentEngine })
       .then(function (j) {
         minutesMd = j.minutes;
         el('minutes-result').classList.remove('hidden');
@@ -441,6 +483,7 @@
   });
 
   healthCheck();
+  initEngineSelect();
   loadSpeakers();
   restoreNotes();
 })();

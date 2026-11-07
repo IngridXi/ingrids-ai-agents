@@ -96,7 +96,7 @@
   panel.id = 'secPanel'; panel.className = 'sec-panel';
   panel.innerHTML =
     '<div class="sec-head" id="secHead">' +
-      '<span class="sec-title">🕊️ 秘书</span>' +
+      '<span class="sec-title">' + iconSvg('feather') + ' 秘书</span>' +
       '<span class="sec-count" id="secCount">0 日程</span>' +
       '<span class="sec-btns">' +
         '<button id="secMin" title="收起/展开">—</button>' +
@@ -107,11 +107,11 @@
       '<div class="sec-sec"><label>随时告诉秘书你的想法</label>' +
         '<textarea id="secThought" placeholder="例如：下周有个报告要交，帮我盯着点"></textarea>' +
         '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button>' +
-        '<button class="sec-btn ghost" id="secAssign" style="flex:1">🧭 记住并分配给合适的 Agent</button></div>' +
+        '<button class="sec-btn ghost" id="secAssign" style="flex:1">' + iconSvg('compass') + ' 记住并分配给合适的 Agent</button></div>' +
         '<div class="sec-chat" id="secChat"></div></div>' +
       '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 添加日程</button>' +
-        '<button class="sec-btn ghost" id="secFromShot">📷 从邮件截图添加</button></div></div>' +
+        '<button class="sec-btn ghost" id="secFromShot">' + iconSvg('camera') + ' 从邮件截图添加</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button></div></div>' +
     '</div>';
@@ -129,7 +129,7 @@
   /* 顶栏入口 */
   var chip = document.createElement('button');
   chip.className = 'chip chip-btn'; chip.id = 'btnSecretary';
-  chip.textContent = '🕊️ 秘书';
+  chip.innerHTML = iconFor('🕊️') + ' 秘书';
   chip.title = '日程提醒 · 邮件分类 · 记想法并分配';
   var meta = document.querySelector('.topbar .meta');
   if (meta) meta.insertBefore(chip, document.getElementById('btnSupervisor') || document.getElementById('btnSettings'));
@@ -155,11 +155,11 @@
     document.getElementById('secCount').textContent = list.length + ' 日程';
     if (!list.length) { box.innerHTML = '<div class="sec-empty">暂无日程。点下方添加，或从邮件截图导入。</div>'; return; }
     box.innerHTML = list.slice(0, 12).map(function (e) {
-      var remind = e.reminderMin ? ' · ⏰提前' + (e.reminderMin >= 60 ? (e.reminderMin / 60) + 'h' : e.reminderMin + 'm') : '';
+      var remind = e.reminderMin ? ' · ' + iconSvg('clock') + ' 提前' + (e.reminderMin >= 60 ? (e.reminderMin / 60) + 'h' : e.reminderMin + 'm') : '';
       var src = e.source ? ' · ' + esc(e.source) : '';
       return '<div class="sec-item"><div class="tt"><b>' + esc(e.title || '（无标题）') + '</b>' +
         '<div class="sub">' + fmtAt(e.at) + (e.location ? ' · ' + esc(e.location) : '') + remind + src + '</div>' +
-        (e.link ? '<div class="sub">🔗 <a href="' + esc(e.link) + '" target="_blank" style="color:var(--accent)">' + esc(e.link.slice(0, 40)) + '</a></div>' : '') +
+        (e.link ? '<div class="sub">' + iconSvg('link') + ' <a href="' + esc(e.link) + '" target="_blank" style="color:var(--accent)">' + esc(e.link.slice(0, 40)) + '</a></div>' : '') +
         '</div><span class="del" data-del="' + esc(e.id) + '">✕</span></div>';
     }).join('');
     box.querySelectorAll('[data-del]').forEach(function (b) {
@@ -174,7 +174,7 @@
       var cls = m.importance >= 3 ? 'imp' : (m.importance >= 2 ? 'mid' : 'low');
       return '<div class="sec-item"><div class="tt"><b>' + esc(m.subject) + '</b>' +
         '<div class="sub">' + esc(m.from) + (m.important && !m.read ? ' · <b style="color:var(--danger)">未读重要</b>' : '') + '</div></div>' +
-        '<span class="sec-cat ' + cls + '" title="重要度 ' + m.importance + '">' + esc(SC.categoryLabel(m.category)) + '</span>' +
+        '<span class="sec-cat ' + cls + '" title="重要度 ' + m.importance + '">' + iconFor(SC.categoryEmoji(m.category)) + ' ' + esc(SC.categoryLabel(m.category)) + '</span>' +
         '<span class="del" data-del="' + esc(m.id) + '">✕</span></div>';
     }).join('');
     box.querySelectorAll('[data-del]').forEach(function (b) {
@@ -272,11 +272,11 @@
     var hint = prefill || {};
     modalMask.style.display = 'flex';
     modalMask.innerHTML =
-      '<div class="sec-modal"><h3>' + (isShot ? '📷 从邮件截图添加日程' : '📅 添加日程') + '</h3>' +
+      '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 从邮件截图添加日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
       '<div class="sub">' + (isShot ? '可先粘贴邮件文字让秘书自动提取，或直接手填；保存后会自动设提醒并附上邮件链接。' : '保存后秘书会按提醒时间通知你。') + '</div>' +
       (shotDataUrl ? '<img class="shot" src="' + shotDataUrl + '">' : '') +
       '<div class="f"><label>邮件文字（可选，帮秘书提取）</label><textarea id="evText" rows="3">' + esc(hint.raw || '') + '</textarea>' +
-        '<div style="margin-top:6px"><button class="sec-btn ghost" id="evExtract">✨ 从文字自动提取</button></div></div>' +
+        '<div style="margin-top:6px"><button class="sec-btn ghost" id="evExtract">' + iconSvg('sparkles') + ' 从文字自动提取</button></div></div>' +
       '<div class="f"><label>标题 *</label><input id="evTitle" value="' + esc(hint.title || '') + '"></div>' +
       '<div class="f"><label>时间 *</label><input type="datetime-local" id="evAt" value="' + esc(hint.atLocal || '') + '"></div>' +
       '<div class="f"><label>地点</label><input id="evLoc" value="' + esc(hint.location || '') + '"></div>' +
@@ -325,7 +325,7 @@
   document.getElementById('secAddEmail').addEventListener('click', function () {
     modalMask.style.display = 'flex';
     modalMask.innerHTML =
-      '<div class="sec-modal"><h3>📧 导入邮件</h3>' +
+      '<div class="sec-modal"><h3>' + iconSvg('mail') + ' 导入邮件</h3>' +
       '<div class="sub">粘贴一封邮件的发件人 / 主题 / 正文，秘书会自动分类并判断是否重要。' +
       '（IMAP/Gmail 实时同步需在「引擎设置」里接入邮箱凭据，后续可做）</div>' +
       '<div class="f"><label>发件人</label><input id="emFrom" placeholder="name@example.com"></div>' +

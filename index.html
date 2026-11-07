@@ -101,7 +101,7 @@
 
   .tile .emoji {
     width: 56px; height: 56px; border-radius: 16px;
-    display: grid; place-items: center; font-size: 30px; background: var(--accent-soft);
+    display: grid; place-items: center; font-size: 30px; background: var(--accent-soft); color: var(--accent);
   }
   .tile .name { font-size: 15.5px; font-weight: 650; line-height: 1.2; }
   .tile .tag { font-size: 11.5px; color: var(--ink-faint); line-height: 1.4; }
@@ -160,7 +160,7 @@
   }
   @keyframes pop { from { transform: translateY(10px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
   .modal header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
-  .modal .emoji { width: 62px; height: 62px; border-radius: 18px; display: grid; place-items: center; font-size: 32px; background: var(--accent-soft); flex: none; }
+  .modal .emoji { width: 62px; height: 62px; border-radius: 18px; display: grid; place-items: center; font-size: 32px; background: var(--accent-soft); color: var(--accent); flex: none; }
   .modal h2 { font-size: 21px; font-weight: 700; }
   .modal .sub { color: var(--ink-soft); font-size: 13px; margin-top: 4px; }
   .modal .close { margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-soft); font-size: 17px; cursor: pointer; line-height: 1; }
@@ -232,7 +232,7 @@
   <div class="shell">
     <header class="topbar">
       <div class="brand">
-        <div class="mark">🤖</div>
+        <div class="mark" data-icon="bot"></div>
         <div class="titles">
           <h1>Ingrid's <span class="accent">AI Agents</span></h1>
           <p>个人 AI 工作台 · 横屏版 · 本机优先</p>
@@ -241,17 +241,17 @@
       <div class="meta">
         <span class="chip"><span class="dot"></span><span id="agentCount">1</span> 个 Agent 已就绪</span>
         <span class="chip warn"><span class="dot"></span>每个 Agent 独立模型</span>
-        <button class="chip chip-btn" id="btnSkills" title="按板块管理技能、自动推荐、挂载">🧩 <span id="skillsCount">0</span> 个技能板块</button>
-        <button class="chip chip-btn" id="btnSettings" title="配置引擎与 API Key">⚙️ 引擎设置</button>
+        <button class="chip chip-btn" id="btnSkills" title="按板块管理技能、自动推荐、挂载"><span data-icon="grid"></span> <span id="skillsCount">0</span> 个技能板块</button>
+        <button class="chip chip-btn" id="btnSettings" title="配置引擎与 API Key"><span data-icon="settings"></span> 引擎设置</button>
       </div>
     </header>
 
     <main class="grid" id="grid"></main>
 
     <footer class="router">
-      <div class="label"><span class="ic">🏠</span>local-first · 每个 Agent 绑定自己的引擎</div>
+      <div class="label"><span class="ic" data-icon="home"></span>local-first · 每个 Agent 绑定自己的引擎</div>
       <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 记账</span>
-      <span class="pill"><span class="st"></span>👁️ 监事 · 🕊️ 秘书 · 右上角入口</span>
+      <span class="pill"><span class="st"></span><span data-icon="eye"></span> 监事 · <span data-icon="feather"></span> 秘书 · 右上角入口</span>
       <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent · local-first</span>
     </footer>
   </div>
@@ -266,6 +266,7 @@
     <div class="modal" id="settingsModal"></div>
   </div>
 
+<script src="icons.js"></script>
 <script src="agents-core.js"></script>
 <script src="skills-core.js"></script>
 <script src="task-router.js"></script>
@@ -513,7 +514,7 @@ function renderAgents() {
       : (a.status === 'soon' ? `<span class="badge soon">敬请期待</span>` : '');
     el.innerHTML = `
       ${badge}
-      <div class="emoji">${a.emoji}</div>
+      <div class="emoji">${iconFor(a.emoji)}</div>
       <div class="name">${a.name}</div>
       <div class="tag">${a.tag}</div>
       <div class="engine">${engineLabelOf(a)}</div>`;
@@ -538,7 +539,7 @@ function renderAgents() {
     const b = boardMap[p.boardId];
     el.innerHTML = `
       <span class="badge preset">${escHtml(b ? b.name : '预设')}</span>
-      <div class="emoji">${escHtml(p.emoji || '⚡')}</div>
+      <div class="emoji">${iconFor(p.emoji || '⚡')}</div>
       <div class="name">${escHtml(p.name)}</div>
       <div class="tag">${(p.skillIds || []).length} 个技能 · ${(p.agentIds || []).length} 个 Agent</div>
       <div class="engine">一键组合</div>`;
@@ -577,7 +578,7 @@ function openModal(a) {
 
   modal.innerHTML = `
     <header>
-      <div class="emoji">${a.emoji || '🤖'}</div>
+      <div class="emoji">${iconFor(a.emoji || '🤖')}</div>
       <div><h2>${a.name}</h2><div class="sub">${d.sub || ''}</div></div>
       <button class="close" id="close">✕</button>
     </header>
@@ -597,7 +598,10 @@ function openModal(a) {
     const st = document.getElementById('m-engine-status');
     if (!sel || !st) return;
     engineStatusText(sel.value).then(t => {
-      st.textContent = t;
+      var html = t;
+      if (t.indexOf('✅') === 0) html = iconSvg('check') + ' ' + t.replace(/^✅\s*/, '');
+      else if (t.indexOf('⚠️') === 0) html = iconSvg('warning') + ' ' + t.replace(/^⚠️\s*/, '');
+      st.innerHTML = html;
       st.className = 'engine-status' + (t.indexOf('✅') === 0 ? ' ok' : (t.indexOf('⚠️') === 0 ? ' warn' : ''));
     });
   };
@@ -615,7 +619,7 @@ function openCreateModal() {
     `<option value="${id}">${core.ENGINES[id].name}（${core.ENGINES[id].tag}）</option>`).join('');
   modal.innerHTML = `
     <header>
-      <div class="emoji">✨</div>
+      <div class="emoji">${iconSvg('sparkles')}</div>
       <div><h2>新建 Agent</h2><div class="sub">填好就保存到本机注册表</div></div>
       <button class="close" id="close">✕</button>
     </header>
@@ -672,7 +676,7 @@ function openSettings() {
   // 先画骨架
   settingsModal.innerHTML = `
     <header>
-      <div class="emoji">⚙️</div>
+      <div class="emoji">${iconSvg('settings')}</div>
       <div><h2>引擎设置</h2><div class="sub">${IS_DESKTOP ? 'API Key 加密存系统钥匙串 · 本机优先' : '浏览器预览模式（无本机 CLI / 钥匙串）'}</div></div>
       <button class="close" id="s-close">✕</button>
     </header>
@@ -695,7 +699,7 @@ function openSettings() {
     const row = document.createElement('div');
     row.className = 'engine-row';
     row.innerHTML = `
-      <div class="e-ic">${id === 'claude-code' ? '🧠' : id === 'codex' ? '💻' : '🤖'}</div>
+      <div class="e-ic">${iconFor(id === 'claude-code' ? '🧠' : id === 'codex' ? '💻' : '🤖')}</div>
       <div class="e-body"><div class="e-name">${meta.name}</div><div class="e-tag">${meta.tag}</div></div>
       ${engineAccessBadge(id, meta.kind)}
       <span class="status-pill wait" data-st>检测中</span>
@@ -745,7 +749,7 @@ function openSettings() {
     const div = document.createElement('div');
     div.className = 'engine-row';
     div.innerHTML = `
-      <div class="e-ic">🔑</div>
+      <div class="e-ic">${iconSvg('key')}</div>
       <div class="e-body"><div class="e-name">${meta.name}</div><div class="e-tag">${meta.tag}</div></div>
       ${engineAccessBadge(id, meta.kind)}
       <input data-key="${id}" type="password" placeholder="sk-…（未设置）" style="flex:1;padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:12.5px;background:#fff;color:var(--ink)">`;
@@ -800,6 +804,11 @@ const settingsObserver = new MutationObserver(() => {
   }
 });
 settingsObserver.observe(settingsModal, { childList: true, subtree: true });
+
+// 把静态 HTML 里 data-icon 占位符替换成纯色 SVG 图标
+document.querySelectorAll('[data-icon]').forEach(function (el) {
+  el.innerHTML = window.iconSvg(el.getAttribute('data-icon'));
+});
 
 renderAgents();
 

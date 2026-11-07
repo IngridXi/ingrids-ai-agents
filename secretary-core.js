@@ -168,14 +168,14 @@
 
   /* ---------- 4. 邮件分类（关键词启发式） ---------- */
   var CATEGORY_RULES = [
-    { cat: 'urgent', label: '🔴 重要紧急', words: ['紧急','立即','马上','尽快','务必','最后期限','deadline','截止','逾期','催','逾期未','必须今天','加急','asap','urgent'] },
-    { cat: 'meeting', label: '📅 会议/邀请', words: ['会议','邀请','参会','zoom','teams','腾讯会议','议程','议程安排','schedule','invite','会议纪要','线上会议'] },
-    { cat: 'reply', label: '✍️ 需回复', words: ['请回复','请确认','请告知','麻烦您','等你','期待回复','rsvp','请尽快回复','请审阅','请批准'] },
-    { cat: 'todo', label: '✅ 待办', words: ['待办','任务','行动项','请处理','请完成','跟进','todo','action item','请协助'] },
-    { cat: 'money', label: '💰 账单/付款', words: ['账单','发票','付款','支付','扣款','退款','缴费','invoice','payment','账单到期','续费','订阅'] },
-    { cat: 'security', label: '🔐 账号/安全', words: ['验证码','登录','密码','安全','验证','异地登录','账号','找回','authenticate','verification'] },
-    { cat: 'info', label: 'ℹ️ 仅参考', words: ['简报','newsletter','订阅','周报','月报','摘要','通知','公告','资讯','news','更新日志'] },
-    { cat: 'marketing', label: '📣 营销', words: ['促销','优惠','折扣','广告','推广','营销','退订','unsubscribe','限时','特价','活动报名','免费领取'] },
+    { cat: 'urgent', emoji: '🔴', label: '重要紧急', words: ['紧急','立即','马上','尽快','务必','最后期限','deadline','截止','逾期','催','逾期未','必须今天','加急','asap','urgent'] },
+    { cat: 'meeting', emoji: '📅', label: '会议/邀请', words: ['会议','邀请','参会','zoom','teams','腾讯会议','议程','议程安排','schedule','invite','会议纪要','线上会议'] },
+    { cat: 'reply', emoji: '✍️', label: '需回复', words: ['请回复','请确认','请告知','麻烦您','等你','期待回复','rsvp','请尽快回复','请审阅','请批准'] },
+    { cat: 'todo', emoji: '✅', label: '待办', words: ['待办','任务','行动项','请处理','请完成','跟进','todo','action item','请协助'] },
+    { cat: 'money', emoji: '💰', label: '账单/付款', words: ['账单','发票','付款','支付','扣款','退款','缴费','invoice','payment','账单到期','续费','订阅'] },
+    { cat: 'security', emoji: '🔐', label: '账号/安全', words: ['验证码','登录','密码','安全','验证','异地登录','账号','找回','authenticate','verification'] },
+    { cat: 'info', emoji: 'ℹ️', label: '仅参考', words: ['简报','newsletter','订阅','周报','月报','摘要','通知','公告','资讯','news','更新日志'] },
+    { cat: 'marketing', emoji: '📣', label: '营销', words: ['促销','优惠','折扣','广告','推广','营销','退订','unsubscribe','限时','特价','活动报名','免费领取'] },
   ];
   var IMPORTANCE = { urgent: 3, security: 3, money: 2, meeting: 2, reply: 2, todo: 2, info: 1, marketing: 0, general: 1 };
 
@@ -193,9 +193,13 @@
     if (/(gov\.|edu\.|bank|paypal|apple\.com|google\.com|学校|银行|财务|hr|人事)/i.test(String(email.from || ''))) imp = Math.max(imp, 2);
     return { category: best, importance: imp, important: imp >= 2, hits: hits };
   }
+  function categoryEmoji(cat) {
+    for (var i = 0; i < CATEGORY_RULES.length; i++) if (CATEGORY_RULES[i].cat === cat) return CATEGORY_RULES[i].emoji;
+    return '📄';
+  }
   function categoryLabel(cat) {
     for (var i = 0; i < CATEGORY_RULES.length; i++) if (CATEGORY_RULES[i].cat === cat) return CATEGORY_RULES[i].label;
-    return '📄 一般';
+    return '一般';
   }
 
   /* ---------- 5. 从文字提取事件提示（启发式预填） ---------- */
@@ -254,6 +258,7 @@
     EmailStore: EmailStore,
     ThoughtStore: ThoughtStore,
     classifyEmail: classifyEmail,
+    categoryEmoji: categoryEmoji,
     categoryLabel: categoryLabel,
     extractEventHint: extractEventHint,
     brief: brief,

@@ -220,7 +220,14 @@ function ensureMeetingAudioBackend() {
     const { dir, py, main } = meetingAudioBackendCmd();
     if (!fs.existsSync(py) || !fs.existsSync(main)) return;  // 后端未安装，前端会提示
     const log = fs.openSync(path.join(dir, 'server.log'), 'a');
-    const child = spawn(py, [main], { cwd: dir, stdio: ['ignore', log, log], detached: true });
+    // 注入已配的云端 API Key（总结引擎切 deepseek/gpt/qwen 时用），Key 只进子进程环境、不落盘不打印
+    const env = Object.assign({}, process.env);
+    let apiSettings;
+    try { apiSettings = decryptSettings(readSettingsRaw()); } catch { apiSettings = {}; }
+    for (const id of ['deepseek', 'gpt', 'qwen']) {
+      if (apiSettings[id]) env['MEETING_AUDIO_KEY_' + id] = String(apiSettings[id]);
+    }
+    const child = spawn(py, [main], { cwd: dir, stdio: ['ignore', log, log], detached: true, env });
     child.unref();
   });
   probe.once('timeout', () => { probe.destroy(); });

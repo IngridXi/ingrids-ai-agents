@@ -14,6 +14,17 @@ import urllib.request
 OLLAMA_URL = os.environ.get("MEETING_AUDIO_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 DEFAULT_MODEL = os.environ.get("MEETING_AUDIO_LLM", "qwen3:8b")
 
+# 云端 API 引擎（OpenAI 兼容接口）。Key 由主进程经环境变量注入（MEETING_AUDIO_KEY_<id>）。
+API_ENGINES = {
+    "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-chat"},
+    "gpt": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+    "qwen": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus"},
+}
+
+
+def _api_key(engine: str) -> str:
+    return os.environ.get("MEETING_AUDIO_KEY_" + engine, "")
+
 _MINUTES_SYSTEM = (
     "你是一名专业的会议记录秘书。请根据给定的会议转写文本和旁注，生成一份结构清晰的中文会议纪要。"
     "只依据输入内容，不得虚构未出现的事实、数字、日期或人名。"
@@ -46,6 +57,35 @@ def _chat(messages: list[dict], num_predict: int = 2048, temperature: float = 0.
     return (data.get("message") or {}).get("content", "").strip()
 
 
+def _chat_openai(engine: str, messages: list[dict], num_predict: int = 2048, temperature: float = 0.2) -> str:
+    """调用 OpenAI 兼容云端 API（deepseek/gpt/qwen），返回纯文本 content。"""
+    cfg = API_ENGINES[engine]
+    key = _api_key(engine)
+    if not key:
+        raise RuntimeError(f"未配置 {engine} 的 API Key")
+    payload = {
+        "model": cfg["model"],
+        "messages": messages,
+        "stream": False,
+        "max_tokens": num_predict,
+        "temperature": temperature,
+    }
+    req = urllib.request.Request(
+        cfg["base_url"].rstrip("/") + "/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key},
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
+
+
+def _chat_engine(engine: str, messages: list[dict], num_predict: int = 2048, temperature: float = 0.2) -> str:
+    if engine in API_ENGINES:
+        return _chat_openai(engine, messages, num_predict, temperature)
+    return _chat(messages, num_predict, temperature)
+
+
 def available() -> bool:
     """Ollama 服务是否可用且模型存在。"""
     try:
@@ -58,10 +98,12 @@ def available() -> bool:
         return False
 
 
-def live_summary(transcript: str, notes: str = "") -> str:
+def live_summary(transcript: str, notes: str = "", engine: str = "ollama") -> str:
     """实时小结：对当前转写给一句到三句的进展概括（轻量、快速）。"""
-    if not available():
+    if engine == "ollama" and not available():
         return _rule_summary(transcript)
+    if engine in API_ENGINES and not _api_key(engine):
+        return _rule_summary(transcript) + "\n（该 API 引擎未配置 Key，已用规则化降级）"
     text = (transcript or "").strip()
     if len(text) < 8:
         return "（内容还很少，继续录音，稍后会自动生成小结）"
@@ -70,15 +112,17 @@ def live_summary(transcript: str, notes: str = "") -> str:
         user += "\n\n旁注：\n" + notes.strip()[-1500:]
     user += "\n\n请用 1-3 句中文概括目前讨论的主题、进展与已形成的结论。"
     try:
-        return _chat([{"role": "user", "content": user}], num_predict=300, temperature=0.3)
+        return _chat_engine(engine, [{"role": "user", "content": user}], num_predict=300, temperature=0.3)
     except Exception as e:  # noqa: BLE001
         return _rule_summary(transcript) + f"\n（LLM 暂不可用：{e}）"
 
 
-def minutes(transcript: str, notes: str = "", speakers: list[dict] | None = None) -> str:
+def minutes(transcript: str, notes: str = "", speakers: list[dict] | None = None, engine: str = "ollama") -> str:
     """生成结构化会议纪要（Markdown）。"""
-    if not available():
+    if engine == "ollama" and not available():
         return _rule_minutes(transcript, notes, speakers)
+    if engine in API_ENGINES and not _api_key(engine):
+        return _rule_minutes(transcript, notes, speakers) + "\n\n> 说明：该 API 引擎未配置 Key，以上为规则化纪要。"
     text = (transcript or "").strip()
     if not text:
         return "（暂无转写内容，无法生成纪要）"
@@ -93,12 +137,13 @@ def minutes(transcript: str, notes: str = "", speakers: list[dict] | None = None
         user += "\n\n识别到的说话人：" + "、".join(named)
     user += "\n\n请生成会议纪要。"
     try:
-        return _chat(
+        return _chat_engine(
+            engine,
             [{"role": "system", "content": _MINUTES_SYSTEM}, {"role": "user", "content": user}],
             num_predict=2048, temperature=0.2,
         )
     except Exception as e:  # noqa: BLE001
-        return _rule_minutes(transcript, notes, speakers) + f"\n\n> 说明：本地 LLM 暂不可用（{e}），以上为规则化纪要。"
+        return _rule_minutes(transcript, notes, speakers) + f"\n\n> 说明：LLM 暂不可用（{e}），以上为规则化纪要。"
 
 
 # --------------------------------------------------------------------------- #

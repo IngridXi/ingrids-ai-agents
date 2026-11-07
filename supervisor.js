@@ -119,7 +119,7 @@
   panel.id = 'supPanel'; panel.className = 'sup-panel';
   panel.innerHTML =
     '<div class="sup-head" id="supHead">' +
-      '<span class="sup-title">👁️ 监事</span>' +
+      '<span class="sup-title">' + iconSvg('eye') + ' 监事</span>' +
       '<span class="sup-status" id="supStatus">已暂停</span>' +
       '<span class="sup-btns">' +
         '<button id="supMin" title="收起/展开">—</button>' +
@@ -130,9 +130,9 @@
       '<div class="sup-sec"><label>监督的工作</label><select id="supTarget"></select></div>' +
       '<div class="sup-sec"><label>核心需求 · 可随时增删</label><div id="supGoals"></div>' +
         '<div class="sup-add"><input type="text" id="supGoalInput" placeholder="新增一条核心需求…"><button id="supGoalAdd">＋</button></div>' +
-        '<button class="sup-btn ghost" id="supClarify">💬 对话确认需求（先讲清楚再做）</button></div>' +
+        '<button class="sup-btn ghost" id="supClarify">' + iconSvg('message') + ' 对话确认需求（先讲清楚再做）</button></div>' +
       '<div class="sup-switch-row"><label class="sup-check"><input type="checkbox" id="supActive"> 开始监督</label>' +
-        '<button class="sup-btn ghost" id="supInject" style="flex:1">📣 提醒当前工作</button></div>' +
+        '<button class="sup-btn ghost" id="supInject" style="flex:1">' + iconSvg('megaphone') + ' 提醒当前工作</button></div>' +
       '<div class="sup-sec" id="supCorrWrap" style="display:none"><label>当前纠偏指令</label><div class="sup-corr" id="supCorr"></div></div>' +
       '<div class="sup-sec"><label>监督日志</label><div class="sup-log" id="supLog"></div></div>' +
     '</div>';
@@ -147,7 +147,7 @@
   /* 顶栏入口 */
   var chip = document.createElement('button');
   chip.className = 'chip chip-btn'; chip.id = 'btnSupervisor';
-  chip.textContent = '👁️ 监事';
+  chip.innerHTML = iconFor('👁️') + ' 监事';
   chip.title = '告诉它核心需求，让它监督其他 Agent 不跑偏';
   var meta = document.querySelector('.topbar .meta');
   if (meta) meta.insertBefore(chip, document.getElementById('btnSettings'));
@@ -158,11 +158,11 @@
   /* ---------- 渲染 ---------- */
   function targetOptions() {
     var agents = registry.list();
-    var opts = '<option value="__all__"' + (supTarget === '__all__' ? ' selected' : '') + '>🌐 所有正在进行的委派</option>';
+    var opts = '<option value="__all__"' + (supTarget === '__all__' ? ' selected' : '') + '>' + iconSvg('globe') + ' 所有正在进行的委派</option>';
     agents.forEach(function (a) {
       if (a.role === 'orchestrator') return;
       opts += '<option value="' + esc(a.id) + '"' + (supTarget === a.id ? ' selected' : '') + '>' +
-        esc(a.emoji + ' ' + a.name) + '</option>';
+        iconFor(a.emoji) + ' ' + esc(a.name) + '</option>';
     });
     return opts;
   }
@@ -296,7 +296,7 @@
     var qs = SC.CLARIFY_QUESTIONS;
     if (clarifyStep === 0) {
       clarifyMask.innerHTML =
-        '<div class="sup-clarify"><h3>💬 对话确认需求</h3>' +
+        '<div class="sup-clarify"><h3>' + iconSvg('message') + ' 对话确认需求</h3>' +
         '<div class="sub">先别急着开工。用一句话告诉我你这次想做什么，我会先问你几个问题、把「你真正想达成的」讲清楚，确认后再开始监督。</div>' +
         '<textarea id="ccInstr" rows="3" placeholder="例如：帮我把这篇论文改得更有学术味、更严谨">' + esc(clarifyInstruction) + '</textarea>' +
         '<div class="foot"><button id="ccCancel">取消</button><button class="primary" id="ccNext">下一步</button></div></div>';
@@ -312,7 +312,7 @@
           '<textarea rows="2" data-a="' + i + '">' + esc(clarifyAnswers[i]) + '</textarea></div>';
       }).join('');
       clarifyMask.innerHTML =
-        '<div class="sup-clarify"><h3>💬 澄清你的意思</h3>' +
+        '<div class="sup-clarify"><h3>' + iconSvg('message') + ' 澄清你的意思</h3>' +
         '<div class="sub">你的原始需求：<b>' + esc(clarifyInstruction) + '</b>。请回答下面几个问题，帮助我把「你到底想做什么」讲清楚。</div>' +
         body +
         '<div class="foot"><button id="ccBack">上一步</button><button class="primary" id="ccGen">生成确认稿</button></div></div>';
@@ -324,7 +324,7 @@
     } else {
       var comp = SC.composeGoalSummary(clarifyInstruction, clarifyAnswers);
       clarifyMask.innerHTML =
-        '<div class="sup-clarify"><h3>💬 确认：你真正想做的事</h3>' +
+        '<div class="sup-clarify"><h3>' + iconSvg('message') + ' 确认：你真正想做的事</h3>' +
         '<div class="sub">下面是我理解的你的核心需求。请确认无误后写入监督清单（写进去后还可随时增删改）。</div>' +
         '<div class="summary">' + esc(comp.summary) + '</div>' +
         '<div class="foot"><button id="ccBack2">再改改</button><button class="primary" id="ccCommit">✓ 确认并写入核心需求</button></div></div>';

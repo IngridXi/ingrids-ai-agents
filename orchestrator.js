@@ -246,7 +246,7 @@
 
   var entry = document.createElement('button');
   entry.className = 'chip chip-btn'; entry.id = 'btnOrchestrator';
-  entry.textContent = '🎛️ 调度中枢';
+  entry.innerHTML = iconSvg('sliders') + ' 调度中枢';
   entry.title = '让一个 Agent 指挥其他 Agent 干活';
   var meta = document.querySelector('.topbar .meta');
   if (meta) meta.insertBefore(entry, document.getElementById('btnSettings'));
@@ -288,7 +288,7 @@
   function boardRows() {
     return boards.list().map(function (b) {
       return '<button class="sk-tab' + (b.id === currentBoardId ? ' on' : '') + '" data-board="' + esc(b.id) + '">' +
-        esc(b.emoji + ' ' + b.name) + ' <span style="opacity:.7">' + b.skillIds.length + '</span></button>';
+        iconFor(b.emoji) + ' ' + esc(b.name) + ' <span style="opacity:.7">' + b.skillIds.length + '</span></button>';
     }).join('') + '<button class="sk-tab plus" id="sk-newboard">＋ 板块</button>';
   }
   function skillRows() {
@@ -438,23 +438,23 @@
     var cid = commanderId();
     var cmdOpts = list.map(function (a) {
       return '<option value="' + esc(a.id) + '"' + (a.id === cid ? ' selected' : '') + '>' +
-        esc(a.emoji + ' ' + a.name) + (a.role === 'orchestrator' ? '（调度者）' : '') + '</option>';
+        iconFor(a.emoji) + ' ' + esc(a.name) + (a.role === 'orchestrator' ? '（调度者）' : '') + '</option>';
     }).join('');
     var targets = list.filter(function (a) { return a.id !== cid; }).map(function (a) {
       var pick = router.resolve(a);
       var lim = router.limits()[a.engine] ? ' · 主引擎限额中' : '';
       return '<label class="orch-target">' +
         '<input type="checkbox" class="ot" value="' + esc(a.id) + '">' +
-        '<span class="tn">' + esc(a.emoji + ' ' + a.name) + '</span>' +
+        '<span class="tn">' + iconFor(a.emoji) + ' ' + esc(a.name) + '</span>' +
         '<span class="te">' + esc(pick.engine) + (pick.switched ? ' ↳降级' : '') + esc(lim) + '</span>' +
         '<span class="ta">' + esc(a.approvalMode === 'ask' ? '需批准' : '自动') + '</span></label>';
     }).join('');
     var presetOpts = '<option value="">（选择一个预设）</option>' + presets.list().map(function (p) {
-      return '<option value="' + esc(p.id) + '">' + esc(p.emoji + ' ' + p.name) + '</option>';
+      return '<option value="' + esc(p.id) + '">' + iconFor(p.emoji) + ' ' + esc(p.name) + '</option>';
     }).join('');
 
     modal.innerHTML =
-      '<header><div class="emoji">🎛️</div><div><h2>调度中枢</h2>' +
+      '<header><div class="emoji">' + iconSvg('sliders') + '</div><div><h2>调度中枢</h2>' +
         '<div class="sub">一个 Agent 指挥其他 Agent · 按板块挂载技能 · 限额切换 · 成本记账</div></div>' +
         '<button class="close" id="orch-close">✕</button></header>' +
       '<div class="orch-bar" id="orch-bar">' + budgetHtml() + '</div>' +
@@ -462,7 +462,7 @@
         '<div>' +
           '<div class="orch-field"><label>指挥官（有权限调度的 Agent）</label><select id="orch-cmd">' + cmdOpts + '</select></div>' +
           '<div class="orch-field"><label>任务内容</label><textarea id="orch-task" placeholder="例如：审一下这段讨论，重点看论证链和证据缺口"></textarea>' +
-            '<div style="margin-top:6px"><button class="orch-btn ghost" id="orch-ra">🧭 让 ra 自动判断：派谁 + 挂哪些 skill</button></div></div>' +
+            '<div style="margin-top:6px"><button class="orch-btn ghost" id="orch-ra">' + iconSvg('compass') + ' 让 ra 自动判断：派谁 + 挂哪些 skill</button></div></div>' +
           '<div class="orch-field"><label>执行方式</label><select id="orch-mode">' +
             '<option value="parallel">并行 · 同时派给所有人</option>' +
             '<option value="sequential">串行 · 一个接一个</option>' +
