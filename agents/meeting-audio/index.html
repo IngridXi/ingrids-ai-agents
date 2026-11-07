@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会议纪要官 · 海归海独立智能助手</title>
+<style>
+:root{--accent:#2a746c;--accent-soft:#e2f1ee;--ink:#18313b;--ink-2:#26434d;--sub:#61757c;--muted:#7b8f96;--faint:#9aa9ad;--line:#e3e9e8;--bg:#f6f8f7;--surface:#ffffff;--deep:#173b49;--gold:#c7ab74;--gold-text:#8a7043;--danger:#b04d3d;--danger-soft:#fef0ee;--warn:#8b631f;--warn-soft:#fff0dc}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7}
+a{color:var(--accent);text-decoration:none}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+.topbar{background:var(--deep);color:#fff;padding:10px 0}
+.topbar .wrap{display:flex;align-items:center;gap:10px;font-size:13px;color:#cfe0e4}
+.topbar .dot{width:8px;height:8px;border-radius:50%;background:var(--gold)}
+header{padding:44px 0 26px;background:linear-gradient(120deg,var(--deep),#1f4d5e);color:#fff}
+header .kicker{display:inline-block;font-size:12px;letter-spacing:2px;color:var(--gold);border:1px solid #ffffff30;padding:3px 12px;border-radius:12px;margin-bottom:16px}
+header h1{font-size:30px;margin:0 0 8px}
+header p{margin:0;color:#d7e4e7;font-size:15px;max-width:820px}
+
+/* 两栏：左侧功能导航 + 右侧功能面板 */
+.app{display:flex;gap:24px;align-items:flex-start;margin-top:24px}
+.sidebar{flex:0 0 258px;position:sticky;top:16px}
+.sidebar .side-cap{font-size:12px;letter-spacing:2px;color:var(--muted);margin:0 0 10px 2px;font-weight:600}
+.side-nav{display:flex;flex-direction:column;gap:8px}
+.nav-item{display:flex;gap:12px;align-items:center;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;font-family:inherit;color:var(--ink);transition:border-color .15s,background .15s,box-shadow .15s}
+.nav-item:hover{border-color:var(--accent)}
+.nav-item .ni-mark{flex:0 0 36px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:var(--accent-soft);color:var(--accent);font-size:18px}
+.nav-item .ni-txt{flex:1;min-width:0}
+.nav-item .ni-title{display:block;font-size:14px;font-weight:600}
+.nav-item .ni-desc{display:block;font-size:12px;color:var(--sub);margin-top:1px}
+.nav-item.active{background:var(--deep);border-color:var(--deep);color:#fff;box-shadow:0 6px 18px rgba(23,59,73,.18)}
+.nav-item.active .ni-mark{background:#ffffff20;color:var(--gold)}
+.nav-item.active .ni-desc{color:#cfe0e4}
+.content{flex:1;min-width:0}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:28px;margin:0 0 24px}
+.panel h2{font-size:20px;margin:0 0 6px;color:var(--deep)}
+.panel .lead{margin:0 0 18px;color:var(--sub);font-size:14px}
+.panel label{display:block;font-size:13px;color:var(--sub);margin:14px 0 4px}
+.panel input[type=text]{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:inherit;color:var(--ink);background:#fbfcfc}
+.panel input[type=text]:focus,.panel textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 55%,#fff);outline-offset:1px}
+.panel textarea{width:100%;min-height:180px;border:1px solid var(--line);border-radius:9px;padding:12px;font:inherit;color:var(--ink);background:#fbfcfc;resize:vertical;line-height:1.7}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;padding:11px 20px;border-radius:10px;font-weight:600;font-size:15px;border:0;cursor:pointer;font-family:inherit}
+.btn:hover{filter:brightness(1.06)}
+.btn.ghost{background:transparent;color:var(--deep);border:1px solid var(--line)}
+.btn.rec{background:var(--danger)}
+.btn.rec.on{background:#7f2f22;box-shadow:0 0 0 4px var(--danger-soft)}
+.btn.gold{background:var(--gold-text)}
+.btn:disabled{opacity:.5;cursor:not-allowed;filter:none}
+.rec-timer{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;color:var(--danger);font-weight:600}
+.status{margin-top:14px;font-size:13px;color:var(--muted);min-height:20px}
+.status.err{color:var(--danger)}
+.status.ok{color:var(--accent)}
+.divider{border:0;border-top:1px solid var(--line);margin:24px 0}
+.hidden{display:none!important}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}
+.spin.dark{border-color:rgba(0,0,0,.15);border-top-color:var(--accent)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 实时转写 */
+.live-transcript{margin-top:16px;max-height:360px;overflow-y:auto;border:1px solid var(--line);border-radius:12px;padding:8px 14px;background:#fbfcfc}
+.live-transcript .lt-head{font-size:12px;color:var(--muted);padding:6px 2px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.spk-line{display:flex;gap:12px;padding:9px 0;border-bottom:1px dashed var(--line)}
+.spk-line:last-child{border-bottom:0}
+.spk-line .who{flex:0 0 128px}
+.spk-line .who .name{font-weight:600;font-size:14px;color:var(--ink)}
+.spk-line .who .name.matched{color:var(--accent)}
+.spk-line .who .name.unknown{color:var(--warn)}
+.spk-line .who .ts{font-size:11px;color:var(--faint);font-family:ui-monospace,Menlo,Consolas,monospace}
+.spk-line .text{flex:1;font-size:14px;color:var(--ink-2)}
+.spk-badge{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin-left:6px;font-weight:600}
+.spk-name-btn{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;background:var(--warn-soft);color:var(--warn);margin-left:6px;font-weight:600;border:0;cursor:pointer;font-family:inherit}
+.spk-name-inline{display:inline-flex;gap:4px;margin-left:6px;align-items:center}
+.spk-name-inline input{width:90px;border:1px solid var(--gold);border-radius:7px;padding:2px 8px;font-size:12px;font-family:inherit}
+.spk-name-inline button{border:0;border-radius:7px;padding:2px 10px;font-size:12px;background:var(--accent);color:#fff;cursor:pointer;font-family:inherit}
+
+/* 总结框 */
+.summary-box{margin-top:16px;border:1px solid var(--gold);background:var(--warn-soft);border-radius:12px;padding:14px 16px;font-size:14px;color:var(--ink-2)}
+.summary-box .s-title{font-size:12px;color:var(--gold-text);font-weight:600;margin-bottom:6px}
+
+/* 纪要渲染 */
+.minutes-result{margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:18px 22px;background:#fbfcfc;font-size:14px}
+.minutes-result h2{font-size:17px;color:var(--deep);margin:16px 0 6px;border-left:3px solid var(--gold);padding-left:10px}
+.minutes-result h2:first-child{margin-top:0}
+.minutes-result p{margin:4px 0}
+.minutes-result ul{margin:6px 0;padding-left:22px}
+.minutes-result li{margin:4px 0}
+.minutes-result blockquote{margin:12px 0;padding:8px 12px;background:var(--warn-soft);border-left:3px solid var(--gold);color:var(--sub);font-size:13px}
+
+/* 声纹库 */
+.speaker-list{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.speaker-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:#fbfcfc}
+.speaker-item .avatar{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:700}
+.speaker-item .info{flex:1}
+.speaker-item .info .n{font-weight:600;font-size:14px}
+.speaker-item .info .m{font-size:11px;color:var(--muted)}
+.speaker-item .del{background:transparent;border:0;color:var(--faint);cursor:pointer;font-size:13px}
+.speaker-item .del:hover{color:var(--danger)}
+.empty{font-size:13px;color:var(--muted);padding:8px 0}
+.note{margin:16px 0 0;font-size:12px;color:var(--muted);border-left:3px solid var(--gold);padding-left:12px}
+footer{padding:28px 0 48px;font-size:12px;color:var(--faint);text-align:center}
+
+@media(max-width:820px){
+  .app{flex-direction:column}
+  .sidebar{position:static;flex:none;width:100%}
+  .side-nav{flex-direction:row;overflow-x:auto;padding-bottom:4px}
+  .nav-item{flex:0 0 auto;min-width:150px;flex-direction:column;align-items:flex-start}
+  header h1{font-size:26px}
+  .spk-line .who{flex:0 0 96px}
+}
+</style>
+<style>
+/* ===== 助手简介与使用说明（右上角按钮 + 弹窗） ===== */
+.agent-help-btn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:5px 12px;border-radius:14px;border:1px solid rgba(199,171,116,.45);background:transparent;color:#e7d7b0;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:.3px;transition:all .15s ease;flex:none}
+.agent-help-btn:hover{background:rgba(199,171,116,.16);border-color:rgba(199,171,116,.75)}
+.agent-help-btn svg{flex:none}
+.agent-help-modal{position:fixed;inset:0;z-index:9999}
+.agent-help-modal[hidden]{display:none}
+.agent-help-backdrop{position:absolute;inset:0;background:rgba(10,18,24,.5);backdrop-filter:blur(2px)}
+.agent-help-dialog{position:absolute;top:60px;right:24px;width:min(460px,calc(100vw - 48px));max-height:calc(100vh - 88px);overflow:auto;background:#fff;color:#1c2a30;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.28);padding:26px 28px;font-size:14px;line-height:1.7}
+.agent-help-close{position:absolute;top:14px;right:14px;width:30px;height:30px;border:0;border-radius:8px;background:#f0f2f1;color:#45555c;font-size:18px;line-height:1;cursor:pointer}
+.agent-help-close:hover{background:#e6e9e8}
+.agent-help-kicker{font-size:11px;letter-spacing:1.5px;color:#9a7b3f;font-weight:700;margin-bottom:6px}
+.agent-help-dialog h2{margin:0 0 4px;font-size:18px;color:#10242e;padding-right:32px}
+.agent-help-lead{margin:10px 0 14px;color:#45555c;font-size:13.5px}
+.agent-help-dialog h3{margin:16px 0 8px;font-size:13px;color:#10242e;display:flex;align-items:center;gap:6px}
+.agent-help-dialog h3::before{content:"";width:4px;height:14px;border-radius:2px;background:#c7ab74;flex:none}
+.agent-help-dialog ol{margin:0;padding-left:20px;color:#2a3a41;font-size:13.5px}
+.agent-help-dialog ol li{margin:6px 0}
+.agent-help-dialog ol li b{color:#10242e}
+.agent-help-note{margin:16px 0 0;padding:12px 14px;background:#faf6ec;border:1px solid #ecdfc0;border-left:3px solid #c7ab74;border-radius:8px;font-size:12.5px;color:#6b5a34;line-height:1.6}
+.agent-help-note b{color:#5a4a26}
+@media(max-width:640px){.agent-help-dialog{right:12px;left:12px;width:auto;top:56px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="wrap"><span class="dot"></span>海归海 · 独立智能助手<button type="button" class="agent-help-btn" id="agent-help-btn" aria-haspopup="dialog" aria-expanded="false" title="简介与使用说明"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/></svg>使用说明</button></div></div>
+<header><div class="wrap">
+ <span class="kicker">独立智能助手 · AI AGENT</span>
+ <h1>会议纪要官</h1>
+ <p>边录音边实时转写、自动认出是谁在说话；随手写笔记，AI 实时总结；会议结束一键生成纪要，并可导出会议总结 PPT。全程本地处理，内容不上云。</p>
+</div></header>
+
+<main class="wrap app">
+
+ <!-- 左侧：功能导航 -->
+ <aside class="sidebar">
+  <p class="side-cap">功能导航</p>
+  <nav class="side-nav">
+   <button class="nav-item active" type="button" data-tab="tab-live">
+    <span class="ni-mark">⚡</span>
+    <span class="ni-txt"><span class="ni-title">实时转写</span><span class="ni-desc">边录边出文字，谁说了什么</span></span>
+   </button>
+   <button class="nav-item" type="button" data-tab="tab-speaker">
+    <span class="ni-mark">👥</span>
+    <span class="ni-txt"><span class="ni-title">说话人识别</span><span class="ni-desc">登记声纹，自动认人</span></span>
+   </button>
+   <button class="nav-item" type="button" data-tab="tab-notes">
+    <span class="ni-mark">📝</span>
+    <span class="ni-txt"><span class="ni-title">随手笔记</span><span class="ni-desc">边录边记要点，自动保存</span></span>
+   </button>
+   <button class="nav-item" type="button" data-tab="tab-summary">
+    <span class="ni-mark">✨</span>
+    <span class="ni-txt"><span class="ni-title">AI 实时总结</span><span class="ni-desc">本地大模型实时概括</span></span>
+   </button>
+   <button class="nav-item" type="button" data-tab="tab-minutes">
+    <span class="ni-mark">📄</span>
+    <span class="ni-txt"><span class="ni-title">自动纪要</span><span class="ni-desc">生成结构化会议纪要</span></span>
+   </button>
+   <button class="nav-item" type="button" data-tab="tab-ppt">
+    <span class="ni-mark">📊</span>
+    <span class="ni-txt"><span class="ni-title">一键 PPT</span><span class="ni-desc">纪要转会议总结 PPT</span></span>
+   </button>
+  </nav>
+ </aside>
+
+ <!-- 右侧：功能面板 -->
+ <div class="content">
+
+  <section class="panel tab-panel active" id="tab-live">
+   <h2>实时转写 · 边录边出</h2>
+   <p class="lead">点击开始后，说话内容会实时转写并标注说话人；未知人声会提示你输入姓名，之后自动认出。</p>
+   <label for="meeting-title">会议主题（可选，用于纪要）</label>
+   <input type="text" id="meeting-title" placeholder="例如：下季度菜单调整讨论会">
+   <div class="row">
+    <button class="btn rec" id="btn-rec" type="button">● <span id="rec-label">开始会议录音</span></button>
+    <span class="rec-timer hidden" id="rec-timer">00:00</span>
+   </div>
+   <div class="status" id="status"></div>
+   <div class="live-transcript hidden" id="live-transcript"><div class="lt-head">实时转写（边说边出）</div><div id="live-list"></div></div>
+   <hr class="divider">
+   <p class="lead" style="margin-bottom:8px">没有实时录音？也可以上传一段已录好的会议音频，系统会自动降噪、转写、区分说话人并标注已登记人物。</p>
+   <div class="row" style="margin-top:8px">
+    <button class="btn ghost" id="btn-upload" type="button">上传录音转写</button>
+    <input type="file" id="file-input" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg" class="hidden">
+   </div>
+   <div class="status" id="upload-status"></div>
+   <div id="result" class="hidden"></div>
+   <p class="note">录音在浏览器内统一重采样为 16k 单声道，实时帧经 WebSocket 发到本机 127.0.0.1:8951 处理，完整录音走 8950 精转写；临时文件处理完即删。转写、人物标注与总结为 AI 辅助结果，需人工复核；录制前请告知参会人员并取得同意。</p>
+  </section>
+
+  <section class="panel tab-panel" id="tab-speaker">
+   <h2>说话人识别 · 声纹登记</h2>
+   <p class="lead">录一段（或上传一段）某人的清晰人声并登记姓名，之后的新录音就能自动认出他/她。</p>
+   <label for="speaker-name">人物姓名</label>
+   <input type="text" id="speaker-name" placeholder="例如：张店长">
+   <div class="row">
+    <button class="btn" id="btn-enroll-rec" type="button">录制人声并登记</button>
+    <button class="btn ghost" id="btn-enroll-upload" type="button">上传人声登记</button>
+    <input type="file" id="enroll-input" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg" class="hidden">
+   </div>
+   <div class="status" id="enroll-status"></div>
+   <hr class="divider">
+   <h2 style="font-size:16px">已登记人物</h2>
+   <div class="speaker-list" id="speaker-list"><div class="empty">暂无登记人物，先在上方录一段人声登记。</div></div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-notes">
+   <h2>随手笔记</h2>
+   <p class="lead">录音的同时随手记录要点、待办或灵感，内容会自动保存到本机，并纳入最终纪要。</p>
+   <textarea id="notes" placeholder="在这里写会议要点、待办、灵感……"></textarea>
+   <div class="status" id="notes-status"></div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-summary">
+   <h2>AI 实时总结</h2>
+   <p class="lead">录音过程中随时点一下，用本地大模型对当前讨论进展做一句话概括。内容本机处理，不上云。</p>
+   <div class="row">
+    <button class="btn" id="btn-summary" type="button" disabled>AI 实时总结</button>
+   </div>
+   <div class="summary-box hidden" id="summary-box"><div class="s-title">AI 实时总结</div><div id="summary-text"></div></div>
+   <div class="status" id="summary-status"></div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-minutes">
+   <h2>自动纪要</h2>
+   <p class="lead">结束录音（或上传转写）后，一键生成结构化会议纪要：主题、参会人、摘要、讨论要点、决定与待办。</p>
+   <div class="row">
+    <button class="btn" id="btn-minutes" type="button">生成会议纪要</button>
+   </div>
+   <div class="status" id="minutes-status"></div>
+   <div id="final-result" class="hidden"></div>
+   <div class="minutes-result hidden" id="minutes-result"></div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-ppt">
+   <h2>一键 PPT</h2>
+   <p class="lead">把已生成的会议纪要转成一份会议总结 PPT（标题页 + 摘要 + 讨论要点 + 决定 + 待办），可直接下载。</p>
+   <div class="row">
+    <button class="btn gold" id="btn-ppt" type="button" disabled>生成会议总结 PPT</button>
+    <a class="btn ghost hidden" id="ppt-download" href="#" download>下载 PPT</a>
+   </div>
+   <div class="status" id="ppt-status"></div>
+  </section>
+
+ </div>
+</main>
+
+<footer>会议纪要官 · 独立部署 · 本地开源（noisereduce + FunASR + 本地大模型）· 内容不上云</footer>
+<script src="app.js"></script>
+<div class="agent-help-modal" id="agent-help-modal" hidden>
+  <div class="agent-help-backdrop" data-close></div>
+  <div class="agent-help-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-help-title">
+    <button type="button" class="agent-help-close" data-close aria-label="关闭">×</button>
+    <div class="agent-help-kicker">HAIGUIHAI · AI AGENT</div>
+    <h2 id="agent-help-title">会议纪要官</h2>
+    <p class="agent-help-lead">边录音边实时转写、自动认出谁在说话；随手写笔记，AI 实时总结；会议结束一键生成纪要，并可导出会议总结 PPT。</p>
+    <h3>使用说明</h3>
+    <ol><li><b>开始转写</b>：填「会议主题（可选）」，点录音开始实时转写（或用「上传录音转写」）</li><li><b>登记声纹</b>：在「说话人识别 · 声纹登记」用「录制人声并登记」或「上传人声登记」登记人物</li><li><b>记录总结</b>：记「随手笔记」，点「AI 实时总结」</li><li><b>生成纪要</b>：会议结束点「生成会议纪要」，再「一键 PPT」导出会议总结 PPT</li></ol>
+    <p class="agent-help-note"><b>注意</b>　全程本地处理，内容不上云；声纹认人准确率受录音质量影响，关键结论请人工核对。</p>
+  </div>
+</div>
+<script>
+(function(){var b=document.getElementById('agent-help-btn'),m=document.getElementById('agent-help-modal');if(!b||!m)return;
+function open(){m.hidden=false;b.setAttribute('aria-expanded','true');}
+function close(){m.hidden=true;b.setAttribute('aria-expanded','false');}
+b.addEventListener('click',function(e){e.preventDefault();m.hidden?open():close();});
+m.addEventListener('click',function(e){if(e.target.closest('[data-close]'))close();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});})();
+</script>
+</body>
+</html>

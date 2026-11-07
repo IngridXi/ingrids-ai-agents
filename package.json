@@ -1,0 +1,14 @@
+{
+  "name": "ingrids-ai-agents",
+  "version": "0.1.0",
+  "description": "Ingrid's AI Agents — 个人 AI 工作台（Electron 桌面版 · local-first）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Ingrid Xi",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.2.3"
+  }
+}
