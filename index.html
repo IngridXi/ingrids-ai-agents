@@ -216,6 +216,10 @@
   .kv .save { flex: none; padding: 9px 14px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 650; cursor: pointer; }
   .kv .save:hover { background: var(--accent-2); }
 
+  .engine-status { font-size: 12px; color: var(--ink-soft); margin-top: 8px; line-height: 1.5; }
+  .engine-status.ok { color: var(--success); font-weight: 600; }
+  .engine-status.warn { color: var(--warning); font-weight: 600; }
+
   @media (max-width: 720px) {
     .shell { padding: 20px 18px; }
     main.grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
@@ -441,8 +445,36 @@ function engineLabelOf(a) {
   return a.engineLabel || (router.resolve(a).meta ? router.resolve(a).meta.name : (a.engine || '待绑定'));
 }
 function engineOptionsHtml(selected) {
-  return Object.keys(core.ENGINES).map(id =>
-    `<option value="${id}"${id === selected ? ' selected' : ''}>${core.ENGINES[id].name}（${core.ENGINES[id].tag}）</option>`).join('');
+  return Object.keys(core.ENGINES).map(id => {
+    const meta = core.ENGINES[id];
+    const kindLabel = meta.kind === 'api' ? 'API Key' : (meta.kind === 'cli' ? '会员额度' : '本地');
+    return `<option value="${id}"${id === selected ? ' selected' : ''}>${meta.name} · ${kindLabel}</option>`;
+  }).join('');
+}
+// 引擎可用性说明（异步）：本地 / API Key 是否已配 / CLI 是否已装并登录
+function engineStatusText(id) {
+  const meta = core.ENGINES[id];
+  if (!meta) return Promise.resolve('');
+  if (meta.kind === 'local') return Promise.resolve('本地引擎 · 需自行启动推理服务（ollama / FunASR），不消耗 Key');
+  if (meta.kind === 'api') {
+    if (!IS_DESKTOP) return Promise.resolve('浏览器预览模式 · 无法配置 API Key');
+    return window.ingrid.getSettings().then(s => (s && s[id])
+      ? '✅ 已配置 API Key，可直接调用'
+      : '⚠️ 未配置 API Key，先到右上角「引擎设置」填写');
+  }
+  if (meta.kind === 'cli') {
+    if (!IS_DESKTOP) return Promise.resolve('浏览器预览模式 · 无本机 CLI');
+    return window.ingrid.detectCli(id).then(ok => {
+      if (!ok) return '⚠️ 本机未安装 ' + meta.name + ' CLI，无法调用';
+      if (id === 'codex') {
+        return window.ingrid.authCli(id).then(a => (a && a.loggedIn)
+          ? '✅ 已登录 ChatGPT（会员额度），可用'
+          : '⚠️ 已安装但未登录，需运行 codex login');
+      }
+      return '✅ 本机已安装，可用';
+    });
+  }
+  return Promise.resolve('');
 }
 
 /* ---------- v3：板块 / 预设读取（桌面走文件，浏览器走 localStorage） ---------- */
@@ -535,12 +567,13 @@ function openModal(a) {
   const routeHtml = d.route && d.route.length
     ? `<section><h3>引擎 / 模型</h3><div class="route-line">` +
       d.route.map((r, i) => `${i > 0 ? '<span class="arrow">→</span>' : ''}<span class="node">${r.kind}：${r.label}</span>`).join('') + `</div></section>` : '';
-  const engineEditHtml = `<section><h3>绑定引擎</h3>
+  const engineEditHtml = `<section>
+      <h3>绑定引擎</h3>
       <div style="display:flex;gap:10px;align-items:center">
         <select id="m-engine" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;background:#fff;color:var(--ink)">${engineOptionsHtml(a.engine)}</select>
         <button id="m-save-engine" style="padding:9px 16px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13px;font-weight:650;cursor:pointer;white-space:nowrap">保存引擎</button>
       </div>
-      <div class="localnote">改完立即生效并写回本机。api 类引擎需先在「引擎设置」配 Key；codex / claude-code / grok 需本机已装并登录对应 CLI。</div></section>`;
+      <div class="engine-status" id="m-engine-status">检测可用性…</div></section>`;
 
   modal.innerHTML = `
     <header>
@@ -548,8 +581,9 @@ function openModal(a) {
       <div><h2>${a.name}</h2><div class="sub">${d.sub || ''}</div></div>
       <button class="close" id="close">✕</button>
     </header>
+    ${engineEditHtml}
     <section><h3>简介</h3><p class="desc">${d.desc || '暂无描述'}</p></section>
-    ${stepsHtml}${capsHtml}${routeHtml}${engineEditHtml}`;
+    ${stepsHtml}${capsHtml}${routeHtml}`;
   document.getElementById('close').addEventListener('click', closeModal);
   document.getElementById('m-save-engine').addEventListener('click', () => {
     const engine = document.getElementById('m-engine').value;
@@ -557,6 +591,18 @@ function openModal(a) {
     closeModal();
     renderAgents();
   });
+  // 引擎可用性实时提示（切换下拉框时重新检测）
+  const refreshEngineStatus = () => {
+    const sel = document.getElementById('m-engine');
+    const st = document.getElementById('m-engine-status');
+    if (!sel || !st) return;
+    engineStatusText(sel.value).then(t => {
+      st.textContent = t;
+      st.className = 'engine-status' + (t.indexOf('✅') === 0 ? ' ok' : (t.indexOf('⚠️') === 0 ? ' warn' : ''));
+    });
+  };
+  document.getElementById('m-engine').addEventListener('change', refreshEngineStatus);
+  refreshEngineStatus();
   mask.classList.add('open');
 }
 function closeModal() { mask.classList.remove('open'); }
