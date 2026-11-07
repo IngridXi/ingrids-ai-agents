@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, shell, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -500,6 +500,30 @@ ipcMain.handle('supervisor:save', (_e, state) => {
   };
   writeJson('supervisor.json', clean);
   return true;
+});
+
+/* ---------------- IPC：秘书（日程 / 邮件 / 想法 + 系统通知） ---------------- */
+ipcMain.on('secretary:list-sync', (e) => {
+  e.returnValue = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+});
+ipcMain.handle('secretary:save', (_e, state) => {
+  if (!state || typeof state !== 'object') throw new Error('secretary 状态格式错误');
+  const clean = {
+    events: Array.isArray(state.events) ? state.events : [],
+    emails: Array.isArray(state.emails) ? state.emails : [],
+    thoughts: Array.isArray(state.thoughts) ? state.thoughts : [],
+  };
+  writeJson('secretary.json', clean);
+  return true;
+});
+ipcMain.handle('notify', (_e, payload) => {
+  const p = payload || {};
+  if (!Notification.isSupported()) return false;
+  try {
+    const n = new Notification({ title: String(p.title || 'Ingrid'), body: String(p.body || ''), silent: !!p.silent });
+    n.show();
+    return true;
+  } catch (e) { return false; }
 });
 
 /* ---------------- 生命周期 ---------------- */

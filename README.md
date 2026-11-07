@@ -33,6 +33,8 @@ npm start
 ├── supervisor-core.js      # 零依赖监督者核心(核心需求 / 漂移检测 / 纠偏)
 ├── orchestrator.js         # 调度中枢面板(渲染层:委派 + 技能挂载 + 预设 + ra 路由)
 ├── supervisor.js           # 监督者悬浮面板(渲染层:可拖拽浮层)
+├── secretary-core.js       # 零依赖秘书核心(日程 / 邮件分类 / 想法 / 事件提取 / 简报)
+├── secretary.js            # 秘书悬浮面板(渲染层:左侧浮层,与监督者并排)
 ├── skills/
 │   ├── boards.json         # 板块模板(首次运行复制到用户数据目录)
 │   └── research/           # Research 板块的 5 个内置 Skill
@@ -217,6 +219,19 @@ await __orchestrator.delegate({
 
 监督者**旁路监督、不改动执行 Agent**,日常轻量,只在真正偏离时才深度介入。`supervisor-core.js` 的 `GoalStore`/`Supervisor` 与 `fastDriftCheck`/`buildReminder` 零依赖,可在控制台直接玩。
 
+## 秘书 Agent:日程提醒 · 邮件分类 · 记想法分配
+
+左侧有一个**可拖拽的悬浮卡片 🕊️ 秘书**,与右侧监督者并排。它做三件事:
+
+- **随时对话 / 记想法**:写一句想法,点「记住」存进 `ThoughtStore`;点「🧭 记住并分配给合适的 Agent」会用 `TaskRouter` 判断该派给谁、挂哪些 skill,并自动把调度中枢填好。
+- **日程 + 提醒**:本地日程列表,支持添加、提前提醒(15 分钟 / 1 小时 / 1 天 / 3 天),到点发系统通知(主进程 `Notification`)。
+- **邮件分类 + 重要告知**:导入邮件(粘贴发件人/主题/正文),`classifyEmail` 按关键词自动分级(🔴重要紧急 / 📅会议邀请 / ✍️需回复 / ✅待办 / 💰账单 / 🔐账号安全 / ℹ️仅参考 / 📣营销),重要邮件立即发通知。
+- **从邮件截图加日历**:点「📷 从邮件截图添加」选图 → 可粘贴邮件文字让 `extractEventHint` 自动提取标题/时间/链接,或手填 → 存成日程(带提醒 + 原邮件链接)。
+
+设计借鉴(均为 Apache 2.0 / 可借鉴模式):`kylem148/secretary-agent`(日历规则、截图、动作前确认)、`lucasantoro97/postino`(IMAP 读信→分类归档→日历事件→晨间简报)、`Harrydi2006/mail-analyzer`(邮件提取事件、三级重要度、3 天/1 天/1 小时提醒)、`daddia/my-assistant`(收件箱分类 VIP/需回复/仅参考/营销)。
+
+**边界说明**:日程与邮件目前是**本机本地存储**——邮件靠导入/粘贴,IMAP / Gmail 实时同步、系统日历(Apple Calendar / Google)双向同步、以及「截图 → 自动 OCR 识别」需要接入邮箱凭据或视觉模型,是下一步要做的事(见待办)。秘书所有动作都会先给你确认、不擅自发送或写入外部系统。
+
 ## 待办
 
 - 会议纪要官真正转写需本机 FunASR 后端(127.0.0.1:8950 / 8951)。
@@ -225,6 +240,8 @@ await __orchestrator.delegate({
 - 更多 Agent(音乐创作、数据分析、翻译)与 `phd-ra-agent` 的任务类型自动路由。
 - 让 Agent 操作本机文件 / 屏幕(需逐项授权,当前 `computer: 'off'`)。
 - 监督者的「慢路径纠偏」与 ra 路由在真实模式下可改用模型做语义判断(当前为关键词启发式,免费、可解释)。
+- 秘书的 IMAP / Gmail 实时同步、Apple Calendar / Google 双向同步(需邮箱/日历凭据与授权)。
+- 秘书「截图 → 自动 OCR 识别」接入视觉模型(当前为手动确认 + 文字启发式提取)。
 
 ## 许可证
 

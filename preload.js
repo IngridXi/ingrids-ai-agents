@@ -48,4 +48,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   // 监督者（核心需求 / 开关 / 纠偏指令，local-first 文件持久化）
   loadSupervisorSync: () => ipcRenderer.sendSync('supervisor:list-sync'),
   saveSupervisor: (state) => ipcRenderer.invoke('supervisor:save', state),
+
+  // 秘书（日程 / 邮件 / 想法 + 系统通知）
+  loadSecretarySync: () => ipcRenderer.sendSync('secretary:list-sync'),
+  saveSecretary: (state) => ipcRenderer.invoke('secretary:save', state),
+  notify: (payload) => ipcRenderer.invoke('notify', payload),
 });

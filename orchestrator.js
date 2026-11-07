@@ -687,6 +687,18 @@
     mask.classList.add('open');
   }
   window.__openOrchestratorWith = openWith;
+  // 秘书等外部调用：把一段任务 + ra 路由计划填进调度中枢
+  window.__openOrchestratorTask = function (task, plan) {
+    currentBoardId = (plan && plan.boardId) ? plan.boardId : currentBoardId;
+    selectedIds = (plan && plan.skillIds) ? plan.skillIds.filter(function (id) { return skills.byId(id); }) : [];
+    render();
+    document.getElementById('orch-task').value = task || '';
+    if (plan && plan.targetIds) {
+      document.querySelectorAll('.ot').forEach(function (cb) { cb.checked = plan.targetIds.indexOf(cb.value) >= 0; });
+    }
+    renderSkillBox();
+    mask.classList.add('open');
+  };
 
   if (DESKTOP && window.ingrid.getRunMode) {
     window.ingrid.getRunMode().then(function (on) { realMode = !!on; });
