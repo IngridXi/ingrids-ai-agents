@@ -37,17 +37,22 @@ npm start
 ├── secretary.js            # 秘书悬浮面板(渲染层:左侧浮层,与监督者并排)
 ├── skills/
 │   ├── boards.json         # 板块模板(首次运行复制到用户数据目录)
-│   └── research/           # Research 板块的 12 个内置 Skill
+│   └── research/           # Research 板块的 17 个内置 Skill
 │       ├── research-question.md           # 研究问题提炼
 │       ├── paper-deconstruction.md        # 论文拆解
 │       ├── research-design.md             # 研究设计
 │       ├── literature-review.md           # 文献综述
+│       ├── sota-search.md                 # SOTA 搜索(前沿追踪)
+│       ├── data-analysis.md               # 数据分析
 │       ├── citation-audit.md              # 引用审计
 │       ├── reviewer.md                    # 审稿人
 │       ├── reproducibility-review.md      # 可重复性评审
 │       ├── academic-writing.md            # 写作
 │       ├── deai.md                        # 去 AI 味
 │       ├── anti-defensive-writing.md      # 防御性写作
+│       ├── survey-writing.md              # 综述写作(Survey/Review 论文)
+│       ├── research-proposal.md           # 研究提案(开题/基金申请)
+│       ├── academic-presentation.md       # 学术表达(一分钟讲清研究)
 │       ├── research-project-management.md # 科研项目管理
 │       └── research-mentor.md             # 研究导师
 ├── agents/
@@ -63,9 +68,9 @@ npm start
 
 ### 板块是一级组织
 
-板块 = 你的一个用途。工作台**默认只带 `Research` 一个板块、12 个内置 Skill**,覆盖科研全流程:研究问题提炼 → 论文拆解 → 研究设计 → 文献综述 → 引用审计 → 审稿 → 可重复性评审 → 写作 → 去 AI 味 → 防御性写作 → 项目管理 → 研究导师。写法沿用了 `IngridXi/phd-ra-agent` 的研究助手风格(只依据给定证据、结构化输出、不臆造文献与数据)。
+板块 = 你的一个用途。工作台**默认只带 `Research` 一个板块、17 个内置 Skill**,覆盖科研全流程:研究问题提炼 → 论文拆解 → 研究设计 → 文献综述 → SOTA 搜索 → 数据分析 → 引用审计 → 审稿 → 可重复性评审 → 写作 → 去 AI 味 → 防御性写作 → 综述写作 → 研究提案 → 学术表达 → 项目管理 → 研究导师。写法沿用了 `IngridXi/phd-ra-agent` 的研究助手风格(只依据给定证据、结构化输出、不臆造文献与数据)。
 
-这 12 个 Skill 来自两类借鉴:一是 **GitHub 高星学术 skill 榜**(`academic-research-skills` 55k★、`scientific-agent-skills` 47k★ 等)里的**引用审计 / 可重复性评审 / 防御性写作 / 多源检索**;二是博主总结的**科研能力「三层六能力」框架**——思维层(好奇·提炼问题 / 科学推理·拆解建构)、执行层(研究设计 / 数据分析)、独立层(项目管理 / 学术表达)。其中**项目管理**被公认是最薄弱环节,所以单独做了 `科研项目管理` skill,专门治"不知道做到什么程度就该停手推进"。
+这 17 个 Skill 来自两类借鉴:一是 **GitHub 高星学术 skill 榜**(`academic-research-skills` 55k★、`scientific-agent-skills` 47k★ 等)里的**引用审计 / 可重复性评审 / 防御性写作 / 多源检索 / SOTA 搜索 / 研究提案 / 综述写作**;二是博主总结的**科研能力「三层六能力」框架**——思维层(好奇·提炼问题 / 科学推理·拆解建构)、执行层(研究设计 / 数据分析)、独立层(项目管理 / 学术表达)。其中**项目管理**被公认是最薄弱环节,所以单独做了 `科研项目管理` skill,专门治"不知道做到什么程度就该停手推进"。
 
 本机 WorkBuddy 目录里的 skill 只是**可选导入源**:主进程会扫描 `~/.workbuddy/skills` 与 `~/.workbuddy/plugins/cache`,但默认**一条都不启用**(本机实测扫描 230 条,只启用 5 条)。这样别的平台(海归海 / 音乐 / 公众号 / 配色)的能力不会混进个人工作台。想加哪条,在面板里点「从本机导入」挑进当前板块即可;一条 skill 可属于多个板块。
 
