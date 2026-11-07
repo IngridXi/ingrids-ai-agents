@@ -228,8 +228,8 @@
     <footer class="router">
       <div class="label"><span class="ic">🏠</span>local-first · 每个 Agent 绑定自己的引擎</div>
       <span class="pill"><span class="st"></span>会议纪要官 → FunASR + 本地大模型</span>
-      <span class="pill"><span class="st"></span>ra 路由 → 多模型智能路由</span>
-      <span class="hint">已接入 agents-core.js · local-first · 数据存本机</span>
+      <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 成本记账</span>
+      <span class="hint">agents-core.js v2 · local-first · 数据存本机</span>
     </footer>
   </div>
 
@@ -305,20 +305,27 @@ const SEED_AGENTS = [
   },
   {
     name: '智能路由 ra', emoji: '🧭',
-    tag: '按任务自动选择最合适的 LLM',
-    status: 'soon', engine: 'deepseek', engineLabel: '多模型路由',
-    soul: '你是调度中枢：按任务类型把请求路由到最合适的模型。',
+    tag: '指挥其他 Agent · 限额切换 · 成本记账',
+    status: 'active', badge: '调度中枢', role: 'orchestrator', canControl: true,
+    engine: 'deepseek', engineLabel: '多模型路由 · 已启用',
+    soul: '你是调度中枢：把任务派给最合适的 Agent，并在引擎撞到限额时自动切换。',
     fallbacks: ['gpt', 'qwen'],
     detail: {
-      sub: '核心引擎 · 待接入（对应 phd-ra-agent）',
-      desc: '工作台的调度中枢。后台接入多个 LLM API 后，ra 根据任务类型（转写 / 纪要 / 摘要 / 翻译 / 代码…）自动路由到效果与成本最匹配的模型——这正是 OpenMausBot 的思路：每个 Agent 有自己的模型，由 ra 统一调度。',
+      sub: 'Orchestrator · 点击方块打开调度中枢',
+      desc: '工作台的调度中枢（对应 phd-ra-agent）。ra 可以指挥其他 Agent 干活：并行 / 串行 / 流水线，危险操作先弹审批卡片；某个引擎撞到用量上限会自动切到降级链里下一个可用模型；每次调用都记账，可设月度预算、导出 CSV。',
       workflow: [
-        { t: '识别任务', s: '判断当前请求属于哪一类' },
-        { t: '匹配模型', s: '按能力/成本/速度选择 LLM' },
-        { t: '分发执行', s: '调用对应 API 返回结果' },
+        { t: '选择指挥官', s: '只有 role=orchestrator 的 Agent 能派活' },
+        { t: '勾选目标', s: '选一个或多个 Agent，填任务内容' },
+        { t: '审批 / 执行', s: 'ask 模式逐个确认，然后调用各自引擎' },
+        { t: '限额自动切换', s: '主引擎到额度 → 自动换降级引擎' },
+        { t: '记账', s: '按 Agent / 引擎 / 日汇总，月度预算封顶' },
       ],
-      capabilities: ['多模型接入', '智能路由', '成本控制', '故障降级'],
-      route: [{ kind: '待接入', label: 'DeepSeek / GPT / Claude / Qwen / Gemini …' }],
+      capabilities: ['Agent 委派', '并行 / 流水线', '审批卡片', '限额自动切换', '成本记账', '月度预算', 'CSV 导出'],
+      route: [
+        { kind: '调度', label: 'AgentOrchestrator（agents-core.js）' },
+        { kind: '路由', label: 'ModelRouter · 降级链' },
+        { kind: '账本', label: 'UsageLedger · data/usage/*.jsonl' },
+      ],
     },
   },
   {
@@ -363,6 +370,16 @@ const router = new core.ModelRouter();
 if (!registry.list().length) {
   SEED_AGENTS.forEach(function (a) { registry.create(a); });
 }
+// v2 迁移：把旧数据里的「智能路由 ra」升级成调度中枢（老用户刷新后也能用）
+registry.list().forEach(function (a) {
+  if (/路由|调度|\bra\b/i.test(a.name || '') && a.role !== 'orchestrator') {
+    registry.update(a.id, {
+      role: 'orchestrator', canControl: true, status: 'active',
+      tag: '指挥其他 Agent · 限额切换 · 成本记账',
+      engineLabel: '多模型路由 · 已启用', badge: '调度中枢',
+    });
+  }
+});
 window.__reg = registry;
 
 /* ---------- 渲染 ---------- */
@@ -395,6 +412,10 @@ function renderAgents() {
       <div class="tag">${a.tag}</div>
       <div class="engine">${engineLabelOf(a)}</div>`;
     el.addEventListener('click', () => {
+      if (a.role === 'orchestrator' && typeof window.__openOrchestrator === 'function') {
+        window.__openOrchestrator();
+        return;
+      }
       if (a.href) {
         if (IS_DESKTOP) window.ingrid.openAgent(a.href);
         else window.open(a.href, '_blank');
@@ -605,6 +626,10 @@ const settingsObserver = new MutationObserver(() => {
 settingsObserver.observe(settingsModal, { childList: true, subtree: true });
 
 renderAgents();
+
+/* 暴露给 orchestrator.js（调度中枢面板） */
+window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents: renderAgents };
 </script>
+<script src="orchestrator.js"></script>
 </body>
 </html>

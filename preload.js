@@ -20,7 +20,19 @@ contextBridge.exposeInMainWorld('ingrid', {
   detectCli: (engineId) => ipcRenderer.invoke('cli:detect', engineId),
   runCli: (engineId) => ipcRenderer.invoke('cli:run', engineId),
 
-  // 设置（API key 加密存储）
+  // 设置（API key 加密存储）+ 真实执行开关
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (s) => ipcRenderer.invoke('settings:save', s),
+  getRunMode: () => ipcRenderer.invoke('settings:run-mode'),
+  setRunMode: (on) => ipcRenderer.invoke('settings:set-run-mode', on),
+
+  // 用量账本（按月 jsonl）+ 月度预算
+  loadUsageSync: () => ipcRenderer.sendSync('usage:list-sync'),
+  recordUsage: (rec) => ipcRenderer.invoke('usage:record', rec),
+  clearUsage: () => ipcRenderer.invoke('usage:clear'),
+  getBudgetSync: () => ipcRenderer.sendSync('budget:get-sync'),
+  setBudgetSync: (usd) => ipcRenderer.sendSync('budget:set-sync', usd),
+
+  // 真正跑一个 Agent（主进程 spawn CLI / 调 API；默认演练不花钱）
+  runAgent: (payload) => ipcRenderer.invoke('agent:run', payload),
 });
