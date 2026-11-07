@@ -233,8 +233,9 @@
     <footer class="router">
       <div class="label"><span class="ic">🏠</span>local-first · 每个 Agent 绑定自己的引擎</div>
       <span class="pill"><span class="st"></span>会议纪要官 → FunASR + 本地大模型</span>
-      <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 成本记账</span>
-      <span class="hint">v3 · 板块 → 技能 → Agent → 模型 · local-first · 数据存本机</span>
+      <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 任务路由 · 限额切换 · 记账</span>
+      <span class="pill"><span class="st"></span>👁️ 监督者 → 核心需求 · 防漂移 · 纠偏</span>
+      <span class="hint">v4 · 板块 → 技能 → ra 路由 → Agent → 监督者 · local-first</span>
     </footer>
   </div>
 
@@ -250,6 +251,8 @@
 
 <script src="agents-core.js"></script>
 <script src="skills-core.js"></script>
+<script src="task-router.js"></script>
+<script src="supervisor-core.js"></script>
 <script>
 /* ============================================================
  *  Ingrid's AI Agents — 桌面版工作台脚本
@@ -682,5 +685,6 @@ renderAgents();
 window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents: renderAgents };
 </script>
 <script src="orchestrator.js"></script>
+<script src="supervisor.js"></script>
 </body>
 </html>

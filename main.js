@@ -483,6 +483,25 @@ ipcMain.handle('presets:save', (_e, list) => {
   return true;
 });
 
+/* ---------------- IPC：监督者（核心需求 / 开关 / 纠偏） ---------------- */
+ipcMain.on('supervisor:list-sync', (e) => {
+  e.returnValue = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '' });
+});
+ipcMain.handle('supervisor:save', (_e, state) => {
+  if (!state || typeof state !== 'object') throw new Error('supervisor 状态格式错误');
+  const clean = {
+    goals: (Array.isArray(state.goals) ? state.goals : []).map((g) => ({
+      id: String(g.id || ''), text: String(g.text || ''),
+      weight: Math.max(1, Math.min(3, Number(g.weight) || 1)),
+      active: g.active !== false, createdAt: Number(g.createdAt) || Date.now(),
+    })).filter((g) => g.text),
+    active: state.active !== false,
+    lastCorrection: String(state.lastCorrection || ''),
+  };
+  writeJson('supervisor.json', clean);
+  return true;
+});
+
 /* ---------------- 生命周期 ---------------- */
 app.whenReady().then(() => {
   createMainWindow();

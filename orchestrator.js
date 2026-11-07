@@ -452,7 +452,8 @@
       '<div class="orch-cols">' +
         '<div>' +
           '<div class="orch-field"><label>指挥官（有权限调度的 Agent）</label><select id="orch-cmd">' + cmdOpts + '</select></div>' +
-          '<div class="orch-field"><label>任务内容</label><textarea id="orch-task" placeholder="例如：审一下这段讨论，重点看论证链和证据缺口"></textarea></div>' +
+          '<div class="orch-field"><label>任务内容</label><textarea id="orch-task" placeholder="例如：审一下这段讨论，重点看论证链和证据缺口"></textarea>' +
+            '<div style="margin-top:6px"><button class="orch-btn ghost" id="orch-ra">🧭 让 ra 自动判断：派谁 + 挂哪些 skill</button></div></div>' +
           '<div class="orch-field"><label>执行方式</label><select id="orch-mode">' +
             '<option value="parallel">并行 · 同时派给所有人</option>' +
             '<option value="sequential">串行 · 一个接一个</option>' +
@@ -511,6 +512,8 @@
       recTimer = setTimeout(renderRecommend, 280);
     });
 
+    document.getElementById('orch-ra').addEventListener('click', autoRoute);
+
     document.getElementById('orch-run').addEventListener('click', run);
     document.getElementById('orch-refresh').addEventListener('click', render);
     document.getElementById('orch-savepreset').addEventListener('click', savePreset);
@@ -561,6 +564,25 @@
     refreshHome(); render();
     document.getElementById('orch-preset').value = p.id;
     tip('已存为预设：' + p.name + '（首页多了一个方块）');
+  }
+
+  /* ---------- ra 任务类型路由：自动判断派谁 + 挂哪些 skill ---------- */
+  function autoRoute() {
+    if (!window.__taskRouter) { tip('任务路由不可用'); return; }
+    var task = document.getElementById('orch-task').value.trim();
+    if (!task) { tip('⚠ 请先填写任务内容，ra 才能判断'); return; }
+    tip('🧭 ra 正在判断派谁 + 挂哪些 skill…');
+    window.__taskRouter.route(task, {
+      agents: agents(), commanderId: commanderId(),
+      skills: skills, boardId: currentBoardId,
+      maxTargets: 3, maxSkills: 3,
+    }).then(function (plan) {
+      document.querySelectorAll('.ot').forEach(function (cb) { cb.checked = plan.targetIds.indexOf(cb.value) >= 0; });
+      if (plan.boardId) currentBoardId = plan.boardId;
+      selectedIds = (plan.skillIds || []).filter(function (id) { return skills.byId(id); });
+      renderSkillBox();
+      tip('🧭 ra 判断：' + plan.summary);
+    }).catch(function (e) { tip('✕ ' + (e && e.message || e)); });
   }
 
   function tip(text) {
@@ -620,12 +642,19 @@
     if (!ids.length) { tip('⚠ 请至少勾选一个目标 Agent'); return; }
     if (!task) { tip('⚠ 请填写任务内容'); return; }
 
+    // 监督者开着时：把核心需求 + 纠偏提醒自动挂在本次任务前（不断提醒、防止跑偏）
+    var supRem = (typeof window.__supervisorReminder === 'function') ? window.__supervisorReminder() : '';
+    var finalTask = task;
+    if (supRem && task.indexOf('【监督者 · 核心需求】') < 0) {
+      finalTask = supRem + '\n\n【任务】\n' + task;
+    }
+
     btn.disabled = true; btn.textContent = '执行中…'; tip('正在读取技能正文…');
     readBodies(selectedIds.slice()).then(function (entries) {
       var built = skills.buildContext(entries);
       if (built.truncated) tip('注意：技能正文过长已截断，注入 ' + built.tokens + ' token');
       return orch.delegate({
-        commanderId: cid, targetIds: ids, task: task, mode: mode,
+        commanderId: cid, targetIds: ids, task: finalTask, mode: mode,
         autoApprove: auto, dryRun: dryRun, taskType: 'general',
         skillIds: built.ids, skillContext: built.text, skillTokens: built.tokens,
       });
@@ -634,6 +663,10 @@
       document.getElementById('orch-bar').innerHTML = budgetHtml();
       tip('完成：成功 ' + out.succeeded + ' / 失败 ' + out.failed +
         ' · 注入 ' + out.skillTokens + ' token' + (out.switched ? ' · ' + out.switched + ' 次限额切换' : ''));
+      // 监督者：对每一轮产出做漂移检测（快路径），偏离则生成纠偏指令（慢路径）
+      if (typeof window.__superviseResult === 'function') {
+        out.results.forEach(function (r) { window.__superviseResult(r, task); });
+      }
     }).catch(function (e) { tip('✕ ' + (e && e.message || e)); })
       .then(function () { btn.disabled = false; btn.textContent = '▶ 开始委派'; });
   }

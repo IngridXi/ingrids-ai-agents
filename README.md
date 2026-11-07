@@ -29,7 +29,10 @@ npm start
 ├── index.html              # 工作台界面(横屏方形按钮网格 + 引擎设置)
 ├── agents-core.js          # 零依赖多 Agent 核心(引擎 / 注册表 / 路由 / 账本 / 编排器)
 ├── skills-core.js          # 零依赖技能核心(板块 / 注册表 / 推荐 / 渐进式载入 / 预设)
-├── orchestrator.js         # 调度中枢面板(渲染层:委派 + 技能挂载 + 预设)
+├── task-router.js          # 零依赖任务类型路由(ra 判断「派谁 + 挂哪些 skill」)
+├── supervisor-core.js      # 零依赖监督者核心(核心需求 / 漂移检测 / 纠偏)
+├── orchestrator.js         # 调度中枢面板(渲染层:委派 + 技能挂载 + 预设 + ra 路由)
+├── supervisor.js           # 监督者悬浮面板(渲染层:可拖拽浮层)
 ├── skills/
 │   ├── boards.json         # 板块模板(首次运行复制到用户数据目录)
 │   └── research/           # Research 板块的 5 个内置 Skill
@@ -175,6 +178,9 @@ window.__skills       // { boards, skills, presets, scan }
                       //   boards : BoardRegistry:list() / create() / addSkill()
                       //   skills : SkillRegistry:inBoard() / recommend() / buildContext()
                       //   presets: PresetStore:create() / list() / remove()
+window.__taskRouter   // TaskRouter:classifyTask() / route()（ra 任务类型路由）
+window.__supervisor   // Supervisor:reminder() / supervise()（监督者）
+window.__supGoals     // GoalStore:add() / update() / remove() / setActive()
 
 // 例:在 Research 板块里按任务推荐技能
 const S = window.SkillsCore;
@@ -189,6 +195,28 @@ await __orchestrator.delegate({
 });
 ```
 
+## ra 任务类型路由:自己判断派谁 + 挂哪些 skill
+
+在调度中枢的任务框下点 **「🧭 让 ra 自动判断」**,不用再手动勾目标、挑技能。`task-router.js` 会:
+
+1. **归类任务类型**:审稿 / 去 AI 味 / 文献综述 / 研究指导 / 写作 / 编码 / 转写纪要 / 总结 / 翻译 / 音乐 / 数据 / 通用(关键词命中越多越像);
+2. **挑 Agent**:用任务类型的关键词给每个 Agent 的「名字 / 一句话简介 / soul / 描述」打分,选分数最高的 1–3 个,排除「敬请期待」和指挥官本人;
+3. **挂 Skill**:复用 `SkillsCore.recommend`,按任务文字自动推荐本板块 1–3 个技能;
+4. **选引擎**:每个任务类型带默认引擎(`review`→claude-code、`litreview`→deepseek、`coding`→codex、`transcribe`→funasr……),自动落到调度中枢。
+
+整个过程只依据给定的 Agent / Skill / 任务文字,**不臆造**,每一步都给出可解释的 reasons,你可以手动微调后再「开始委派」。注意:路由靠 Agent 的名字/简介关键词,建议给自己每个用途配一个名字贴切的 Agent,ra 才能派得准。
+
+## 监督者 Agent:防止 LLM 跑偏(借鉴 Steering Agent)
+
+借鉴 NUS / USTC / 阿里 Qwen 的 **Steering Agent**(arXiv:2610.22316)的「双路径」思路,解决长程任务里的目标漂移(goal drift)。右上角有一个**可拖拽的悬浮卡片 👁️ 监督者**,你可以:
+
+- **随时增减「核心需求」**:每一条都可以停用/删除/加权;
+- **先「对话确认」**:写一句模糊需求 → 监督者抛 3 个澄清问题(要什么结果 / 边界红线 / 成功标准)→ 拼出结构化确认稿 → 你确认后写进核心需求;
+- **开始监督**:打开开关后,每一轮委派的结果都会做**快路径**漂移检测(便宜、同步:空输出/报错/半数以上需求零命中即报警);确认偏离后走**慢路径**生成一句纠偏指令(真实模式调用模型,演练模式用模板);
+- **自动纠偏**:下一轮委派时,核心需求 + 纠偏指令会自动挂到任务最前面(「📣 提醒当前工作」也可手动注入)。
+
+监督者**旁路监督、不改动执行 Agent**,日常轻量,只在真正偏离时才深度介入。`supervisor-core.js` 的 `GoalStore`/`Supervisor` 与 `fastDriftCheck`/`buildReminder` 零依赖,可在控制台直接玩。
+
 ## 待办
 
 - 会议纪要官真正转写需本机 FunASR 后端(127.0.0.1:8950 / 8951)。
@@ -196,6 +224,7 @@ await __orchestrator.delegate({
 - 带脚本的可执行型 Skill 目前只注入说明书;若要运行脚本,需先做逐项授权与沙箱。
 - 更多 Agent(音乐创作、数据分析、翻译)与 `phd-ra-agent` 的任务类型自动路由。
 - 让 Agent 操作本机文件 / 屏幕(需逐项授权,当前 `computer: 'off'`)。
+- 监督者的「慢路径纠偏」与 ra 路由在真实模式下可改用模型做语义判断(当前为关键词启发式,免费、可解释)。
 
 ## 许可证
 

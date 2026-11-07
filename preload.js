@@ -44,4 +44,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   saveBoards: (boards) => ipcRenderer.invoke('boards:save', boards),
   loadPresetsSync: () => ipcRenderer.sendSync('presets:list-sync'),
   savePresets: (list) => ipcRenderer.invoke('presets:save', list),
+
+  // 监督者（核心需求 / 开关 / 纠偏指令，local-first 文件持久化）
+  loadSupervisorSync: () => ipcRenderer.sendSync('supervisor:list-sync'),
+  saveSupervisor: (state) => ipcRenderer.invoke('supervisor:save', state),
 });
