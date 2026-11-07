@@ -245,6 +245,7 @@
       at: Date.now(), agentId: '', agentName: '', engine: '', model: '',
       taskType: 'general', source: 'manual', tokensIn: 0, tokensOut: 0,
       status: 'ok', error: '', dryRun: false, costSource: 'estimated',
+      skills: [], skillTokens: 0,
     }, entry || {});
     if (typeof e.cost !== 'number') {
       e.cost = estimateCost(e.engine, e.tokensIn, e.tokensOut);
@@ -307,11 +308,12 @@
     };
   };
   UsageLedger.prototype.exportCsv = function () {
-    var head = 'at,month,agentName,engine,taskType,source,tokensIn,tokensOut,cost,costSource,status,dryRun,error';
+    var head = 'at,month,agentName,engine,taskType,source,tokensIn,tokensOut,skillTokens,skills,cost,costSource,status,dryRun,error';
     var esc = function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
     var lines = this.records.map(function (r) {
       return [new Date(r.at).toISOString(), r.month, r.agentName, r.engine, r.taskType, r.source,
-        r.tokensIn, r.tokensOut, (r.cost || 0).toFixed(6), r.costSource, r.status, r.dryRun, r.error]
+        r.tokensIn, r.tokensOut, r.skillTokens || 0, (r.skills || []).join('|'),
+        (r.cost || 0).toFixed(6), r.costSource, r.status, r.dryRun, r.error]
         .map(esc).join(',');
     });
     return head + '\n' + lines.join('\n');
@@ -337,7 +339,7 @@
     return Promise.resolve({
       text: '[演练] ' + agent.name + ' 已接下任务并给出占位结果。\n任务：' + task +
         '\n（未调用真实模型：' + (ctx && ctx.reason || '尚未配置可用的 CLI / API Key') + '）',
-      tokensIn: Math.ceil((String(task).length + String(agent.soul || '').length) / 4),
+      tokensIn: Math.ceil((String(task).length + String((ctx && ctx.soul) || agent.soul || '').length) / 4),
       tokensOut: 120,
       status: 'ok', dryRun: true, error: '',
     });
@@ -407,9 +409,12 @@
             error: pick.reason, engine: pick.engine, cost: 0 };
         }
 
+        // v3：技能说明书只挂在「这一次任务」的 soul 上，用完即卸，不写回 Agent
+        var skillContext = String(opts.skillContext || '');
         var ctx = { engine: pick.engine, meta: pick.meta, reason: pick.reason,
           switched: pick.switched, from: pick.from, commander: commander.name,
-          dryRun: !!opts.dryRun, soul: target.soul };
+          dryRun: !!opts.dryRun, skills: opts.skillIds || [], skillTokens: opts.skillTokens || 0,
+          soul: (target.soul || '') + (skillContext ? '\n\n' + skillContext : '') };
 
         function call(engineId, attempt) {
           return Promise.resolve(self.executor(target, task, Object.assign({}, ctx, { engine: engineId })))
@@ -440,6 +445,7 @@
             taskType: opts.taskType || 'general',
             source: 'delegate:' + (commander.name || 'workbench'),
             tokensIn: res.tokensIn || 0, tokensOut: res.tokensOut || 0,
+            skills: opts.skillIds || [], skillTokens: opts.skillTokens || 0,
             cost: res.cost, costSource: res.costSource,
             status: res.status || (res.error ? 'error' : 'ok'),
             error: res.error || '', dryRun: !!res.dryRun,
@@ -453,6 +459,7 @@
             switched: pick.switched || !!res.switchedFrom,
             switchedFrom: res.switchedFrom || (pick.switched ? pick.from : ''),
             dryRun: saved.dryRun, error: saved.error,
+            skills: saved.skills || [], skillTokens: saved.skillTokens || 0,
           };
           self.emit(out.status === 'ok' ? 'finished' : 'failed', out);
           return out;
@@ -468,7 +475,8 @@
   /**
    * 委派任务。
    * spec: { commanderId, targetIds, task, mode:'parallel'|'sequential'|'chain',
-   *         autoApprove, dryRun, taskType }
+   *         autoApprove, dryRun, taskType,
+   *         skillIds, skillContext, skillTokens }  // v3：技能说明书挂在本次任务上
    * 返回 Promise<{ results, totalCost, spent, simulated, succeeded, failed, switched, events }>
    */
   AgentOrchestrator.prototype.delegate = function (spec) {
@@ -487,7 +495,8 @@
     if (!s.task || !String(s.task).trim()) return Promise.reject(new Error('任务内容不能为空'));
 
     this.emit('delegated', { commander: commander.name, targets: targets.map(function (t) { return t.name; }),
-      task: s.task, mode: s.mode || 'parallel', dryRun: !!s.dryRun });
+      task: s.task, mode: s.mode || 'parallel', dryRun: !!s.dryRun,
+      skills: s.skillIds || [], skillTokens: s.skillTokens || 0 });
 
     var finish = function (results) {
       var out = {
@@ -498,6 +507,7 @@
         succeeded: results.filter(function (r) { return r.status === 'ok'; }).length,
         failed: results.filter(function (r) { return r.status !== 'ok'; }).length,
         switched: results.filter(function (r) { return r.switched; }).length,
+        skills: s.skillIds || [], skillTokens: s.skillTokens || 0,
         events: events,
       };
       self.emit('completed', out);

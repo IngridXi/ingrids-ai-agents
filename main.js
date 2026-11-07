@@ -8,6 +8,8 @@
  *   4. API key 用 Electron safeStorage（系统钥匙串）加密后落盘
  *
  * v2：用量账本（按月 jsonl）、月度预算、agent:run 真实执行器（默认演练）。
+ * v3：技能板块（Board）— 内置 skill 随仓库走，本机 WorkBuddy skill 仅作可选导入源；
+ *     索引常驻、正文按需读取并注入 soul，注入量计入用量账本。
  */
 'use strict';
 
@@ -15,6 +17,8 @@ const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+require('./skills-core.js');
+const SkillsCore = globalThis.SkillsCore;
 
 /* ---------------- 数据目录（local-first） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -35,6 +39,129 @@ function readJson(name, fallback) {
 }
 function writeJson(name, data) {
   fs.writeFileSync(path.join(dataDir(), name), JSON.stringify(data, null, 2), 'utf8');
+}
+
+/* ---------------- 技能板块（Board）与 Skill 索引 ----------------
+ * 只读扫描三类来源：
+ *   builtin : 仓库自带 skills/ 下的 .md 文件（随 git 走，默认启用）
+ *   local   : ~/.workbuddy/skills、~/.workbuddy/plugins/cache（默认全部不启用）
+ *   project : 本项目 .workbuddy/skills
+ * 只有被 boards.json 引用（或用户手动启用）的 skill 才进工作台。
+ * 渲染进程永远拿不到绝对路径：skills:read 只接受 id，由主进程从内存 Map 查路径。
+ */
+let SKILL_PATHS = new Map();
+
+function skillRoots() {
+  const home = app.getPath('home');
+  return [
+    { dir: path.join(__dirname, 'skills'), scope: 'builtin', prefix: 'builtin' },
+    { dir: path.join(home, '.workbuddy', 'skills'), scope: 'local', prefix: 'local' },
+    { dir: path.join(home, '.workbuddy', 'plugins', 'cache'), scope: 'local', prefix: 'plugin' },
+    { dir: path.join(__dirname, '.workbuddy', 'skills'), scope: 'local', prefix: 'project' },
+  ];
+}
+function isAllowedSkillPath(file) {
+  if (!file || !path.isAbsolute(file) || !/\.md$/i.test(file)) return false;
+  return skillRoots().some((r) => {
+    const base = path.resolve(r.dir) + path.sep;
+    return path.resolve(file).startsWith(base);
+  });
+}
+function hasExecutableSibling(file) {
+  const d = path.dirname(file);
+  return fs.existsSync(path.join(d, 'scripts')) || fs.existsSync(path.join(d, 'references'));
+}
+function makeSkillRecord(file, root, rec) {
+  const rel = path.relative(root.dir, file).split(path.sep).join('/');
+  const id = rec.prefix + ':' + rel.replace(/\.md$/i, '');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); }
+  catch { return null; }
+  // 只解析头部 frontmatter；正文不进索引（渐进式披露）
+  const meta = SkillsCore.parseFrontmatter(text.slice(0, 16384)).meta;
+  const bytes = Buffer.byteLength(text);
+  // 中文按字节估会高估约 3 倍，用字符数估，并与 buildContext 的单份上限对齐
+  const estTokens = Math.ceil(Math.min(text.length, 12000) / 4);
+  const name = meta.name || meta.display_name || path.basename(file, '.md');
+  const desc = meta.description || meta.description_zh || '';
+  const validCats = SkillsCore.CATEGORY_RULES.map((c) => c.id);
+  const cat = validCats.indexOf(meta.category) >= 0
+    ? meta.category : SkillsCore.classify(name + ' ' + desc + ' ' + rel).category;
+  SKILL_PATHS.set(id, path.resolve(file));
+  return {
+    id, name, description: desc, category: cat,
+    scope: rec.scope, source: String(meta.source || ''), rel,
+    bytes, estTokens: estTokens,
+    executable: !!meta['allowed-tools'] || hasExecutableSibling(file),
+    allowedTools: String(meta['allowed-tools'] || ''), model: String(meta.model || ''),
+    boardIds: String(meta.boards || '').split(/[,，\s]+/).filter(Boolean),
+    enabled: false,
+  };
+}
+function collectSkills(root, out) {
+  if (!root.dir || !fs.existsSync(root.dir)) return;
+  const MAX_DEPTH = 9, MAX_FILES = 500;
+  function walk(dir, depth) {
+    if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      if (out.length >= MAX_FILES) return;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (['.git', 'node_modules', '.venv', '__pycache__'].indexOf(ent.name) >= 0) continue;
+        walk(full, depth + 1);
+      } else if (ent.isFile() && (
+        (root.scope === 'builtin' && /\.md$/i.test(ent.name)) ||
+        (root.scope === 'local' && /^SKILL\.md$/i.test(ent.name))
+      )) {
+        const rec = makeSkillRecord(full, root, root);
+        if (rec) out.push(rec);
+      }
+    }
+  }
+  walk(root.dir, 0);
+}
+function defaultBoards() {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'skills', 'boards.json'), 'utf8')).boards || []; }
+  catch { return []; }
+}
+function readBoards() {
+  const saved = readJson('boards.json', null);
+  return Array.isArray(saved) && saved.length ? saved : defaultBoards();
+}
+function writeBoards(boards) {
+  if (!Array.isArray(boards)) throw new Error('boards 必须是数组');
+  const clean = boards.map((b) => ({
+    id: String(b.id || ''), name: String(b.name || ''), emoji: String(b.emoji || '📁'),
+    desc: String(b.desc || ''), skillIds: Array.isArray(b.skillIds) ? b.skillIds : [],
+    defaultEngine: String(b.defaultEngine || ''), color: String(b.color || '#2a746c'),
+  })).filter((b) => b.id && b.name);
+  writeJson('boards.json', clean);
+  return clean;
+}
+function scanSkills() {
+  SKILL_PATHS = new Map();
+  const records = [];
+  skillRoots().forEach((r) => collectSkills(r, records));
+  const boards = readBoards();
+  const enabled = {};
+  boards.forEach((b) => (b.skillIds || []).forEach((id) => { enabled[id] = true; }));
+  records.forEach((r) => {
+    r.enabled = !!enabled[r.id];
+    // 内置 skill 的 frontmatter 里写了 boards 也自动归入该板块
+    boards.forEach((b) => {
+      if (r.boardIds.indexOf(b.id) >= 0 && (b.skillIds || []).indexOf(r.id) < 0) b.skillIds.push(r.id);
+    });
+  });
+  const stats = {
+    total: records.length, enabled: records.filter((r) => r.enabled).length,
+    builtin: records.filter((r) => r.scope === 'builtin').length,
+    local: records.filter((r) => r.scope === 'local').length,
+    executable: records.filter((r) => r.executable).length,
+    bytes: records.reduce((n, r) => n + r.bytes, 0),
+  };
+  return { boards, records, stats, scannedAt: Date.now() };
 }
 
 /* ---------------- 窗口 ---------------- */
@@ -194,8 +321,9 @@ function costOf(engine, tin, tout) {
 }
 function approxTokens(s) { return Math.ceil(String(s || '').length / 4); }
 
-function dryRunResult(engine, prompt, reason) {
-  const tin = approxTokens(prompt), tout = 120;
+function dryRunResult(engine, prompt, reason, soul) {
+  // v3：演练也要把注入的技能正文算进输入 token，否则账单会少算一截
+  const tin = approxTokens((soul ? soul + '\n\n' : '') + prompt), tout = 120;
   return {
     text: '[演练] 已收到任务，但未调用真实模型。\n原因：' + reason,
     engine, tokensIn: tin, tokensOut: tout, cost: costOf(engine, tin, tout),
@@ -207,7 +335,7 @@ function dryRunResult(engine, prompt, reason) {
 function runCliAgent(engine, prompt, soul) {
   const ad = CLI_ADAPTERS[engine];
   const bin = which(ad.cmd);
-  if (!bin) return Promise.resolve(dryRunResult(engine, prompt, '本机未安装 ' + ad.cmd + ' CLI'));
+  if (!bin) return Promise.resolve(dryRunResult(engine, prompt, '本机未安装 ' + ad.cmd + ' CLI', soul));
   const fullPrompt = (soul ? String(soul).trim() + '\n\n' : '') + prompt;
   return new Promise((resolve) => {
     let out = '', err = '', done = false;
@@ -217,7 +345,7 @@ function runCliAgent(engine, prompt, soul) {
     const finish = (result) => { if (!done) { done = true; resolve(result); } };
     child.stdout.on('data', (d) => { out += d.toString(); });
     child.stderr.on('data', (d) => { err += d.toString(); });
-    child.on('error', (e) => finish(Object.assign(dryRunResult(engine, prompt, 'CLI 启动失败：' + e.message), { status: 'error', error: e.message })));
+    child.on('error', (e) => finish(Object.assign(dryRunResult(engine, prompt, 'CLI 启动失败：' + e.message, soul), { status: 'error', error: e.message })));
     child.on('close', (code) => {
       const text = out.trim().slice(0, 20000);
       const tin = approxTokens(fullPrompt), tout = approxTokens(text);
@@ -238,7 +366,7 @@ function runCliAgent(engine, prompt, soul) {
 /* ---------------- 真实执行：OpenAI 兼容 API ---------------- */
 async function runApiAgent(engine, prompt, soul, key) {
   const cfg = API_ENDPOINTS[engine];
-  if (!key) return dryRunResult(engine, prompt, '尚未在「引擎设置」里配置 ' + engine + ' 的 API Key');
+  if (!key) return dryRunResult(engine, prompt, '尚未在「引擎设置」里配置 ' + engine + ' 的 API Key', soul);
   const messages = [];
   if (soul) messages.push({ role: 'system', content: String(soul) });
   messages.push({ role: 'user', content: String(prompt) });
@@ -255,7 +383,7 @@ async function runApiAgent(engine, prompt, soul, key) {
     const data = await resp.json();
     if (!resp.ok) {
       const msg = String((data && data.error && data.error.message) || resp.statusText || resp.status);
-      return { text: '', engine, tokensIn: approxTokens(prompt), tokensOut: 0, cost: 0,
+      return { text: '', engine, tokensIn: approxTokens((soul ? soul + '\n\n' : '') + prompt), tokensOut: 0, cost: 0,
         costSource: 'metered', status: 'error', dryRun: false, error: msg,
         limited: /rate.?limit|quota|insufficient|429|402/i.test(msg) };
     }
@@ -311,18 +439,48 @@ ipcMain.handle('agent:run', async (_e, payload) => {
   const p = payload || {};
   const prompt = String(p.prompt || '').slice(0, 20000);
   const engine = String(p.engine || 'local-llm');
-  if (!prompt.trim()) return dryRunResult(engine, prompt, '任务内容为空');
-  if (!PRICES[engine]) return dryRunResult(engine, prompt, '未知引擎：' + engine);
+  const soul = String(p.soul || '');
+  if (!prompt.trim()) return dryRunResult(engine, prompt, '任务内容为空', soul);
+  if (!PRICES[engine]) return dryRunResult(engine, prompt, '未知引擎：' + engine, soul);
 
   const settings = decryptSettings(readSettingsRaw());
-  if (p.dryRun === true) return dryRunResult(engine, prompt, '本次为演练模式');
+  if (p.dryRun === true) return dryRunResult(engine, prompt, '本次为演练模式', soul);
   if (!settings.allowRealRuns) {
-    return dryRunResult(engine, prompt, '真实执行未开启（引擎设置里可打开；需先装 CLI 或填 API Key）');
+    return dryRunResult(engine, prompt, '真实执行未开启（引擎设置里可打开；需先装 CLI 或填 API Key）', soul);
   }
 
-  if (CLI_ADAPTERS[engine]) return runCliAgent(engine, prompt, p.soul);
-  if (API_ENDPOINTS[engine]) return runApiAgent(engine, prompt, p.soul, settings[engine]);
-  return dryRunResult(engine, prompt, '本地引擎需自行接入推理服务（如 ollama / FunASR）');
+  if (CLI_ADAPTERS[engine]) return runCliAgent(engine, prompt, soul);
+  if (API_ENDPOINTS[engine]) return runApiAgent(engine, prompt, soul, settings[engine]);
+  return dryRunResult(engine, prompt, '本地引擎需自行接入推理服务（如 ollama / FunASR）', soul);
+});
+
+/* ---------------- IPC：技能板块 / 索引 / 正文 / 预设 ---------------- */
+ipcMain.on('skills:scan-sync', (e) => { e.returnValue = scanSkills(); });
+ipcMain.handle('skills:scan', () => scanSkills());
+ipcMain.handle('skills:read', (_e, id) => {
+  const key = String(id || '');
+  const file = SKILL_PATHS.get(key);
+  if (!file) return { id: key, name: '', body: '', error: '未知技能 id（请先扫描索引）' };
+  if (!isAllowedSkillPath(file)) return { id: key, name: '', body: '', error: '路径不在允许范围' };
+  try {
+    const size = fs.statSync(file).size;
+    if (size > 262144) return { id: key, name: '', body: '', error: '技能正文超过 256KB，已跳过' };
+    const parsed = SkillsCore.parseFrontmatter(fs.readFileSync(file, 'utf8'));
+    return {
+      id: key, name: parsed.meta.name || path.basename(file, '.md'),
+      body: parsed.body.slice(0, 60000), bytes: size,
+    };
+  } catch (err) {
+    return { id: key, name: '', body: '', error: '读取失败：' + String(err && err.message || err) };
+  }
+});
+ipcMain.on('boards:list-sync', (e) => { e.returnValue = readBoards(); });
+ipcMain.handle('boards:save', (_e, boards) => writeBoards(boards));
+ipcMain.on('presets:list-sync', (e) => { e.returnValue = readJson('presets.json', []); });
+ipcMain.handle('presets:save', (_e, list) => {
+  if (!Array.isArray(list)) throw new Error('presets 必须是数组');
+  writeJson('presets.json', list);
+  return true;
 });
 
 /* ---------------- 生命周期 ---------------- */

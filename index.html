@@ -120,6 +120,10 @@
   .tile.add .plus { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 30px; color: var(--accent); background: var(--accent-soft); }
   .tile.add .name { color: var(--ink-soft); font-weight: 600; }
 
+  .tile.preset { border-color: #ecdfc0; background: #fffdf8; }
+  .tile.preset .emoji { background: #f7f1e3; }
+  .badge.preset { background: var(--gold-text); }
+
   /* ---------- Footer ---------- */
   footer.router {
     margin-top: auto; background: var(--card); border: 1px solid var(--line);
@@ -219,6 +223,7 @@
       <div class="meta">
         <span class="chip"><span class="dot"></span><span id="agentCount">1</span> 个 Agent 已就绪</span>
         <span class="chip warn"><span class="dot"></span>每个 Agent 独立模型</span>
+        <button class="chip chip-btn" id="btnSkills" title="按板块管理技能、自动推荐、挂载">🧩 <span id="skillsCount">0</span> 个技能板块</button>
         <button class="chip chip-btn" id="btnSettings" title="配置引擎与 API Key">⚙️ 引擎设置</button>
       </div>
     </header>
@@ -229,7 +234,7 @@
       <div class="label"><span class="ic">🏠</span>local-first · 每个 Agent 绑定自己的引擎</div>
       <span class="pill"><span class="st"></span>会议纪要官 → FunASR + 本地大模型</span>
       <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 成本记账</span>
-      <span class="hint">agents-core.js v2 · local-first · 数据存本机</span>
+      <span class="hint">v3 · 板块 → 技能 → Agent → 模型 · local-first · 数据存本机</span>
     </footer>
   </div>
 
@@ -244,6 +249,7 @@
   </div>
 
 <script src="agents-core.js"></script>
+<script src="skills-core.js"></script>
 <script>
 /* ============================================================
  *  Ingrid's AI Agents — 桌面版工作台脚本
@@ -394,10 +400,33 @@ function engineLabelOf(a) {
   return a.engineLabel || (router.resolve(a).meta ? router.resolve(a).meta.name : (a.engine || '待绑定'));
 }
 
+/* ---------- v3：板块 / 预设读取（桌面走文件，浏览器走 localStorage） ---------- */
+function escHtml(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function loadPresets() {
+  if (IS_DESKTOP) { try { return window.ingrid.loadPresetsSync() || []; } catch (e) { return []; } }
+  try { return JSON.parse(localStorage.getItem('ingrid.presets') || '[]'); } catch (e) { return []; }
+}
+function loadBoardMap() {
+  let raw = [];
+  if (IS_DESKTOP) { try { raw = window.ingrid.loadBoardsSync() || []; } catch (e) {} }
+  else { try { raw = JSON.parse(localStorage.getItem('ingrid.boards') || '[]'); } catch (e) {} }
+  const m = {};
+  (raw || []).forEach(b => { m[b.id] = b; });
+  return m;
+}
+function updateBoardCount() {
+  const el = document.getElementById('skillsCount');
+  if (el) el.textContent = String(Object.keys(loadBoardMap()).length);
+}
+
 function renderAgents() {
   grid.innerHTML = '';
   const agents = registry.list();
   agentCount.textContent = String(agents.filter(a => a.status === 'active').length);
+  updateBoardCount();
 
   agents.forEach(a => {
     const el = document.createElement('div');
@@ -420,6 +449,25 @@ function renderAgents() {
         if (IS_DESKTOP) window.ingrid.openAgent(a.href);
         else window.open(a.href, '_blank');
       } else openModal(a);
+    });
+    grid.appendChild(el);
+  });
+
+  // 预设方块：板块 + Agent + 技能的一键组合，点击后自动填好调度中枢
+  const boardMap = loadBoardMap();
+  loadPresets().forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'tile preset';
+    const b = boardMap[p.boardId];
+    el.innerHTML = `
+      <span class="badge preset">${escHtml(b ? b.name : '预设')}</span>
+      <div class="emoji">${escHtml(p.emoji || '⚡')}</div>
+      <div class="name">${escHtml(p.name)}</div>
+      <div class="tag">${(p.skillIds || []).length} 个技能 · ${(p.agentIds || []).length} 个 Agent</div>
+      <div class="engine">一键组合</div>`;
+    el.addEventListener('click', () => {
+      if (typeof window.__openOrchestratorWith === 'function') window.__openOrchestratorWith(p);
+      else if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator();
     });
     grid.appendChild(el);
   });
@@ -597,6 +645,9 @@ settingsMask.addEventListener('click', e => { if (e.target === settingsMask) clo
 // 保存所有 Key
 document.addEventListener('click', e => {
   if (e.target && e.target.id === 'btnSettings') openSettings();
+  if (e.target && e.target.closest && e.target.closest('#btnSkills')) {
+    if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator();
+  }
 });
 
 // 在设置面板里拦截“保存”按钮（动态添加监听）

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "note": "板块模板。运行时会复制到 userData/data/boards.json，之后的改动只写用户数据，不覆盖这里的模板。skillIds 里的 id 由主进程按 builtin:相对路径 生成。",
+  "boards": [
+    {
+      "id": "research",
+      "name": "Research",
+      "emoji": "🔬",
+      "desc": "学术研究与论文写作：审稿、去 AI 味、写作、文献综述、研究导师",
+      "skillIds": [
+        "builtin:research/reviewer",
+        "builtin:research/deai",
+        "builtin:research/academic-writing",
+        "builtin:research/literature-review",
+        "builtin:research/research-mentor"
+      ],
+      "defaultEngine": "claude-code",
+      "color": "#2a746c"
+    }
+  ]
+}

@@ -35,4 +35,13 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // 真正跑一个 Agent（主进程 spawn CLI / 调 API；默认演练不花钱）
   runAgent: (payload) => ipcRenderer.invoke('agent:run', payload),
+
+  // 技能板块 / 只读索引 / 按需读正文 / 预设（v3）
+  scanSkillsSync: () => ipcRenderer.sendSync('skills:scan-sync'),
+  scanSkills: () => ipcRenderer.invoke('skills:scan'),
+  readSkill: (id) => ipcRenderer.invoke('skills:read', id),
+  loadBoardsSync: () => ipcRenderer.sendSync('boards:list-sync'),
+  saveBoards: (boards) => ipcRenderer.invoke('boards:save', boards),
+  loadPresetsSync: () => ipcRenderer.sendSync('presets:list-sync'),
+  savePresets: (list) => ipcRenderer.invoke('presets:save', list),
 });
