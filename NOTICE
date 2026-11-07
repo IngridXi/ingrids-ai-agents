@@ -1,0 +1,25 @@
+Ingrid's AI Agents
+Copyright 2026 Ingrid Xi
+
+This project is built on the architectural model of OpenMausBot
+(https://github.com/milind-soni/OpenMausBot), Copyright 2026 Milind Soni and
+OpenMausBot contributors, licensed under the Apache License, Version 2.0.
+
+What was adapted (concepts and schema, reimplemented from scratch, no verbatim
+source code copied):
+
+  - The "each bot is a real agent" data model: name, soul (standing
+    instructions), private memory, skills, routines, approvalMode, computer,
+    and a per-agent bound model engine.  See agents-core.js (DEFAULT_AGENT,
+    AgentRegistry, ModelRouter).
+  - The Electron desktop security model: contextIsolation on, a single
+    whitelisted contextBridge object exposed to the renderer (window.ingrid),
+    and no Node/ipcRenderer access from page code.  See main.js / preload.js.
+  - The local-first storage principle and bring-your-own-agent approach
+    (reusing locally logged-in CLIs instead of bare API keys).
+
+The full Apache License 2.0 text is in LICENSE.
+
+The first agent, "会议纪要官" (agents/meeting-audio/), was extracted from
+Ingrid Xi's own haiguihai-platform repository and is not derived from
+OpenMausBot.

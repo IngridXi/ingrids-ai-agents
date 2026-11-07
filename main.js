@@ -15,6 +15,9 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 /* ---------------- 数据目录（local-first） ---------------- */
+// 显式固定 app 名，保证 userData 路径稳定（不随 package 名 / 打包方式漂移）
+app.setName("Ingrid's AI Agents");
+
 function dataDir() {
   const dir = path.join(app.getPath('userData'), 'data');
   fs.mkdirSync(dir, { recursive: true });
