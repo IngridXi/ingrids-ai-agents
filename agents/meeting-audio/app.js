@@ -202,13 +202,23 @@
     });
   }
 
-  function healthCheck() {
+  function healthCheck(attempt) {
+    attempt = attempt || 0;
     fetch(API + '/health').then(function (r) { return r.json(); }).then(function (j) {
       if (j && j.ok) {
         if (j.realtime_port) WS_URL = 'ws://127.0.0.1:' + j.realtime_port + '/realtime';
         setStatus(el('status'), '本机会议录音服务已就绪');
-      } else setStatus(el('status'), '会议录音服务未启动，请先运行 extensions/meeting_audio/server.py', 'err');
-    }).catch(function () { setStatus(el('status'), '会议录音服务未启动：请在 extensions/meeting_audio 下执行 .venv/bin/python server.py', 'err'); });
+        loadSpeakers();
+      } else retry();
+    }).catch(retry);
+    function retry() {
+      if (attempt < 5) {
+        setStatus(el('status'), '正在启动本机会议录音服务…', 'warn');
+        setTimeout(function () { healthCheck(attempt + 1); }, 600);
+      } else {
+        setStatus(el('status'), '会议录音服务未能启动：请检查 extensions/meeting_audio/server.log', 'err');
+      }
+    }
   }
 
   /* ============ 笔记：本地自动保存 ============ */

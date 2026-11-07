@@ -18,6 +18,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const os = require('os');
+const net = require('net');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 
@@ -194,12 +195,35 @@ function createMainWindow() {
 
 function openAgentWindow(href) {
   if (typeof href !== 'string' || !href || href.includes('..')) return;
+  if (href.includes('meeting-audio')) ensureMeetingAudioBackend();
   const win = new BrowserWindow({
     width: 1200, height: 820, minWidth: 720, minHeight: 520,
     title: "Ingrid's AI Agents", backgroundColor: '#f7f6f9',
     webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
   });
   win.loadFile(path.join(__dirname, href));
+}
+
+/* ---------------- 会议纪要后端自动拉起 ---------------- */
+const MEETING_AUDIO_PORT = 8950;
+
+function meetingAudioBackendCmd() {
+  const dir = path.join(__dirname, 'extensions', 'meeting_audio');
+  return { dir, py: path.join(dir, '.venv', 'bin', 'python'), main: path.join(dir, 'server.py') };
+}
+
+// 打开会议纪要官窗口前调用：若本机 8950 服务未在跑，就独立拉起后端（模型懒加载，启动即监听）。
+function ensureMeetingAudioBackend() {
+  const probe = net.connect({ host: '127.0.0.1', port: MEETING_AUDIO_PORT, timeout: 400 });
+  probe.once('connect', () => { probe.end(); });  // 已在运行，复用
+  probe.once('error', () => {
+    const { dir, py, main } = meetingAudioBackendCmd();
+    if (!fs.existsSync(py) || !fs.existsSync(main)) return;  // 后端未安装，前端会提示
+    const log = fs.openSync(path.join(dir, 'server.log'), 'a');
+    const child = spawn(py, [main], { cwd: dir, stdio: ['ignore', log, log], detached: true });
+    child.unref();
+  });
+  probe.once('timeout', () => { probe.destroy(); });
 }
 
 /* ---------------- 本机 CLI（bring-your-own-agent） ---------------- */

@@ -1,3 +1,10 @@
 node_modules/
 dist/
 .DS_Store
+
+# 会议纪要官后端：本地运行产物 / 依赖 / 用户数据，不入库
+extensions/meeting_audio/.venv/
+extensions/meeting_audio/generated/
+extensions/meeting_audio/speaker_profiles/
+extensions/meeting_audio/server.log
+extensions/meeting_audio/__pycache__/
