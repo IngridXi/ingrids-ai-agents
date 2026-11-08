@@ -616,6 +616,62 @@ ipcMain.on('agents:list-sync', (e) => { e.returnValue = readJson('agents.json', 
 /* ---------------- IPC：打开 agent ---------------- */
 ipcMain.handle('open-agent', (_e, href) => { openAgentWindow(href); return true; });
 
+/* ---------------- IPC：电脑操作员（computer use） ---------------- */
+let computerUseProc = null;
+
+ipcMain.handle('computer:start', (e, payload) => {
+  const p = payload || {};
+  const task = String(p.task || '').trim();
+  const maxSteps = Math.min(Math.max(parseInt(p.maxSteps, 10) || 15, 1), 30);
+  const dryRun = !!p.dryRun;
+  const send = (data) => { if (!e.sender.isDestroyed()) e.sender.send('computer:event', data); };
+
+  if (!task) { send({ type: 'error', message: '请先填写任务内容' }); return false; }
+  if (computerUseProc) { send({ type: 'error', message: '已有任务在执行，请先停止' }); return false; }
+
+  const args = [path.join(__dirname, 'computer-use.py'), '--task', task, '--max-steps', String(maxSteps)];
+  if (dryRun) args.push('--dry-run');
+
+  let proc;
+  try {
+    proc = spawn(pyBin(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    send({ type: 'error', message: '启动失败：' + String(err && err.message || err) });
+    return false;
+  }
+  computerUseProc = proc;
+
+  let buf = '';
+  proc.stdout.on('data', (chunk) => {
+    buf += chunk.toString('utf8');
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      try { send(JSON.parse(line)); } catch { /* 忽略坏行 */ }
+    }
+  });
+  proc.on('close', (code) => {
+    if (computerUseProc === proc) computerUseProc = null;
+    send({ type: 'closed', code: code });
+  });
+  proc.on('error', (err) => {
+    if (computerUseProc === proc) computerUseProc = null;
+    send({ type: 'error', message: String(err && err.message || err) });
+  });
+
+  return true;
+});
+
+ipcMain.handle('computer:stop', () => {
+  if (computerUseProc) {
+    try { computerUseProc.kill(); } catch { /* 忽略 */ }
+    computerUseProc = null;
+  }
+  return true;
+});
+
 /* ---------------- IPC：CLI 检测 / 启动 ---------------- */
 ipcMain.handle('cli:detect', (_e, engineId) => {
   const cmd = CLI_CMDS[engineId];

@@ -111,4 +111,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   // 网页抓取 + 联网搜索（Firecrawl / Perplexity 的免费替代）
   webFetch: (payload) => ipcRenderer.invoke('web:fetch', payload),
   webSearch: (payload) => ipcRenderer.invoke('web:search', payload),
+
+  // 电脑操作员（computer use：截图 + 视觉模型 + 鼠标键盘控制）
+  computerStart: (payload) => ipcRenderer.invoke('computer:start', payload),
+  computerStop: () => ipcRenderer.invoke('computer:stop'),
+  onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
 });

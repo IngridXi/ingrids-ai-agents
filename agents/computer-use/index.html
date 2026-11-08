@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电脑操作员 · Ingrid's AI Agents</title>
+<style>
+  :root {
+    --accent: #6c5ce7;
+    --accent-2: #5a4bd1;
+    --accent-soft: #ece9fb;
+    --deep: #4a3f8c;
+    --ink: #26232e;
+    --ink-soft: #55515e;
+    --ink-faint: #8f8b98;
+    --line: #e6e4ec;
+    --bg: #f7f6f9;
+    --card: #ffffff;
+    --danger: #dc2626;
+    --warning: #d97706;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  header {
+    flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
+    box-shadow: 0 2px 12px rgba(74,63,140,.18);
+  }
+  header .logo {
+    width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,.18);
+    display: grid; place-items: center; flex: none;
+  }
+  header .logo svg { width: 20px; height: 20px; }
+  header .title { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  header .title .sub { font-size: 11.5px; font-weight: 400; opacity: .82; }
+  header .spacer { flex: 1; }
+  header .stop-btn {
+    padding: 8px 16px; border-radius: 9px; border: 1px solid rgba(255,255,255,.4);
+    background: rgba(255,255,255,.14); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  header .stop-btn:hover { background: rgba(255,255,255,.26); }
+  header .stop-btn:disabled { opacity: .45; cursor: default; }
+  header .stop-btn.running { background: #e5484d; border-color: #e5484d; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .7; } }
+
+  #feed { flex: 1; overflow-y: auto; padding: 18px 20px 8px; scroll-behavior: smooth; }
+
+  .perm-tip {
+    margin-bottom: 14px; padding: 11px 14px; border-radius: 12px;
+    background: #fdf3e3; border: 1px solid #f0dcae; color: #6b5320;
+    font-size: 12.5px; line-height: 1.65;
+  }
+  .perm-tip b { color: #854f0b; }
+  .perm-tip .ok { color: #0f6e56; font-weight: 700; }
+
+  .empty { text-align: center; color: var(--ink-soft); padding: 40px 16px; }
+  .empty .big {
+    width: 64px; height: 64px; border-radius: 18px; background: linear-gradient(135deg, var(--accent), var(--deep));
+    color: #fff; display: grid; place-items: center; margin: 0 auto 14px;
+  }
+  .empty .big svg { width: 32px; height: 32px; }
+  .empty h2 { font-size: 17px; color: var(--ink); margin-bottom: 8px; }
+  .empty p { font-size: 13px; line-height: 1.7; }
+  .empty .eg { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+  .empty .eg span {
+    padding: 7px 12px; border-radius: 20px; border: 1px solid var(--line);
+    background: var(--card); font-size: 12.5px; color: var(--ink-soft); cursor: pointer;
+  }
+  .empty .eg span:hover { border-color: var(--accent); color: var(--accent); }
+
+  .step {
+    display: flex; gap: 14px; margin-bottom: 16px; align-items: flex-start;
+  }
+  .step .shot {
+    flex: none; width: 240px; border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; background: #fff; box-shadow: 0 2px 10px rgba(30,26,50,.08);
+  }
+  .step .shot img { width: 100%; display: block; }
+  .step .shot .cap {
+    font-size: 10.5px; color: var(--ink-faint); padding: 5px 9px; background: var(--bg);
+    border-top: 1px solid var(--line);
+  }
+  .step .meta { flex: 1; min-width: 0; }
+  .step .stepno { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .3px; margin-bottom: 4px; }
+  .step .thought {
+    font-size: 13.5px; line-height: 1.6; color: var(--ink); margin-bottom: 8px;
+  }
+  .step .act {
+    display: inline-block; font-size: 12px; font-weight: 650; color: #fff;
+    background: var(--accent); padding: 4px 11px; border-radius: 999px; margin-bottom: 6px;
+  }
+  .step .act.done { background: #16a34a; }
+  .step .act.wait { background: var(--ink-faint); }
+  .step .act.err { background: var(--danger); }
+  .step .raw { font-size: 11px; color: var(--ink-faint); font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+
+  .summary {
+    margin: 14px 0 18px; padding: 13px 16px; border-radius: 12px;
+    background: #e1f5ee; border: 1px solid #b7e4d0; color: #0f6e56; font-size: 13.5px; line-height: 1.6;
+  }
+  .error-box {
+    margin: 14px 0 18px; padding: 13px 16px; border-radius: 12px;
+    background: #fdf2f2; border: 1px solid #f3c2c0; color: #b3261e; font-size: 13px; line-height: 1.6;
+  }
+
+  footer {
+    flex: none; padding: 12px 20px 16px; background: var(--bg); border-top: 1px solid var(--line);
+  }
+  .input-row { display: flex; align-items: flex-end; gap: 10px; max-width: 960px; margin: 0 auto; }
+  textarea {
+    flex: 1; resize: none; min-height: 46px; max-height: 130px;
+    padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;
+    font-size: 14px; line-height: 1.5; font-family: inherit; color: var(--ink);
+    background: var(--card); outline: none;
+  }
+  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #goBtn {
+    flex: none; padding: 0 22px; height: 46px; border: none; border-radius: 14px;
+    background: var(--accent); color: #fff; font-size: 14.5px; font-weight: 700; cursor: pointer;
+  }
+  #goBtn:hover { background: var(--accent-2); }
+  #goBtn:disabled { background: #c9c4e0; cursor: not-allowed; }
+  .opts { max-width: 960px; margin: 9px auto 0; display: flex; align-items: center; gap: 16px; }
+  .opts label { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-soft); cursor: pointer; }
+  .opts input { accent-color: var(--accent); }
+  .foot-note { max-width: 960px; margin: 8px auto 0; font-size: 11px; color: var(--ink-faint); line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" id="logo"></div>
+  <div class="title">
+    电脑操作员
+    <div class="sub">Computer Use · 看屏幕 → 动鼠标键盘替你干活</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="stop-btn" id="stopBtn" disabled>⏹ 停止</button>
+</header>
+
+<main id="feed"></main>
+
+<footer>
+  <div class="input-row">
+    <textarea id="input" rows="1" placeholder="描述要它替你做的事，例如：打开浏览器搜索『xxx』并截图保存…"></textarea>
+    <button id="goBtn">▶ 开始</button>
+  </div>
+  <div class="opts">
+    <label><input type="checkbox" id="dryRun"> 演练模式（只看+想，不动鼠标键盘，安全测试）</label>
+  </div>
+  <div class="foot-note">
+    本地视觉模型 qwen2.5vl:7b 驱动 · 全程可视化、可随时停止 · 首次使用需授权系统权限（见顶部提示）
+  </div>
+</footer>
+
+<script src="../../icons.js"></script>
+<script>
+(function () {
+  'use strict';
+  var IS_DESKTOP = !!(window.ingrid && window.ingrid.isDesktop);
+  var running = false;
+  var el = function (id) { return document.getElementById(id); };
+  var feed = el('feed'), input = el('input'), goBtn = el('goBtn'), stopBtn = el('stopBtn');
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  }); }
+  function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 130) + 'px'; }
+
+  function setLogo() {
+    el('logo').innerHTML = window.iconSvg('bot');
+  }
+
+  function updateButtons() {
+    goBtn.disabled = running || !input.value.trim();
+    stopBtn.disabled = !running;
+    stopBtn.classList.toggle('running', running);
+    goBtn.textContent = running ? '执行中…' : '▶ 开始';
+  }
+
+  function showPermTip() {
+    var tip = document.createElement('div');
+    tip.className = 'perm-tip';
+    tip.innerHTML = '<b>首次使用请先授权两项系统权限</b>（否则看不到屏幕 / 动不了鼠标）：<br>' +
+      '① 系统设置 → 隐私与安全性 → <b>屏幕录制</b> → 勾选「Ingrid\'s AI Agents」<br>' +
+      '② 系统设置 → 隐私与安全性 → <b>辅助功能</b> → 勾选「Ingrid\'s AI Agents」<br>' +
+      '授权后需<b>完全退出工作台再重新打开</b>才生效。';
+    feed.appendChild(tip);
+  }
+
+  function renderEmpty() {
+    var examples = ['打开浏览器搜索"今天的天气"', '打开访达并截图桌面', '帮我新建一个空文件夹'];
+    feed.innerHTML = '<div class="empty">' +
+      '<div class="big">' + window.iconSvg('bot') + '</div>' +
+      '<h2>电脑操作员 · 替你操作电脑</h2>' +
+      '<p>你描述任务，它看着屏幕一步步点鼠标、敲键盘，直到完成。</p>' +
+      '<div class="eg">' + examples.map(function (e) {
+        return '<span>' + esc(e) + '</span>';
+      }).join('') + '</div></div>';
+    Array.prototype.forEach.call(feed.querySelectorAll('.eg span'), function (n) {
+      n.addEventListener('click', function () { input.value = n.textContent; autoGrow(); updateButtons(); input.focus(); });
+    });
+    showPermTip();
+  }
+
+  function actLabel(a) {
+    var t = (a && a.type) || '';
+    var map = { click: '点击', double_click: '双击', right_click: '右键', type: '输入', key: '按键', scroll: '滚动', move: '移动', done: '完成', wait: '等待' };
+    var base = map[t] || t;
+    if (t === 'type') return base + '「' + (a.text || '') + '」';
+    if (t === 'key') return base + ' ' + (a.key || '');
+    if ((t === 'click' || t === 'double_click' || t === 'right_click' || t === 'move') && a.x != null) return base + ' (' + a.x + ', ' + a.y + ')';
+    if (t === 'scroll') return base + ' ' + (a.dy || 0);
+    return base;
+  }
+
+  function addStep(d) {
+    var card = document.createElement('div');
+    card.className = 'step';
+    var actCls = (d.action && d.action.type) || '';
+    card.innerHTML =
+      '<div class="shot"><img src="' + (d.img || '') + '" alt="屏幕截图"><div class="cap">第 ' + (d.step + 1) + ' 步截图</div></div>' +
+      '<div class="meta">' +
+        '<div class="stepno">STEP ' + (d.step + 1) + '</div>' +
+        '<div class="thought">' + esc(d.thought || '（无说明）') + '</div>' +
+        '<span class="act ' + esc(actCls) + '">' + esc(actLabel(d.action)) + '</span>' +
+        '<div class="raw">' + esc(JSON.stringify(d.action)) + '</div>' +
+      '</div>';
+    feed.appendChild(card);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function addBox(cls, html) {
+    var box = document.createElement('div');
+    box.className = cls;
+    box.innerHTML = html;
+    feed.appendChild(box);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function start() {
+    var task = input.value.trim();
+    if (!task || running) return;
+    if (!IS_DESKTOP) { addBox('error-box', '浏览器预览模式不能操作电脑，请用桌面应用运行。'); return; }
+    feed.innerHTML = '';
+    showPermTip();
+    running = true; updateButtons();
+    window.ingrid.computerStart({ task: task, maxSteps: 15, dryRun: el('dryRun').checked });
+  }
+  function stop() { if (running) window.ingrid.computerStop(); }
+
+  if (window.ingrid && window.ingrid.onComputerEvent) {
+    window.ingrid.onComputerEvent(function (d) {
+      d = d || {};
+      if (d.type === 'step') {
+        addStep(d);
+      } else if (d.type === 'done') {
+        running = false; updateButtons();
+        addBox('summary', '✓ ' + esc(d.summary || '任务完成') + '（共 ' + (d.steps || 0) + ' 步）');
+      } else if (d.type === 'error') {
+        running = false; updateButtons();
+        addBox('error-box', '⚠ ' + esc(d.message || '出错了'));
+      } else if (d.type === 'closed') {
+        running = false; updateButtons();
+      }
+    });
+  }
+
+  goBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  input.addEventListener('input', function () { autoGrow(); updateButtons(); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); start(); }
+  });
+
+  setLogo();
+  renderEmpty();
+  input.focus();
+})();
+</script>
+</body>
+</html>
