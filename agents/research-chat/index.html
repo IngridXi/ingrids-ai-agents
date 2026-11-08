@@ -50,6 +50,7 @@
     background: rgba(255,255,255,.14); color: #fff; font-size: 13px; cursor: pointer;
   }
   header .clear-btn:hover { background: rgba(255,255,255,.24); }
+  header .clear-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
 
   /* 消息区 */
   #messages { flex: 1; overflow-y: auto; padding: 22px 20px 10px; scroll-behavior: smooth; }
@@ -159,6 +160,7 @@
   <div class="spacer"></div>
   <select id="engineSelect" title="选择聊天引擎"></select>
   <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge">–</span></button>
+  <button class="clear-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息，研究助手默认关以保持「只依据证据」）">联网</button>
   <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
   <button class="clear-btn" id="clearBtn">清空对话</button>
 </header>
@@ -282,6 +284,7 @@
 
   /* ---------- 知识库（本地 RAG） ---------- */
   var kbEnabled = true;
+  var webEnabled = false;  // 联网搜索开关（研究助手默认关，保持「只依据证据」）
   var reviewMode = false;  // 审稿闭环开关
 
   function renderKbStatus(s) {
@@ -418,24 +421,11 @@
       });
     }
 
-    // 本地知识库 RAG：启用且有内容时，检索相关片段注入上下文
-    if (kbEnabled && IS_DESKTOP) {
-      window.ingrid.kbSearch(text, 4).then(function (hits) {
-        if (hits && hits.length) {
-          var ctx = hits.map(function (h, i) {
-            return '[' + (i + 1) + '] ' + h.title + '（' + h.source + ' / ' + h.relPath + '）\n' + h.content;
-          }).join('\n\n');
-          run('【本地知识库 · 相关片段，仅作证据参考，与问题无关则忽略】\n' + ctx + '\n\n【用户问题】\n' + text);
-        } else {
-          run(text);
-        }
-      }).catch(function () { run(text); });
-    } else {
-      run(text);
-    }
+    // 上下文注入：本地知识库 RAG + 联网搜索（按开关组合）
+    withContext(text, function (content) { run(content); });
   }
 
-  /* ---------- 知识库上下文注入（普通聊天与审稿闭环共用） ---------- */
+  /* ---------- 知识库上下文注入（审稿闭环用，只本地证据不联网） ---------- */
   function withKbContext(text, cb) {
     if (kbEnabled && IS_DESKTOP) {
       window.ingrid.kbSearch(text, 4).then(function (hits) {
@@ -447,6 +437,35 @@
         } else { cb(text); }
       }).catch(function () { cb(text); });
     } else { cb(text); }
+  }
+
+  /* ---------- 上下文注入（普通聊天用：知识库 + 联网搜索） ---------- */
+  function withContext(text, cb) {
+    if (!IS_DESKTOP) { cb(text); return; }
+    var ps = [];
+    if (kbEnabled) {
+      ps.push(window.ingrid.kbSearch(text, 4).then(function (hits) {
+        if (hits && hits.length) {
+          return '【本地知识库 · 相关片段，仅作证据参考，与问题无关则忽略】\n' +
+            hits.map(function (h, i) { return '[' + (i + 1) + '] ' + h.title + '（' + h.source + ' / ' + h.relPath + '）\n' + h.content; }).join('\n\n');
+        }
+        return '';
+      }).catch(function () { return ''; }));
+    }
+    if (webEnabled) {
+      ps.push(window.ingrid.webSearch({ query: text, n: 4 }).then(function (r) {
+        if (r && r.ok && r.results && r.results.length) {
+          return '【联网搜索结果 · 仅作参考，与问题无关则忽略，回答时标注来源】\n' +
+            r.results.map(function (x, i) { return '[' + (i + 1) + '] ' + x.title + '\n' + x.link + '\n' + (x.snippet || ''); }).join('\n\n');
+        }
+        return '';
+      }).catch(function () { return ''; }));
+    }
+    if (!ps.length) { cb(text); return; }
+    Promise.all(ps).then(function (ctxs) {
+      var ctx = ctxs.filter(Boolean).join('\n\n');
+      cb(ctx ? ctx + '\n\n【用户问题】\n' + text : text);
+    });
   }
 
   /* ---------- 审稿闭环：产出 → 审稿 → 返修 ---------- */
@@ -539,6 +558,12 @@
   el('clearBtn').addEventListener('click', function () {
     history = [];
     welcome();
+  });
+
+  // 联网搜索开关
+  el('webBtn').addEventListener('click', function () {
+    webEnabled = !webEnabled;
+    el('webBtn').classList.toggle('active', webEnabled);
   });
 
   // 审稿闭环开关

@@ -94,4 +94,11 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // 浏览器自动化（安全白名单：打开 / 截图 / 提取文本）
   browserAutomate: (payload) => ipcRenderer.invoke('browser:automate', payload),
+
+  // 文档生成（内建：Word / PPT / Excel，本地生成不依赖宿主 skill）
+  docGenerate: (payload) => ipcRenderer.invoke('doc:generate', payload),
+
+  // 网页抓取 + 联网搜索（Firecrawl / Perplexity 的免费替代）
+  webFetch: (payload) => ipcRenderer.invoke('web:fetch', payload),
+  webSearch: (payload) => ipcRenderer.invoke('web:search', payload),
 });

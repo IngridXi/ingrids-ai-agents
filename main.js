@@ -767,6 +767,128 @@ ipcMain.handle('browser:automate', async (_e, payload) => {
   return r.ok ? { ok: true, output: r.output } : { ok: false, error: r.error || r.output || '浏览器自动化失败' };
 });
 
+/* ---------------- IPC：文档生成（内建，脱离 WorkBuddy 官方 skill） ---------------- */
+// 用纯 Node 库 docx / pptxgenjs / exceljs 在本地直接生成 Word / PPT / Excel，不依赖任何宿主 skill。
+function exportDir() {
+  try { return app.getPath('downloads'); } catch { return dataDir(); }
+}
+function safeFilename(s) {
+  return String(s || '未命名').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || '未命名';
+}
+// 简易 Markdown → docx 段落（# 标题、- 列表、普通段落）
+function mdToDocxChildren(md, title) {
+  const { Paragraph, HeadingLevel } = require('docx');
+  const children = [];
+  if (title) children.push(new Paragraph({ text: title, heading: HeadingLevel.HEADING_1 }));
+  String(md || '').split(/\r?\n/).forEach(function (line) {
+    const t = line.trim();
+    if (!t) return;
+    if (/^###\s+/.test(t)) children.push(new Paragraph({ text: t.replace(/^###\s+/, ''), heading: HeadingLevel.HEADING_3 }));
+    else if (/^##\s+/.test(t)) children.push(new Paragraph({ text: t.replace(/^##\s+/, ''), heading: HeadingLevel.HEADING_2 }));
+    else if (/^#\s+/.test(t)) children.push(new Paragraph({ text: t.replace(/^#\s+/, ''), heading: HeadingLevel.HEADING_1 }));
+    else if (/^[-*•]\s+/.test(t)) children.push(new Paragraph({ text: t.replace(/^[-*•]\s+/, ''), bullet: { level: 0 } }));
+    else children.push(new Paragraph({ text: t }));
+  });
+  return children;
+}
+ipcMain.handle('doc:generate', async (_e, payload) => {
+  const p = payload || {};
+  const type = String(p.type || 'docx');
+  const title = String(p.title || '');
+  const file = path.join(exportDir(), safeFilename(title) + '.' + type);
+  try {
+    if (type === 'docx') {
+      const { Document, Packer } = require('docx');
+      const doc = new Document({ sections: [{ children: mdToDocxChildren(String(p.content || ''), title) }] });
+      const buf = await Packer.toBuffer(doc);
+      fs.writeFileSync(file, buf);
+    } else if (type === 'pptx') {
+      const PptxGenJS = require('pptxgenjs');
+      const pptx = new PptxGenJS();
+      const slides = (Array.isArray(p.slides) && p.slides.length) ? p.slides : [{ title: title || '未命名', bullets: [] }];
+      slides.forEach(function (s) {
+        const sl = pptx.addSlide();
+        if (s.title) sl.addText(String(s.title), { x: 0.5, y: 0.4, w: 9, h: 0.9, fontSize: 28, bold: true, color: '4A3F8C' });
+        if (Array.isArray(s.bullets) && s.bullets.length) {
+          sl.addText(s.bullets.map(function (b) { return { text: String(b), options: { bullet: true, breakLine: true, color: '26232E', fontSize: 16 } }; }), { x: 0.7, y: 1.5, w: 8.6, h: 3.8 });
+        }
+      });
+      await pptx.writeFile({ fileName: file });
+    } else if (type === 'xlsx') {
+      const ExcelJS = require('exceljs');
+      const wb = new ExcelJS.Workbook();
+      const sheets = (Array.isArray(p.sheets) && p.sheets.length) ? p.sheets : [{ name: title || 'Sheet1', rows: [] }];
+      sheets.forEach(function (sh) {
+        const ws = wb.addWorksheet(String(sh.name || 'Sheet1'));
+        (Array.isArray(sh.rows) ? sh.rows : []).forEach(function (r) { ws.addRow(Array.isArray(r) ? r : [r]); });
+      });
+      await wb.xlsx.writeFile(file);
+    } else {
+      return { ok: false, error: '不支持的文档类型：' + type + '（支持 docx / pptx / xlsx）' };
+    }
+    return { ok: true, path: file, name: path.basename(file) };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+/* ---------------- IPC：网页抓取（Firecrawl 的免费替代） ---------------- */
+ipcMain.handle('web:fetch', async (_e, payload) => {
+  const url = String((payload || {}).url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https 链接' };
+  try {
+    const cheerio = require('cheerio');
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    if (!res.ok) return { ok: false, error: '抓取失败：HTTP ' + res.status };
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    $('script,style,nav,footer,header,aside,iframe,noscript').remove();
+    const title = ($('title').first().text() || url).trim();
+    let text = $('body').text().replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+    if (text.length > 20000) text = text.slice(0, 20000) + '\n…（内容过长已截断）';
+    if (!text) return { ok: false, error: '未能提取到正文（可能是动态渲染页面）' };
+    return { ok: true, url: url, title: title, content: text };
+  } catch (err) {
+    return { ok: false, error: '抓取失败：' + String((err && err.message) || err) };
+  }
+});
+
+/* ---------------- IPC：联网搜索（Perplexity 的免费替代，零配置） ---------------- */
+// 默认走 DuckDuckGo HTML 端点（无需 Key）。被限流时可在设置里换 Brave Search API Key（braveSearchKey）。
+ipcMain.handle('web:search', async (_e, payload) => {
+  const p = payload || {};
+  const query = String(p.query || '').trim();
+  const n = Math.min(Math.max(parseInt(p.n, 10) || 5, 1), 10);
+  if (!query) return { ok: false, error: '搜索词为空' };
+  try {
+    const cheerio = require('cheerio');
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+    const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+      redirect: 'follow', signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return { ok: false, error: '搜索失败：HTTP ' + res.status };
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const results = [];
+    $('.result').each(function () {
+      if (results.length >= n) return;
+      const a = $(this).find('.result__a').first();
+      const title = a.text().trim();
+      let link = a.attr('href') || '';
+      const m = link.match(/uddg=([^&]+)/);
+      if (m) link = decodeURIComponent(m[1]);
+      const snippet = $(this).find('.result__snippet').first().text().trim();
+      if (title && link) results.push({ title: title, link: link, snippet: snippet });
+    });
+    if (!results.length) return { ok: false, error: '未取到搜索结果（可能被搜索引擎限流，稍后再试）' };
+    return { ok: true, query: query, results: results };
+  } catch (err) {
+    return { ok: false, error: '搜索失败：' + String((err && err.message) || err) };
+  }
+});
+
 /* ---------------- IPC：技能板块 / 索引 / 正文 / 预设 ---------------- */
 ipcMain.on('skills:scan-sync', (e) => { e.returnValue = scanSkills(); });
 ipcMain.handle('skills:scan', () => scanSkills());

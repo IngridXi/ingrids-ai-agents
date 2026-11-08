@@ -408,9 +408,28 @@ const SEED_AGENTS = [
     },
   },
   {
-    name: '通用助手', emoji: '💬', tag: '日常问答 · 内容创作',
-    status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
-    detail: { sub: '敬请期待', desc: '通用对话助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
+    name: '通用助手', emoji: '💬',
+    tag: '日常问答 · 联网搜索 · 抓网页 · 文档',
+    status: 'active', engine: 'deepseek', engineLabel: 'DeepSeek · 通用',
+    href: 'agents/assistant-chat/index.html',
+    soul: '你是通用助手（Assistant），Ingrid 的日常主力之一。擅长：日常问答、信息检索与总结、内容创作、文档整理。回答清晰、结构化、直接有用；能给出可执行的建议。需要时可把内容整理成 Word/PPT/Excel 大纲。不确定时如实说明，不编造事实。',
+    fallbacks: ['qwen', 'gpt'],
+    detail: {
+      sub: 'Assistant · 日常问答与文档',
+      desc: '日常主力助手。聊天式问答，支持联网搜索（DuckDuckGo 零配置）、粘贴网址抓取网页正文并总结、一键把回答导出为 Word 文档。文档生成用本地 Node 库（docx / pptxgenjs / exceljs）内建实现，不依赖任何外部宿主。',
+      workflow: [
+        { t: '日常问答', s: '清晰、结构化、直接有用的回答' },
+        { t: '联网搜索', s: '提问时自动检索实时信息并标注来源' },
+        { t: '抓取网页', s: '粘贴网址，抓取正文并总结' },
+        { t: '导出文档', s: '回答一键导出 Word，支持 PPT/Excel' },
+      ],
+      capabilities: ['日常问答', '联网搜索', '网页抓取', '内容创作', 'Word/PPT/Excel 导出'],
+      route: [
+        { kind: '引擎', label: '本地 Ollama / 云端 API' },
+        { kind: '搜索', label: 'DuckDuckGo HTML（零配置）' },
+        { kind: '文档', label: 'docx / pptxgenjs / exceljs（内建）' },
+      ],
+    },
   },
   {
     name: '数据分析', emoji: '📊', tag: '表格 · 图表 · 洞察',
@@ -459,15 +478,18 @@ registry.list().forEach(function (a) {
     });
   }
 });
-// v4 迁移：补齐/升级内置核心 Agent（老用户数据里缺失的 active 种子，如「研究助手」「界面设计师」）
+// v5 迁移：补齐/升级内置核心 Agent（active 种子缺 href 或仍是占位态时，升级为聊天入口）
 SEED_AGENTS.forEach(function (seed) {
   if (seed.status !== 'active') return;
   var existing = registry.list().find(function (a) { return a.name === seed.name; });
   if (!existing) {
     registry.create(seed);
-  } else if (seed.name === '研究助手' && !existing.href) {
-    // 老数据里研究助手是「详情弹窗版」（无 href），升级为聊天入口
-    registry.update(existing.id, { href: seed.href, engine: seed.engine, engineLabel: seed.engineLabel, fallbacks: seed.fallbacks });
+  } else if (seed.href && (!existing.href || existing.status !== 'active')) {
+    // 老数据里是「详情弹窗版/占位版」（无 href 或非 active），升级为聊天入口
+    registry.update(existing.id, {
+      href: seed.href, engine: seed.engine, engineLabel: seed.engineLabel,
+      fallbacks: seed.fallbacks, status: 'active', tag: seed.tag, soul: seed.soul, detail: seed.detail,
+    });
   }
 });
 window.__reg = registry;

@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>通用助手 · Ingrid's AI Agents</title>
+<style>
+  :root {
+    --accent: #7c6fd6;      /* 柔和高级紫 主紫 */
+    --accent-2: #6355c4;
+    --accent-soft: #ebe7f7;
+    --deep: #4a3f8c;
+    --ink: #26232e;
+    --ink-soft: #55515e;
+    --ink-faint: #8f8b98;
+    --line: #e6e4ec;
+    --bg: #f7f6f9;
+    --card: #ffffff;
+    --ok: #1d9e75;
+    --danger: #dc2626;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 14px 20px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
+    box-shadow: 0 2px 12px rgba(74,63,140,.18); position: relative;
+  }
+  header .logo { width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,.18); display: grid; place-items: center; flex: none; }
+  header .logo svg { width: 20px; height: 20px; }
+  header .title { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  header .title .sub { font-size: 11.5px; font-weight: 400; opacity: .82; }
+  header .spacer { flex: 1; }
+  header select {
+    padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,.35);
+    background: rgba(255,255,255,.16); color: #fff; font-size: 13px; cursor: pointer; outline: none;
+  }
+  header select option { color: var(--ink); background: #fff; }
+  header .h-btn {
+    padding: 7px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,.35);
+    background: rgba(255,255,255,.14); color: #fff; font-size: 13px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  header .h-btn:hover { background: rgba(255,255,255,.24); }
+  header .h-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
+  header .h-btn svg { width: 15px; height: 15px; }
+
+  #messages { flex: 1; overflow-y: auto; padding: 22px 20px 10px; scroll-behavior: smooth; }
+  .msg { display: flex; margin-bottom: 18px; }
+  .msg .avatar { width: 34px; height: 34px; border-radius: 10px; flex: none; display: grid; place-items: center; font-size: 15px; }
+  .msg.user { flex-direction: row-reverse; }
+  .msg.user .avatar { background: var(--accent); color: #fff; }
+  .msg.user .avatar svg { width: 18px; height: 18px; }
+  .msg.assistant .avatar { background: var(--accent-soft); color: var(--accent); }
+  .msg.assistant .avatar svg { width: 19px; height: 19px; }
+  .msg .bubble {
+    max-width: 74%; padding: 11px 14px; border-radius: 14px;
+    font-size: 14px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; margin-right: 10px; }
+  .msg.assistant .bubble { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; margin-left: 10px; }
+  .msg .bubble.err { border-color: #f3c2c0; background: #fdf2f2; color: #b3261e; }
+  .msg .bubble .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; margin-left: 1px; border-radius: 2px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .msg .bubble .think {
+    font-size: 12.5px; color: var(--ink-soft); background: var(--accent-soft);
+    border-radius: 8px; padding: 8px 11px; margin-bottom: 9px; line-height: 1.55;
+  }
+  .msg .bubble .think summary { cursor: pointer; font-weight: 600; color: var(--accent-2); user-select: none; margin-bottom: 4px; }
+
+  .welcome { text-align: center; color: var(--ink-soft); padding: 40px 16px 20px; }
+  .welcome .big { width: 60px; height: 60px; border-radius: 18px; background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; display: grid; place-items: center; margin: 0 auto 14px; }
+  .welcome .big svg { width: 30px; height: 30px; }
+  .welcome h2 { font-size: 17px; color: var(--ink); margin-bottom: 6px; }
+  .welcome p { font-size: 13px; margin-bottom: 14px; }
+  .welcome .hints { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .welcome .hint { padding: 7px 12px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; color: var(--ink-soft); cursor: pointer; }
+  .welcome .hint:hover { border-color: var(--accent); color: var(--accent); }
+
+  footer { flex: none; padding: 12px 20px 16px; background: var(--bg); border-top: 1px solid var(--line); }
+  .input-row { display: flex; align-items: flex-end; gap: 10px; max-width: 900px; margin: 0 auto; }
+  textarea {
+    flex: 1; resize: none; min-height: 44px; max-height: 160px;
+    padding: 11px 14px; border: 1px solid var(--line); border-radius: 14px;
+    font-size: 14px; line-height: 1.5; font-family: inherit; color: var(--ink); background: var(--card); outline: none;
+  }
+  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #sendBtn { flex: none; width: 44px; height: 44px; border: none; border-radius: 14px; background: var(--accent); color: #fff; cursor: pointer; display: grid; place-items: center; }
+  #sendBtn:hover { background: var(--accent-2); }
+  #sendBtn:disabled { background: #c9c4e0; cursor: not-allowed; }
+  #sendBtn svg { width: 20px; height: 20px; }
+  .foot-note { text-align: center; font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
+  .context-tag { font-size: 11px; color: var(--ink-faint); margin-top: 6px; text-align: center; min-height: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" id="logo"></div>
+  <div class="title">
+    通用助手
+    <div class="sub">Assistant · 日常问答与文档</div>
+  </div>
+  <div class="spacer"></div>
+  <select id="engineSelect" title="选择聊天引擎"></select>
+  <button class="h-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息）"><span id="webIcon"></span>联网</button>
+  <button class="h-btn" id="exportBtn" title="把最后一条回答导出为 Word 文档"><span id="exportIcon"></span>导出 Word</button>
+  <button class="h-btn" id="clearBtn">清空</button>
+</header>
+
+<main id="messages"></main>
+
+<footer>
+  <div class="input-row">
+    <textarea id="input" rows="1" placeholder="问我任何事；粘贴一个网址可让我抓取并总结…"></textarea>
+    <button id="sendBtn" title="发送"></button>
+  </div>
+  <div class="context-tag" id="contextTag"></div>
+  <div class="foot-note" id="footNote">本地 Ollama 免费 · 云端 API 需先在主界面「引擎设置」配 Key</div>
+</footer>
+
+<script src="../../icons.js"></script>
+<script>
+(function () {
+  'use strict';
+  var IS_DESKTOP = !!(window.ingrid && window.ingrid.isDesktop);
+
+  var SOUL_FALLBACK = '你是通用助手（Assistant），Ingrid 的日常主力之一。擅长：日常问答、信息检索与总结、内容创作、文档整理。回答清晰、结构化、直接有用；能给出可执行的建议。需要时可把内容整理成 Word/PPT/Excel 大纲。不确定时如实说明，不编造事实。';
+  var soul = SOUL_FALLBACK;
+  var systemPrompt = soul;
+
+  var ENGINE_META = {
+    ollama:   { label: '本地 Ollama · qwen3:32b（免费）' },
+    deepseek: { label: 'DeepSeek · API Key' },
+    gpt:      { label: 'GPT · API Key' },
+    qwen:     { label: 'Qwen · API Key' },
+  };
+
+  var history = [];
+  var streaming = false;
+  var webEnabled = true;
+
+  var el = function (id) { return document.getElementById(id); };
+  var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
+  var engineSelect = el('engineSelect');
+
+  function setLogo() {
+    el('logo').innerHTML = window.iconSvg('message');
+    sendBtn.innerHTML = window.iconSvg('send');
+    el('webIcon').innerHTML = window.iconSvg('globe');
+    el('exportIcon').innerHTML = window.iconSvg('file');
+  }
+  function avatarHtml(role) {
+    if (role === 'user') return '<div class="avatar">' + window.iconSvg('user') + '</div>';
+    return '<div class="avatar">' + window.iconSvg('message') + '</div>';
+  }
+
+  function loadSoul() {
+    try {
+      var agents = IS_DESKTOP ? window.ingrid.loadAgentsSync() : [];
+      for (var i = 0; i < agents.length; i++) {
+        if (agents[i].name === '通用助手' && agents[i].soul) { soul = agents[i].soul; systemPrompt = soul; break; }
+      }
+    } catch (e) { /* fallback */ }
+  }
+
+  function loadEngines() {
+    var opts = [{ id: 'ollama', label: ENGINE_META.ollama.label }];
+    var preferred = null;
+    function render() {
+      engineSelect.innerHTML = '';
+      opts.forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o.id; opt.textContent = o.label;
+        engineSelect.appendChild(opt);
+      });
+      if (preferred) engineSelect.value = preferred;
+    }
+    if (IS_DESKTOP) {
+      window.ingrid.getSettings().then(function (s) {
+        ['deepseek', 'gpt', 'qwen'].forEach(function (id) {
+          if (s && s[id]) { opts.push({ id: id, label: ENGINE_META[id].label }); if (!preferred) preferred = id; }
+        });
+        render();
+      }).catch(function () { render(); });
+    } else { render(); }
+  }
+
+  function addBubble(role, html) {
+    var wrap = document.createElement('div');
+    wrap.className = 'msg ' + role;
+    wrap.innerHTML = avatarHtml(role) + '<div class="bubble">' + html + '</div>';
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+    return wrap.querySelector('.bubble');
+  }
+
+  function welcome() {
+    var hints = [
+      '帮我写一份本周工作周报',
+      '把这段文字润色得更正式',
+      '解释一下什么是 RAG',
+      '给我一个健身计划',
+    ];
+    var html = '<div class="welcome">' +
+      '<div class="big">' + window.iconSvg('message') + '</div>' +
+      '<h2>通用助手 · 随时可问</h2>' +
+      '<p>日常问答 · 联网搜索 · 抓网页 · 导出 Word</p>' +
+      '<div class="hints">' + hints.map(function (h) { return '<span class="hint">' + h + '</span>'; }).join('') + '</div>' +
+      '</div>';
+    messages.innerHTML = html;
+    Array.prototype.forEach.call(messages.querySelectorAll('.hint'), function (n) {
+      n.addEventListener('click', function () { input.value = n.textContent; input.focus(); autoGrow(); });
+    });
+  }
+
+  function autoGrow() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function setContextTag(txt) { el('contextTag').textContent = txt || ''; }
+
+  function send() {
+    var text = input.value.trim();
+    if (!text || streaming) return;
+    input.value = ''; autoGrow();
+    if (messages.querySelector('.welcome')) messages.innerHTML = '';
+    addBubble('user', esc(text));
+
+    // 1) 粘贴网址 → 抓取网页正文，基于网页回答
+    var urlMatch = text.match(/https?:\/\/\S+/);
+    if (urlMatch && IS_DESKTOP) {
+      var url = urlMatch[0];
+      var instruction = text.replace(urlMatch[0], '').trim() || '请总结这个网页的主要内容';
+      withWebFetch(url, instruction);
+      return;
+    }
+
+    // 2) 普通聊天：联网搜索（可选）+ 流式回答
+    var bubble = addBubble('assistant', '<span class="cursor"></span>');
+    var acc = '', thinking = '';
+    streaming = true; sendBtn.disabled = true;
+    var engine = engineSelect.value || 'ollama';
+
+    function renderStream() {
+      var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + '<span class="cursor"></span>';
+      messages.scrollTop = messages.scrollHeight;
+    }
+    function finish(finalText, err) {
+      history.push({ role: 'user', content: text });
+      if (finalText) history.push({ role: 'assistant', content: finalText });
+      if (history.length > 24) history = history.slice(-24);
+      var thinkHtml = thinking ? '<details class="think"' + (finalText && !err ? '' : ' open') + '><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>' : esc(finalText || '（无回复）'));
+      if (err) bubble.classList.add('err');
+      streaming = false; sendBtn.disabled = false;
+      setContextTag('');
+      input.focus();
+    }
+    function run(content) {
+      var reqMessages = [{ role: 'system', content: systemPrompt }]
+        .concat(history.slice(-12))
+        .concat([{ role: 'user', content: content }]);
+      if (!IS_DESKTOP) { finish('（浏览器预览模式：无法调用模型。请用桌面应用运行。）'); return; }
+      window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
+        onDelta: function (d) { if (d && d.thinking) thinking += d.thinking; if (d && d.text) acc += d.text; renderStream(); },
+        onDone: function (d) { if (d && d.ok) finish(acc); else finish(acc, d && d.error); },
+      });
+    }
+
+    // 联网搜索：先搜再答
+    if (webEnabled && IS_DESKTOP) {
+      setContextTag('🔍 正在联网搜索…');
+      window.ingrid.webSearch({ query: text, n: 4 }).then(function (r) {
+        if (r && r.ok && r.results && r.results.length) {
+          var ctx = r.results.map(function (x, i) {
+            return '[' + (i + 1) + '] ' + x.title + '\n' + x.link + '\n' + (x.snippet || '');
+          }).join('\n\n');
+          setContextTag('已联网检索 ' + r.results.length + ' 条结果');
+          run('【联网搜索结果 · 仅作参考，与问题无关则忽略，回答时标注来源】\n' + ctx + '\n\n【用户问题】\n' + text);
+        } else {
+          setContextTag('联网搜索未命中，直接回答');
+          run(text);
+        }
+      }).catch(function (e) { setContextTag(''); run(text); });
+    } else {
+      run(text);
+    }
+  }
+
+  // 抓取网页 → 总结
+  function withWebFetch(url, instruction) {
+    var bubble = addBubble('assistant', '<span class="cursor"></span>');
+    var acc = '', thinking = '';
+    streaming = true; sendBtn.disabled = true;
+    setContextTag('🌐 正在抓取 ' + url + ' …');
+    var engine = engineSelect.value || 'ollama';
+
+    window.ingrid.webFetch({ url: url }).then(function (r) {
+      if (!r || !r.ok) { finish('', r && r.error); return; }
+      setContextTag('已抓取：' + r.title);
+      var content = '【网页标题】' + r.title + '\n【网页内容】\n' + r.content + '\n\n【用户指令】\n' + instruction;
+      var reqMessages = [{ role: 'system', content: systemPrompt }].concat([{ role: 'user', content: content }]);
+      window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
+        onDelta: function (d) { if (d && d.thinking) thinking += d.thinking; if (d && d.text) acc += d.text; render(); },
+        onDone: function (d) { if (d && d.ok) finish(acc); else finish(acc, d && d.error); },
+      });
+    }).catch(function (e) { finish('', String(e && e.message || e)); });
+
+    function render() {
+      var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + '<span class="cursor"></span>';
+      messages.scrollTop = messages.scrollHeight;
+    }
+    function finish(finalText, err) {
+      var thinkHtml = thinking ? '<details class="think"><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc('⚠️ ' + err) + '</span>' : esc(finalText || '（无回复）'));
+      if (err) bubble.classList.add('err');
+      streaming = false; sendBtn.disabled = false;
+      setContextTag('');
+      input.focus();
+    }
+  }
+
+  // 导出最后一条回答为 Word
+  function exportWord() {
+    var bubbles = messages.querySelectorAll('.msg.assistant .bubble');
+    if (!bubbles.length) { alert('还没有可导出的内容'); return; }
+    var last = bubbles[bubbles.length - 1];
+    var clone = last.cloneNode(true);
+    Array.prototype.forEach.call(clone.querySelectorAll('.think, .cursor, .context-tag'), function (n) { n.remove(); });
+    var text = clone.textContent.replace(/\n{3,}/g, '\n\n').trim();
+    if (!text) { alert('没有可导出的正文'); return; }
+    // 标题取最近一条用户消息的前 20 字
+    var title = '通用助手导出';
+    var userBubbles = messages.querySelectorAll('.msg.user .bubble');
+    if (userBubbles.length) {
+      var q = userBubbles[userBubbles.length - 1].textContent.trim();
+      if (q) title = q.replace(/\s+/g, ' ').slice(0, 20);
+    }
+    if (!IS_DESKTOP) { alert('浏览器预览模式无法导出，请用桌面应用'); return; }
+    window.ingrid.docGenerate({ type: 'docx', title: title, content: text }).then(function (r) {
+      if (r && r.ok) alert('已导出：\n' + r.path);
+      else alert('导出失败：' + ((r && r.error) || '未知错误'));
+    }).catch(function (e) { alert('导出失败：' + String(e && e.message || e)); });
+  }
+
+  /* ---------- 事件 ---------- */
+  sendBtn.addEventListener('click', send);
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+  input.addEventListener('input', autoGrow);
+  el('clearBtn').addEventListener('click', function () { history = []; welcome(); setContextTag(''); });
+  el('exportBtn').addEventListener('click', exportWord);
+  el('webBtn').addEventListener('click', function () {
+    webEnabled = !webEnabled;
+    el('webBtn').classList.toggle('active', webEnabled);
+    el('footNote').textContent = webEnabled
+      ? '联网搜索已开 · 提问时先检索实时信息 · 本地 Ollama 免费'
+      : '联网搜索已关 · 本地 Ollama 免费 · 云端 API 需在「引擎设置」配 Key';
+  });
+
+  /* ---------- 启动 ---------- */
+  setLogo();
+  loadSoul();
+  loadEngines();
+  welcome();
+  el('webBtn').classList.add('active');
+  input.focus();
+})();
+</script>
+</body>
+</html>
