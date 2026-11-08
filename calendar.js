@@ -27,8 +27,8 @@
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
   style.textContent = [
-    '.cal-panel{position:fixed;top:76px;right:22px;width:348px;z-index:71;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(23,59,73,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
-    '.cal-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--deep),var(--accent));color:#fff;cursor:move;user-select:none;}',
+    '.cal-panel{width:100%;min-height:100%;display:flex;flex-direction:column;font-size:12.5px;color:var(--ink);}',
+    '.cal-head{display:flex;align-items:center;gap:8px;padding:12px 14px;background:linear-gradient(135deg,var(--deep),var(--accent));color:#fff;user-select:none;position:sticky;top:0;z-index:5;}',
     '.cal-title{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:6px;}',
     '.cal-title svg{width:15px;height:15px;}',
     '.cal-status{font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.18);}',
@@ -37,7 +37,7 @@
     '.cal-btns button{min-width:22px;height:22px;padding:0 5px;border:none;border-radius:7px;background:rgba(255,255,255,.16);color:#fff;cursor:pointer;font-size:12px;line-height:1;}',
     '.cal-btns button:hover{background:rgba(255,255,255,.32);}',
     '.cal-btns button:disabled{opacity:.5;cursor:wait;}',
-    '.cal-body{padding:12px 13px;display:flex;flex-direction:column;gap:11px;max-height:calc(100vh - 150px);overflow:auto;}',
+    '.cal-body{padding:13px 14px;display:flex;flex-direction:column;gap:12px;}',
     '.cal-body.hide{display:none;}',
     '.cal-nav{display:flex;align-items:center;gap:6px;}',
     '.cal-nav .lbl{flex:1;text-align:center;font-weight:700;font-size:13.5px;color:var(--ink);}',
@@ -98,7 +98,7 @@
         '<button id="calSync" title="立即同步日历">↻</button>' +
         '<button id="calAdd" title="新增日程">＋</button>' +
         '<button id="calMin" title="收起/展开">—</button>' +
-        '<button id="calHide" title="隐藏（可从顶栏重新打开）">✕</button>' +
+        '<button id="calHide" title="收起日历栏（从左侧导航重新打开）">✕</button>' +
       '</span>' +
     '</div>' +
     '<div class="cal-body" id="calBody">' +
@@ -113,7 +113,8 @@
       '<div class="cal-events" id="calEvents"></div>' +
       '<div class="cal-foot" id="calFoot"></div>' +
     '</div>';
-  document.body.appendChild(panel);
+  var dock = document.getElementById('calDock');
+  (dock || document.body).appendChild(panel);
 
   var modalMask = document.createElement('div');
   modalMask.id = 'calModalMask';
@@ -345,22 +346,10 @@
     $('calBody').classList.toggle('hide', minimized);
     $('calMin').textContent = minimized ? '▢' : '—';
   });
-  $('calHide').addEventListener('click', function () { panel.style.display = 'none'; window.__calPanelHidden = true; });
-
-  var head = $('calHead'), drag = null;
-  head.addEventListener('mousedown', function (e) {
-    if (e.target.closest('button')) return;
-    var r = panel.getBoundingClientRect();
-    drag = { x: e.clientX - r.left, y: e.clientY - r.top };
-    document.body.style.userSelect = 'none';
+  $('calHide').addEventListener('click', function () {
+    var dock = document.getElementById('calDock');
+    if (dock) dock.style.display = 'none';
   });
-  document.addEventListener('mousemove', function (e) {
-    if (!drag) return;
-    panel.style.left = (e.clientX - drag.x) + 'px';
-    panel.style.top = (e.clientY - drag.y) + 'px';
-    panel.style.right = 'auto';
-  });
-  document.addEventListener('mouseup', function () { drag = null; document.body.style.userSelect = ''; });
 
   /* ---------- 后台同步自动刷新 ---------- */
   if (IS_DESKTOP && window.ingrid.onCalendarSynced) {
@@ -375,8 +364,13 @@
     });
   }
 
-  // 从顶栏重新打开（若被隐藏）
-  window.__openCalendar = function () { panel.style.display = ''; window.__calPanelHidden = false; loadAll(); };
+  // 从左侧导航重新打开（若被收起）
+  window.__openCalendar = function () {
+    var dock = document.getElementById('calDock');
+    if (dock) dock.style.display = '';
+    if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navCalendar');
+    loadAll();
+  };
 
   /* ---------- 启动 ---------- */
   now();

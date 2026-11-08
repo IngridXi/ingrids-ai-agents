@@ -45,7 +45,7 @@
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
   style.textContent = [
-    '.sec-panel{position:fixed;top:76px;left:22px;width:342px;z-index:70;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(23,59,73,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
+    '.sec-panel{position:fixed;top:76px;left:230px;width:342px;z-index:80;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(34,31,51,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
     '.sec-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;cursor:move;user-select:none;}',
     '.sec-title{font-weight:700;font-size:13.5px;}',
     '.sec-count{font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.2);}',
@@ -136,16 +136,15 @@
   fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
   document.body.appendChild(fileInput);
 
-  /* 顶栏入口 */
-  var chip = document.createElement('button');
-  chip.className = 'chip chip-btn'; chip.id = 'btnSecretary';
-  chip.innerHTML = iconFor('🕊️') + ' 秘书';
-  chip.title = '日程提醒 · 邮件分类 · 记想法并分配';
-  var meta = document.querySelector('.topbar .meta');
-  if (meta) meta.insertBefore(chip, document.getElementById('btnSupervisor') || document.getElementById('btnSettings'));
-  chip.addEventListener('click', function () {
-    panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
-  });
+  /* 左侧导航入口 */
+  var nav = document.getElementById('navSecretary');
+  if (nav) {
+    nav.addEventListener('click', function () {
+      var showing = panel.style.display === 'block';
+      panel.style.display = showing ? 'none' : 'block';
+      if (typeof window.__setActiveNav === 'function') window.__setActiveNav(showing ? 'navHome' : 'navSecretary');
+    });
+  }
 
   /* ---------- 渲染 ---------- */
   function fmtAt(at) {
@@ -226,7 +225,7 @@
     document.getElementById('secBody').classList.toggle('hide', minimized);
     this.textContent = minimized ? '＋' : '—';
   });
-  document.getElementById('secHide').addEventListener('click', function () { panel.style.display = 'none'; });
+  document.getElementById('secHide').addEventListener('click', function () { panel.style.display = 'none'; if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navHome'); });
 
   /* 想法：记住 / 分配 */
   function currentThought() { return document.getElementById('secThought').value.trim(); }

@@ -6,23 +6,23 @@
 <title>Ingrid's AI Agents</title>
 <style>
   :root {
-    /* 主色（柔和高级紫·丁香紫，低饱和）—— 只给最重要动作与选中态 */
-    --accent: #7c6fd6;        /* 柔和灰紫 主紫 */
-    --accent-2: #6355c4;      /* hover/按下 */
-    --accent-soft: #ebe7f7;   /* 浅紫底（非透明度） */
-    --accent-softer: #f4f1fb; /* 更浅紫底 */
-    --deep: #4a3f8c;          /* 渐变深端（沉稳深紫，不浓艳） */
+    /* 主色（靛紫，现代克制）—— 只给最重要动作与选中态 */
+    --accent: #6c5ce7;        /* 靛紫 主色 */
+    --accent-2: #5a4bd1;      /* hover/按下 */
+    --accent-soft: #efedfb;   /* 浅紫底（非透明度） */
+    --accent-softer: #f6f4fd; /* 更浅紫底 */
+    --deep: #4536c8;          /* 渐变深端 */
 
-    /* 中性色（8 档，干净的中性灰带一丝冷调） */
-    --ink: #26232e;           /* neutral-900 主文字 */
-    --ink-soft: #55515e;      /* neutral-600 次要文字 */
-    --ink-faint: #8f8b98;     /* neutral-400 禁用/占位 */
-    --line: #e6e4ec;          /* neutral-200 分割线/描边 */
-    --bg: #f7f6f9;            /* neutral-50 页面底 */
-    --card: #ffffff;          /* neutral-0 卡片底 */
-    --surface-2: #efeef3;     /* neutral-100 次面层 */
+    /* 中性色（干净的中性灰，带一丝冷调） */
+    --ink: #221f33;           /* 主文字 */
+    --ink-soft: #5e596e;      /* 次要文字 */
+    --ink-faint: #a29baf;     /* 禁用/占位 */
+    --line: #eae8f0;          /* 分割线/描边 */
+    --bg: #f4f4f7;            /* 页面底 */
+    --card: #ffffff;          /* 卡片底 */
+    --surface-2: #f1f0f5;     /* 次面层 */
 
-    /* 语义色（4 个，约定俗成） */
+    /* 语义色（约定俗成） */
     --success: #16a34a;
     --warning: #d97706;
     --danger: #dc2626;
@@ -32,14 +32,19 @@
     --danger-soft: #fbe9e6;
     --info-soft: #e7f4fc;
 
-    /* 强调色（仅用于「预设」等最高优先级点缀，用量 <5%）—— 同色系更沉稳的紫，与主色协调 */
-    --gold: #8b7ec8;
-    --gold-text: #5b4f9e;
-    --gold-soft: #efeaf8;
+    /* 暖橙点缀（今天/高亮/未读等最高优先级，用量 <5%） */
+    --gold: #f59e0b;
+    --gold-text: #b45309;
+    --gold-soft: #fef3e2;
 
-    --shadow: 0 1px 2px rgba(38,35,46,.05), 0 8px 22px rgba(38,35,46,.06);
-    --shadow-lg: 0 24px 56px rgba(38,35,46,.16);
-    --radius: 18px;
+    --shadow: 0 1px 2px rgba(34,31,51,.04), 0 6px 18px rgba(34,31,51,.06);
+    --shadow-lg: 0 22px 52px rgba(34,31,51,.18);
+    --radius: 14px;
+
+    /* 布局尺寸 */
+    --side-w: 208px;          /* 左侧导航宽 */
+    --cal-w: 300px;           /* 右侧日历宽 */
+    --side-bg: #201c33;       /* 侧栏深墨紫 */
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -51,35 +56,78 @@
     color: var(--ink);
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
-    display: flex; flex-direction: column; min-height: 100vh;
+    overflow: hidden;
   }
 
+  /* ---------- 三栏骨架：左侧导航 + 主区 + 右侧日历 ---------- */
+  .app { display: flex; height: 100vh; width: 100vw; }
+
+  /* 左侧深色导航 */
+  .side-nav {
+    width: var(--side-w); flex: none;
+    background: var(--side-bg); color: #b8b0dc;
+    display: flex; flex-direction: column;
+    padding: 20px 14px 16px; user-select: none;
+  }
+  .side-brand { display: flex; align-items: center; gap: 12px; padding: 0 6px 22px; }
+  .side-brand .mark {
+    width: 42px; height: 42px; border-radius: 12px; flex: none;
+    display: grid; place-items: center; font-size: 22px; color: #fff;
+    background: linear-gradient(135deg, var(--accent), #8b7cf0);
+    box-shadow: 0 8px 18px rgba(108,92,231,.36);
+  }
+  .side-brand .t { line-height: 1.2; }
+  .side-brand .t b { display: block; font-size: 16px; font-weight: 800; color: #fff; letter-spacing: -.01em; }
+  .side-brand .t span { font-size: 10.5px; color: #8e86b8; }
+
+  .side-menu { flex: 1; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+  .side-menu .side-sep { font-size: 10px; letter-spacing: .1em; color: #5f588a; padding: 12px 10px 6px; text-transform: uppercase; }
+  .side-item {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 11px 12px; border: none; border-radius: 11px;
+    background: transparent; color: #b8b0dc;
+    font-size: 14px; font-weight: 600; cursor: pointer; text-align: left;
+    font-family: inherit; transition: background .15s ease, color .15s ease;
+  }
+  .side-item .ic { width: 20px; height: 20px; flex: none; display: grid; place-items: center; font-size: 17px; }
+  .side-item .ic svg { width: 19px; height: 19px; }
+  .side-item:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .side-item.active { background: linear-gradient(135deg, var(--accent), #7c6cf0); color: #fff; box-shadow: 0 6px 16px rgba(108,92,231,.34); }
+  .side-item .bdot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+
+  .side-foot { padding: 14px 8px 0; margin-top: 10px; font-size: 11px; color: #6e6699; border-top: 1px solid rgba(255,255,255,.08); line-height: 1.6; }
+
+  /* 中间主区 */
+  .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   .shell {
-    width: 100%; max-width: 1560px; margin: 0 auto;
-    padding: 30px 40px 26px; flex: 1;
-    display: flex; flex-direction: column; gap: 24px;
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 26px 32px 22px;
+    display: flex; flex-direction: column; gap: 22px;
+  }
+
+  /* 右侧日历栏（固定侧边栏） */
+  .cal-dock {
+    width: var(--cal-w); flex: none; min-width: 0;
+    border-left: 1px solid var(--line); background: #fbfafd;
+    overflow-y: auto; overflow-x: hidden;
   }
 
   /* ---------- Header ---------- */
-  header.topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-  .brand { display: flex; align-items: center; gap: 16px; }
-  .brand .mark {
-    width: 52px; height: 52px; border-radius: 15px;
-    display: grid; place-items: center; font-size: 26px;
-    background: linear-gradient(135deg, var(--accent), var(--deep));
-    color: #fff; box-shadow: 0 8px 20px rgba(124,111,214,.28);
-  }
-  .brand .titles h1 { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+  header.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 22px 32px 0; }
+  .side-item .scnt { margin-left: auto; font-size: 11px; font-weight: 700; color: #8e86b8; background: rgba(255,255,255,.08); padding: 2px 8px; border-radius: 999px; }
+  .side-item.active .scnt { color: #fff; background: rgba(255,255,255,.22); }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand .titles h1 { font-size: 22px; font-weight: 750; letter-spacing: -.02em; }
   .brand .titles h1 .accent { color: var(--accent); }
-  .brand .titles p { color: var(--ink-faint); font-size: 13px; margin-top: 2px; }
+  .brand .titles p { color: var(--ink-faint); font-size: 12.5px; margin-top: 2px; }
 
-  .topbar .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .topbar .meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
   .chip {
     display: inline-flex; align-items: center; gap: 7px;
-    padding: 8px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+    padding: 8px 13px; border-radius: 10px; font-size: 12.5px; font-weight: 600;
     background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
   }
-  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(124,111,214,.15); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(108,92,231,.15); }
   .chip.warn .dot { background: var(--warning); box-shadow: 0 0 0 3px rgba(217,119,6,.15); }
   .chip.chip-btn { cursor: pointer; font-weight: 600; transition: border-color .15s ease, background .15s ease; }
   .chip.chip-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
@@ -96,7 +144,7 @@
     transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
     -webkit-tap-highlight-color: transparent;
   }
-  .tile:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: #cfd9d6; }
+  .tile:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: #cfc9ec; }
   .tile:active { transform: translateY(-1px) scale(.985); }
 
   .tile .emoji {
@@ -104,7 +152,11 @@
     display: grid; place-items: center; font-size: 30px; background: var(--accent-soft); color: var(--accent);
   }
   .tile .name { font-size: 15.5px; font-weight: 650; line-height: 1.2; }
-  .tile .tag { font-size: 11.5px; color: var(--ink-faint); line-height: 1.4; }
+  .tile .tag {
+    font-size: 11.5px; color: var(--ink-faint); line-height: 1.45;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    max-width: 100%;
+  }
   .tile .engine {
     margin-top: 2px; font-size: 10.5px; font-weight: 600; color: var(--ink-soft);
     background: var(--surface-2); border: 1px solid var(--line); padding: 2px 9px; border-radius: 999px;
@@ -229,32 +281,52 @@
 </style>
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand">
+  <div class="app">
+    <aside class="side-nav">
+      <div class="side-brand">
         <div class="mark" data-icon="bot"></div>
-        <div class="titles">
-          <h1>Ingrid's <span class="accent">AI Agents</span></h1>
-          <p>个人 AI 工作台 · 横屏版 · 本机优先</p>
+        <div class="t"><b>Ingrid's AI Agents</b><span>个人 AI 工作台</span></div>
+      </div>
+      <nav class="side-menu">
+        <div class="side-sep">工作台</div>
+        <button class="side-item active" id="navHome"><span class="ic" data-icon="home"></span><span>首页</span></button>
+        <div class="side-sep">助手</div>
+        <button class="side-item" id="navSecretary"><span class="ic" data-icon="feather"></span><span>秘书</span><span class="bdot" id="secDot" hidden></span></button>
+        <button class="side-item" id="navSupervisor"><span class="ic" data-icon="eye"></span><span>监事</span></button>
+        <button class="side-item" id="navCalendar"><span class="ic" data-icon="calendar"></span><span>日历</span></button>
+        <div class="side-sep">系统</div>
+        <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>技能板块</span><span class="scnt" id="skillsCount">0</span></button>
+        <button class="side-item" id="navSettings"><span class="ic" data-icon="settings"></span><span>引擎设置</span></button>
+      </nav>
+      <div class="side-foot">local-first · 本机优先<br>v5 · 板块 → 技能 → ra</div>
+    </aside>
+
+    <div class="main-col">
+      <header class="topbar">
+        <div class="brand">
+          <div class="titles">
+            <h1>Agent <span class="accent">工作台</span></h1>
+            <p>你的 AI 团队 · 点击卡片打开</p>
+          </div>
         </div>
-      </div>
-      <div class="meta">
-        <span class="chip"><span class="dot"></span><span id="agentCount">1</span> 个 Agent 已就绪</span>
-        <span class="chip warn"><span class="dot"></span>每个 Agent 独立模型</span>
-        <button class="chip chip-btn" id="btnSkills" title="按板块管理技能、自动推荐、挂载"><span data-icon="grid"></span> <span id="skillsCount">0</span> 个技能板块</button>
-        <button class="chip chip-btn" id="btnCalendar" title="右侧日历面板：月历 + 日程汇总 + 同步"><span data-icon="calendar"></span> 日历</button>
-        <button class="chip chip-btn" id="btnSettings" title="配置引擎与 API Key"><span data-icon="settings"></span> 引擎设置</button>
-      </div>
-    </header>
+        <div class="meta">
+          <span class="chip"><span class="dot"></span><span id="agentCount">1</span> 个 Agent 就绪</span>
+          <span class="chip warn"><span class="dot"></span>每个 Agent 独立模型</span>
+        </div>
+      </header>
 
-    <main class="grid" id="grid"></main>
+      <div class="shell">
+        <main class="grid" id="grid"></main>
+        <footer class="router">
+          <div class="label"><span class="ic" data-icon="home"></span>local-first · 每个 Agent 绑定自己的引擎</div>
+          <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 记账</span>
+          <span class="pill"><span class="st"></span><span data-icon="eye"></span> 监事 · <span data-icon="feather"></span> 秘书 · 左侧导航</span>
+          <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent</span>
+        </footer>
+      </div>
+    </div>
 
-    <footer class="router">
-      <div class="label"><span class="ic" data-icon="home"></span>local-first · 每个 Agent 绑定自己的引擎</div>
-      <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 记账</span>
-      <span class="pill"><span class="st"></span><span data-icon="eye"></span> 监事 · <span data-icon="feather"></span> 秘书 · 右上角入口</span>
-      <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent · local-first</span>
-    </footer>
+    <aside class="cal-dock" id="calDock"></aside>
   </div>
 
   <!-- Modal -->
@@ -834,15 +906,21 @@ function openSettings() {
 function closeSettings() { settingsMask.classList.remove('open'); }
 settingsMask.addEventListener('click', e => { if (e.target === settingsMask) closeSettings(); });
 
-// 保存所有 Key
+// 左侧导航：切换 active 态
+function setActiveNav(id) {
+  document.querySelectorAll('.side-item').forEach(function (b) { b.classList.toggle('active', b.id === id); });
+}
+window.__setActiveNav = setActiveNav;
+
 document.addEventListener('click', e => {
-  if (e.target && e.target.id === 'btnSettings') openSettings();
-  if (e.target && e.target.closest && e.target.closest('#btnSkills')) {
-    if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator();
-  }
-  if (e.target && e.target.closest && e.target.closest('#btnCalendar')) {
-    if (typeof window.__openCalendar === 'function') window.__openCalendar();
-  }
+  var nav = e.target && e.target.closest ? e.target.closest('.side-item') : null;
+  if (!nav) return;
+  var id = nav.id;
+  if (id === 'navHome') { setActiveNav('navHome'); var s = document.querySelector('.shell'); if (s) s.scrollTop = 0; return; }
+  if (id === 'navSettings') { openSettings(); setActiveNav('navSettings'); return; }
+  if (id === 'navSkills') { if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator(); setActiveNav('navSkills'); return; }
+  if (id === 'navCalendar') { if (typeof window.__openCalendar === 'function') window.__openCalendar(); return; }
+  // navSecretary / navSupervisor 由各自面板脚本绑定开关
 });
 
 // 在设置面板里拦截“保存”按钮（动态添加监听）

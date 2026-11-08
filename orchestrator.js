@@ -244,13 +244,7 @@
   var approval = document.createElement('div');
   approval.id = 'orch-approval'; document.body.appendChild(approval);
 
-  var entry = document.createElement('button');
-  entry.className = 'chip chip-btn'; entry.id = 'btnOrchestrator';
-  entry.innerHTML = iconSvg('sliders') + ' 调度中枢';
-  entry.title = '让一个 Agent 指挥其他 Agent 干活';
-  var meta = document.querySelector('.topbar .meta');
-  if (meta) meta.insertBefore(entry, document.getElementById('btnSettings'));
-  entry.addEventListener('click', open);
+  // 入口统一由左侧导航「技能板块」触发（index.html 绑定 window.__openOrchestrator）
   window.__openOrchestrator = open;
 
   function close() { mask.classList.remove('open'); }
