@@ -12,7 +12,7 @@
  *   - 向量索引存 JSON（chunks 内嵌 embedding），面向个人级语料（数百~数千篇），
  *     免装原生向量库依赖，随 Electron 主进程直接用 Node 全局 fetch。
  *   - embedding 默认 bge-m3（多语言，中文效果好）；未就绪时自动回退关键词检索。
- *   - Zotero 全文 PDF 解析（需要 pdf 提取 + sqlite 元数据）属 phase 2，本模块预留探测。
+ *   - Zotero 源：spawn kb-zotero.py（读 sqlite 元数据 + pypdf 提 PDF 全文）→ 组合成 markdown 分块入库。
  */
 'use strict';
 
@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { execFile } = require('child_process');
 
 function md5(s) {
   return crypto.createHash('md5').update(s).digest('hex');
@@ -89,11 +90,15 @@ class KbEngine {
     fs.writeFileSync(this._configPath(), JSON.stringify(cfg, null, 2), 'utf8');
   }
 
-  /** 首次运行：自动探测 Obsidian 库 + Zotero（Zotero 仅探测、不摄取） */
+  /** 首次运行：自动探测 Obsidian 库 + Zotero（两者都摄取） */
   autoDetectSources() {
     const srcs = [];
     for (const p of detectObsidianVaults()) {
       srcs.push({ id: 'src-' + md5('obsidian:' + p).slice(0, 8), type: 'markdown', label: 'Obsidian', path: p, enabled: true });
+    }
+    const z = detectZoteroDir();
+    if (z) {
+      srcs.push({ id: 'src-' + md5('zotero:' + z).slice(0, 8), type: 'zotero', label: 'Zotero', path: z, enabled: true });
     }
     return srcs;
   }
@@ -102,6 +107,13 @@ class KbEngine {
     let cfg = this.loadConfig();
     if (!fs.existsSync(this._configPath()) || !cfg.sources.length) {
       cfg.sources = this.autoDetectSources();
+      this.saveConfig(cfg);
+      return cfg;
+    }
+    // 迁移：已有 config 但缺 Zotero 源时自动补上（老用户升级）
+    if (!(cfg.sources || []).some((s) => s.type === 'zotero') && detectZoteroDir()) {
+      const z = detectZoteroDir();
+      cfg.sources.push({ id: 'src-' + md5('zotero:' + z).slice(0, 8), type: 'zotero', label: 'Zotero', path: z, enabled: true });
       this.saveConfig(cfg);
     }
     return cfg;
@@ -204,6 +216,44 @@ class KbEngine {
     return out;
   }
 
+  /* ---------------- Zotero 源遍历（异步：spawn Python 提取） ---------------- */
+  async _walkZotero(src) {
+    if (!src.path || !fs.existsSync(src.path)) return [];
+    const script = path.join(__dirname, 'kb-zotero.py');
+    const stdout = await new Promise((resolve) => {
+      execFile('python3', [script], { encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, timeout: 300000 },
+        (err, so) => resolve(err ? '' : so));
+    });
+    if (!stdout) return [];
+    let items;
+    try { items = JSON.parse(stdout); } catch { return []; }
+
+    const out = [];
+    for (const it of items) {
+      if (!it.title && !it.abstract && !it.fulltext) continue;
+      const lines = [];
+      lines.push('# ' + (it.title || '（无标题）'));
+      const meta = [];
+      if (it.authors && it.authors.length) meta.push('作者: ' + it.authors.join(', '));
+      if (it.year) meta.push('年份: ' + it.year);
+      if (it.venue) meta.push('期刊/会议: ' + it.venue);
+      if (it.doi) meta.push('DOI: ' + it.doi);
+      if (it.url) meta.push('链接: ' + it.url);
+      if (meta.length) lines.push(meta.join('\n'));
+      if (it.abstract) lines.push('## 摘要\n' + it.abstract.trim());
+      if (it.fulltext) lines.push('## 全文\n' + it.fulltext);
+      const content = lines.join('\n\n');
+      const key = it.key || md5(content).slice(0, 8);
+      // 稳定标识：元数据不变就不重索引（全文细微变化不触发全量重嵌入）
+      const stable = md5((it.title || '') + '|' + (it.doi || '') + '|' + key);
+      out.push({
+        rel: 'zotero:' + key, path: 'zotero:' + key, md5: stable, content,
+        sourceId: src.id, sourceLabel: 'Zotero', type: 'zotero',
+      });
+    }
+    return out;
+  }
+
   /* ---------------- Ollama embedding ---------------- */
   async embedModelReady() {
     try {
@@ -243,7 +293,7 @@ class KbEngine {
     const seen = new Set();
 
     for (const src of sources) {
-      const files = this._walkSource(src);
+      const files = src.type === 'zotero' ? await this._walkZotero(src) : this._walkSource(src);
       for (const f of files) {
         seen.add(f.rel);
         newFiles[f.rel] = f.md5;
