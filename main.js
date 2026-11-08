@@ -616,6 +616,30 @@ ipcMain.on('agents:list-sync', (e) => { e.returnValue = readJson('agents.json', 
 /* ---------------- IPC：打开 agent ---------------- */
 ipcMain.handle('open-agent', (_e, href) => { openAgentWindow(href); return true; });
 
+/* ---------------- 聊天记忆持久化（local-first，按 Agent 隔离） ---------------- */
+// 每个 Agent 一个 json 文件，落在 userData/data/chat-history/<名字>.json，关窗不丢、下次自动恢复。
+function chatHistoryFile(name) {
+  const dir = path.join(dataDir(), 'chat-history');
+  fs.mkdirSync(dir, { recursive: true });
+  const safe = String(name || 'default').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_').slice(0, 80);
+  return path.join(dir, safe + '.json');
+}
+ipcMain.handle('chat:history:load', (_e, name) => {
+  try { return JSON.parse(fs.readFileSync(chatHistoryFile(name), 'utf8')); }
+  catch { return []; }
+});
+ipcMain.handle('chat:history:save', (_e, name, list) => {
+  try {
+    const arr = Array.isArray(list) ? list : [];
+    fs.writeFileSync(chatHistoryFile(name), JSON.stringify(arr, null, 2), 'utf8');
+    return true;
+  } catch { return false; }
+});
+ipcMain.handle('chat:history:clear', (_e, name) => {
+  try { fs.unlinkSync(chatHistoryFile(name)); } catch { /* 不存在则忽略 */ }
+  return true;
+});
+
 /* ---------------- IPC：电脑操作员（computer use） ---------------- */
 let computerUseProc = null;
 
@@ -1294,6 +1318,81 @@ ipcMain.handle('kb:configure', (_e, patch) => {
   kbEngine.saveConfig(cfg);
   startKbWatcher();
   return kbEngine.status();
+});
+
+/* ---------------- 工具能力（文件 / 数据库 / 电脑操作） ----------------
+ * 只读、安全白名单：list / search / read / db query。
+ * 写 / 删除 / 移动本版不提供（不可逆操作，需独立审批流后再开放）。
+ * computer 复用上面的 computer:start（截图 + 视觉模型 + 鼠标键盘），默认演练。
+ */
+function execFileP(cmd, args) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 12000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+      resolve(err ? '' : String(stdout || ''));
+    });
+  });
+}
+
+function toolFsList(payload) {
+  const target = String((payload && payload.dir) || '').trim() || app.getPath('home');
+  const abs = path.resolve(target);
+  if (!fs.existsSync(abs)) return { ok: false, error: '目录不存在：' + target };
+  let st; try { st = fs.statSync(abs); } catch { return { ok: false, error: '无法访问：' + target }; }
+  if (!st.isDirectory()) return { ok: false, error: '不是目录：' + target };
+  const entries = [];
+  for (const name of fs.readdirSync(abs)) {
+    if (name.startsWith('.')) continue; // 隐藏文件不列，减少噪音
+    const full = path.join(abs, name);
+    let s = null; try { s = fs.statSync(full); } catch {}
+    entries.push({ name, dir: !!(s && s.isDirectory()), size: s ? s.size : 0 });
+  }
+  entries.sort((x, y) => (y.dir - x.dir) || x.name.localeCompare(y.name));
+  return { ok: true, dir: abs, count: entries.length, entries: entries.slice(0, 200) };
+}
+
+async function toolFsSearch(payload) {
+  const q = String((payload && payload.query) || '').trim();
+  const base = path.resolve(String((payload && payload.root) || '').trim() || app.getPath('home'));
+  if (!q) return { ok: false, error: '搜索词为空' };
+  const results = [];
+  const mdf = await execFileP('mdfind', ['-name', q]);
+  if (mdf) {
+    for (const line of mdf.split('\n')) {
+      if (!line.trim()) continue;
+      const p = path.resolve(line.trim());
+      if (p.startsWith(base)) { results.push(p); if (results.length >= 50) break; }
+    }
+  }
+  if (!results.length) {
+    const fd = await execFileP('find', [base, '-maxdepth', '6', '-iname', '*' + q + '*',
+      '-not', '-path', '*/.git/*', '-not', '-path', '*/node_modules/*']);
+    for (const line of fd.split('\n')) { if (line.trim()) { results.push(line.trim()); if (results.length >= 50) break; } }
+  }
+  return { ok: true, query: q, count: results.length, results: results.slice(0, 50) };
+}
+
+function toolFsRead(payload) {
+  const target = path.resolve(String((payload && payload.path) || ''));
+  if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在：' + String((payload && payload.path) || '') };
+  let st; try { st = fs.statSync(target); } catch { return { ok: false, error: '无法访问：' + String((payload && payload.path) || '') }; }
+  if (st.isDirectory()) return { ok: false, error: '是目录，请用 list 查看' };
+  if (st.size > 200 * 1024) return { ok: false, error: '文件过大（>200KB），暂不支持读取' };
+  try {
+    const buf = fs.readFileSync(target);
+    if (buf.includes(0)) return { ok: false, error: '疑似二进制文件，暂不支持读取' };
+    return { ok: true, path: target, size: st.size, content: buf.toString('utf8') };
+  } catch (e) { return { ok: false, error: '读取失败：' + String(e && e.message || e) }; }
+}
+
+ipcMain.handle('tool:fs:list', (_e, p) => toolFsList(p));
+ipcMain.handle('tool:fs:search', (_e, p) => toolFsSearch(p));
+ipcMain.handle('tool:fs:read', (_e, p) => toolFsRead(p));
+ipcMain.handle('tool:db:query', (_e, p) => {
+  const q = String((p && p.query) || '').trim();
+  const k = Math.min(Math.max(parseInt((p && p.k), 10) || 5, 1), 10);
+  if (!q) return { ok: false, error: '查询词为空' };
+  const hits = kbEngine.search(q, k);
+  return { ok: true, query: q, hits: hits };
 });
 
 /* ---------------- 生命周期 ---------------- */

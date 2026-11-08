@@ -171,6 +171,16 @@
   .badge.new { background: var(--accent); }
   .badge.soon { background: #c4c1d3; color: #fff; }
 
+  .tile-gear {
+    position: absolute; top: 10px; left: 10px;
+    width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--ink-soft); cursor: pointer;
+    display: grid; place-items: center; font-size: 13px; line-height: 1;
+    opacity: 0; transition: opacity .15s ease, background .15s ease, color .15s ease;
+  }
+  .tile:hover .tile-gear { opacity: 1; }
+  .tile-gear:hover { background: var(--accent-soft); color: var(--accent); }
+
   .tile.featured {
     border: 1.5px solid var(--accent);
     background: var(--card);
@@ -495,30 +505,6 @@ const SEED_AGENTS = [
     },
   },
   {
-    name: '电脑操作员', emoji: '🖱️',
-    tag: '看屏幕 · 动鼠标键盘 · 替你干活',
-    status: 'active', badge: '新',
-    engine: 'ollama-vision', engineLabel: '本地视觉 · qwen2.5vl',
-    href: 'agents/computer-use/index.html',
-    soul: '你是电脑操作员（Computer Use），能看屏幕、动鼠标键盘，替 Ingrid 完成电脑上的具体操作任务。逐屏观察 → 判断下一步 → 精准执行，谨慎操作，不点不确定的东西；遇到需要用户决策或危险操作时停下来询问。',
-    fallbacks: ['ollama'],
-    detail: {
-      sub: 'Computer Use · 替你操作电脑',
-      desc: '本地视觉模型 qwen2.5vl:7b 驱动：截屏 → 理解屏幕 → 用 macOS 原生 CGEvent 控制鼠标键盘 → 循环直到任务完成。全程可视化、可随时停止，支持「演练模式」先看它打算怎么操作再放开。',
-      workflow: [
-        { t: '看屏幕', s: '截屏并缩放到逻辑分辨率' },
-        { t: '想', s: '视觉模型判断下一步动作' },
-        { t: '动', s: 'CGEvent 执行点击 / 输入 / 滚轮 / 按键' },
-        { t: '循环', s: '反复看 → 想 → 动，直到任务完成' },
-      ],
-      capabilities: ['屏幕截图', '视觉理解', '鼠标点击', '键盘输入', '滚轮滚动', '自动循环', '演练模式'],
-      route: [
-        { kind: '引擎', label: '本地 Ollama · qwen2.5vl:7b（视觉）' },
-        { kind: '控制', label: 'macOS CGEvent（鼠标键盘）' },
-      ],
-    },
-  },
-  {
     name: '数据分析', emoji: '📊', tag: '表格 · 图表 · 洞察',
     status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
     detail: { sub: '敬请期待', desc: '数据处理与可视化助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
@@ -576,6 +562,11 @@ SEED_AGENTS.forEach(function (seed) {
 });
 // v6 迁移：删除「写作助手」（功能已并入研究助手/通用助手）
 ['写作助手'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (a) registry.remove(a.id);
+});
+// v7 迁移：删除「电脑操作员」独立卡片（已能力化为每个 Agent 的 computer/tools 开关）
+['电脑操作员'].forEach(function (nm) {
   var a = registry.list().find(function (x) { return x.name === nm; });
   if (a) registry.remove(a.id);
 });
@@ -652,7 +643,7 @@ function renderAgents() {
   // 首页不显示「调度中枢」（它是控制面板，从左侧导航进入），其余 Agent 正常展示
   const agents = registry.list().filter(a => a.role !== 'orchestrator');
   // featured（主力）排最前，其余按固定顺序（通用助手排在音乐创作之前）
-  const ORDER = ['会议纪要官', '研究助手', '通用助手', '电脑操作员', '界面设计师', '音乐创作', '数据分析', '翻译助手'];
+  const ORDER = ['会议纪要官', '研究助手', '通用助手', '界面设计师', '音乐创作', '数据分析', '翻译助手'];
   agents.sort((x, y) => {
     const fx = x.featured ? 1 : 0, fy = y.featured ? 1 : 0;
     if (fx !== fy) return fy - fx;
@@ -673,10 +664,15 @@ function renderAgents() {
       : (a.status === 'soon' ? `<span class="badge soon">敬请期待</span>` : '');
     el.innerHTML = `
       ${badge}
+      ${a.href ? `<button class="tile-gear" title="设置引擎与工具能力">⚙</button>` : ''}
       <div class="emoji">${iconFor(a.emoji)}</div>
       <div class="name">${a.name}</div>
       <div class="tag">${a.tag}</div>
       <div class="engine">${engineLabelOf(a)}</div>`;
+    if (a.href) {
+      const gear = el.querySelector('.tile-gear');
+      if (gear) gear.addEventListener('click', (ev) => { ev.stopPropagation(); openModal(a); });
+    }
     el.addEventListener('click', () => {
       if (a.role === 'orchestrator' && typeof window.__openOrchestrator === 'function') {
         window.__openOrchestrator();
@@ -735,6 +731,19 @@ function openModal(a) {
       </div>
       <div class="engine-status" id="m-engine-status">检测可用性…</div></section>`;
 
+  const capsEditHtml = a.href ? `<section>
+      <h3>工具能力</h3>
+      <p class="desc" style="margin-bottom:10px">让这个 Agent 能直接操作本机文件与资料库（读、查、搜索；写 / 删除走后续审批）。</p>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
+        <input type="checkbox" id="m-fs" ${(a.tools || []).indexOf('fs') >= 0 ? 'checked' : ''}> 📁 文件工具（列目录 · 搜索 · 读文件）
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
+        <input type="checkbox" id="m-db" ${(a.tools || []).indexOf('db') >= 0 ? 'checked' : ''}> 🗄️ 数据库工具（查知识库 / 文献）
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="m-computer" ${(a.computer === 'on' || a.computer === true) ? 'checked' : ''}> 🖱️ 电脑操作（截图 + 鼠标键盘，需系统授权）
+      </label></section>` : '';
+
   modal.innerHTML = `
     <header>
       <div class="emoji">${iconFor(a.emoji || '🤖')}</div>
@@ -742,6 +751,7 @@ function openModal(a) {
       <button class="close" id="close">✕</button>
     </header>
     ${engineEditHtml}
+    ${capsEditHtml}
     <section><h3>简介</h3><p class="desc">${d.desc || '暂无描述'}</p></section>
     ${stepsHtml}${capsHtml}${routeHtml}`;
   document.getElementById('close').addEventListener('click', closeModal);
@@ -751,6 +761,18 @@ function openModal(a) {
     closeModal();
     renderAgents();
   });
+  // 工具能力开关（能力化）：文件 / 数据库 / 电脑操作，随点随存
+  if (a.href) {
+    const saveCaps = () => {
+      const tools = [];
+      if (document.getElementById('m-fs').checked) tools.push('fs');
+      if (document.getElementById('m-db').checked) tools.push('db');
+      registry.update(a.id, { tools: tools, computer: document.getElementById('m-computer').checked ? 'on' : 'off' });
+    };
+    document.getElementById('m-fs').addEventListener('change', saveCaps);
+    document.getElementById('m-db').addEventListener('change', saveCaps);
+    document.getElementById('m-computer').addEventListener('change', saveCaps);
+  }
   // 引擎可用性实时提示（切换下拉框时重新检测）
   const refreshEngineStatus = () => {
     const sel = document.getElementById('m-engine');

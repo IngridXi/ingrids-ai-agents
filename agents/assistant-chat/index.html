@@ -166,6 +166,126 @@
   var pendingImage = null;   // { dataUrl, name }
   var recognition = null;
 
+  /* ---------- 记忆持久化 + 工具能力（能力化：每个 Agent 都能挂文件/数据库/电脑操作） ---------- */
+  var AGENT_NAME = '通用助手';
+  var MAX_TOOL_ROUNDS = 3;
+
+  function agentCapabilities() {
+    var caps = { fs: false, db: false, computer: false };
+    try {
+      var agents = IS_DESKTOP ? window.ingrid.loadAgentsSync() : [];
+      for (var i = 0; i < agents.length; i++) {
+        if (agents[i].name === AGENT_NAME) {
+          var t = agents[i].tools || [];
+          caps.fs = t.indexOf('fs') >= 0;
+          caps.db = t.indexOf('db') >= 0;
+          caps.computer = agents[i].computer === 'on' || agents[i].computer === true;
+          break;
+        }
+      }
+    } catch (e) {}
+    return caps;
+  }
+  function serializeHistory(h) {
+    return (h || []).map(function (m) {
+      var c = m.content;
+      if (Array.isArray(c)) {
+        var txt = c.map(function (p) {
+          if (p && p.text) return p.text;
+          if (p && p.type === 'image_url') return '[图片]';
+          return '';
+        }).filter(Boolean).join(' ');
+        c = txt || '[图片]';
+      }
+      return { role: m.role, content: String(c == null ? '' : c) };
+    });
+  }
+  function persistHistory() {
+    if (!IS_DESKTOP) return;
+    try { window.ingrid.chatHistorySave(AGENT_NAME, serializeHistory(history)); } catch (e) {}
+  }
+  function loadHistory() {
+    if (!IS_DESKTOP) return;
+    window.ingrid.chatHistoryLoad(AGENT_NAME).then(function (list) {
+      if (!Array.isArray(list) || !list.length) return;
+      history = list;
+      if (messages.querySelector('.welcome')) messages.innerHTML = '';
+      list.forEach(function (m) { addBubble(m.role, esc(m.content)); });
+      messages.scrollTop = messages.scrollHeight;
+    }).catch(function () {});
+  }
+
+  function stripToolMarkers(t) {
+    return String(t || '').replace(/<\s*tool\s+name="[^"]*"\s*>[\s\S]*?<\s*\/\s*tool\s*>/g, '');
+  }
+  function extractToolCalls(t) {
+    var out = [], re = /<\s*tool\s+name="([^"]+)"\s*>([\s\S]*?)<\s*\/\s*tool\s*>/g, m;
+    while ((m = re.exec(String(t || ''))) !== null) {
+      var args = {};
+      try { args = JSON.parse(m[2].trim()); } catch (e) { args = { raw: m[2].trim() }; }
+      out.push({ name: m[1].trim(), args: args });
+    }
+    return out;
+  }
+  function toolSpecText(caps) {
+    var tools = [];
+    if (caps.fs) {
+      tools.push('fs_list：列出某目录下的文件与子目录，参数 {"dir":"/绝对路径"}（省略则列主目录）');
+      tools.push('fs_search：按文件名搜索，参数 {"query":"关键词","root":"可选起始目录"}');
+      tools.push('fs_read：读取文本文件内容，参数 {"path":"/绝对路径"}');
+    }
+    if (caps.db) tools.push('db_query：查询本地知识库 / 文献库（Zotero、Obsidian 等），参数 {"query":"关键词"}');
+    if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
+    if (!tools.length) return '';
+    return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
+      '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
+      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。';
+  }
+  function executeTool(call, caps) {
+    var n = call.name;
+    if (n === 'fs_list' && caps.fs) return window.ingrid.toolFsList(call.args);
+    if (n === 'fs_search' && caps.fs) return window.ingrid.toolFsSearch(call.args);
+    if (n === 'fs_read' && caps.fs) return window.ingrid.toolFsRead(call.args);
+    if (n === 'db_query' && caps.db) return window.ingrid.toolDbQuery(call.args);
+    if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
+    return Promise.resolve({ ok: false, error: '工具不可用或未开启：' + n });
+  }
+  function formatToolResult(call, res) {
+    var body;
+    if (res && res.ok) {
+      if (call.name === 'fs_list') body = '目录 ' + res.dir + ' 共 ' + res.count + ' 项：\n' +
+        res.entries.map(function (e) { return (e.dir ? '[目录] ' : '       ') + e.name + (e.size ? '  (' + e.size + ' B)' : ''); }).join('\n');
+      else if (call.name === 'fs_search') body = '找到 ' + res.count + ' 个文件：\n' + (res.results || []).join('\n');
+      else if (call.name === 'fs_read') body = res.content;
+      else if (call.name === 'db_query') body = JSON.stringify(res.hits, null, 2);
+      else if (call.name === 'computer') body = res.summary;
+      else body = JSON.stringify(res);
+    } else {
+      body = '工具执行失败：' + ((res && res.error) ? res.error : '未知错误');
+    }
+    return '【工具 ' + call.name + ' 结果】\n' + (body || '（无内容）');
+  }
+  function runComputerTask(task) {
+    return new Promise(function (resolve) {
+      var parts = [], done = false;
+      window.ingrid.onComputerEvent(function (d) {
+        if (done) return;
+        if (d && d.type === 'step') parts.push('第' + d.step + '步：' + (d.thought || ''));
+        else if (d && d.type === 'done') { done = true; resolve((d.summary || '') || parts.join('\n')); }
+        else if (d && d.type === 'error') { done = true; resolve('失败：' + (d.message || '')); }
+        else if (d && d.type === 'closed') { done = true; resolve(parts.join('\n') || '（已结束，无输出）'); }
+      });
+      window.ingrid.computerStart({ task: String(task || ''), maxSteps: 8, dryRun: true }).then(function (ok) {
+        if (ok === false && !done) { done = true; resolve('（未能启动电脑操作，请检查系统屏幕录制授权）'); }
+      });
+      setTimeout(function () { if (!done) { done = true; resolve(parts.join('\n') || '（电脑操作超时）'); } }, 120000);
+    });
+  }
+
+  function buildSystemPrompt() {
+    return systemPrompt + toolSpecText(agentCapabilities());
+  }
+
   var el = function (id) { return document.getElementById(id); };
   var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
   var engineSelect = el('engineSelect');
@@ -330,19 +450,21 @@
     // 2) 普通聊天：联网搜索（可选）+ 流式回答
     var bubble = addBubble('assistant', '<span class="cursor"></span>');
     var acc = '', thinking = '';
+    var live = '';
     streaming = true; sendBtn.disabled = true;
     var engine = engineSelect.value || 'ollama';
     if (img && engine === 'ollama') engine = 'ollama-vision';
 
     function renderStream() {
       var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
-      bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + '<span class="cursor"></span>';
+      bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + (live ? esc(live) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
       history.push({ role: 'user', content: text || (img ? '（图片）' : '') });
       if (finalText) history.push({ role: 'assistant', content: finalText });
       if (history.length > 24) history = history.slice(-24);
+      persistHistory();
       var thinkHtml = thinking ? '<details class="think"' + (finalText && !err ? '' : ' open') + '><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
       bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>' : esc(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
@@ -357,14 +479,45 @@
         { type: 'text', text: prompt },
         { type: 'image_url', image_url: { url: img.dataUrl } },
       ];
-      var reqMessages = [{ role: 'system', content: systemPrompt }]
+      var reqMessages = [{ role: 'system', content: buildSystemPrompt() }]
         .concat(history.slice(-12))
         .concat([userMsg]);
       if (!IS_DESKTOP) { finish('（浏览器预览模式：无法调用模型。请用桌面应用运行。）'); return; }
-      window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
-        onDelta: function (d) { if (d && d.thinking) thinking += d.thinking; if (d && d.text) acc += d.text; renderStream(); },
-        onDone: function (d) { if (d && d.ok) finish(acc); else finish(acc, d && d.error); },
-      });
+
+      function runToolTurn(msgs, round) {
+        live = '';
+        window.ingrid.chatStream({ engine: engine, messages: msgs }, {
+          onDelta: function (d) {
+            if (d && d.thinking) thinking += d.thinking;
+            if (d && d.text) live += d.text;
+            renderStream();
+          },
+          onDone: function (d) {
+            var rawRound = live;
+            if (d && !d.ok) { finish(acc + stripToolMarkers(rawRound), d && d.error); return; }
+            var calls = extractToolCalls(rawRound);
+            if (calls.length && round < MAX_TOOL_ROUNDS) {
+              acc += stripToolMarkers(rawRound);
+              live = '';
+              var caps = agentCapabilities();
+              Promise.all(calls.map(function (c) {
+                return executeTool(c, caps).then(function (r) { return formatToolResult(c, r); });
+              })).then(function (results) {
+                acc += '\n\n[已使用工具 ' + calls.map(function (c) { return c.name; }).join('、') + ']\n\n';
+                renderStream();
+                var next = msgs.concat([{ role: 'assistant', content: rawRound }])
+                  .concat([{ role: 'user', content: results.join('\n\n') }]);
+                runToolTurn(next, round + 1);
+              }).catch(function () { finish(acc + stripToolMarkers(rawRound)); });
+            } else {
+              acc += stripToolMarkers(rawRound);
+              finish(acc);
+            }
+          },
+        });
+      }
+
+      runToolTurn(reqMessages, 0);
     }
 
     // 联网搜索：先搜再答
@@ -399,7 +552,7 @@
       if (!r || !r.ok) { finish('', r && r.error); return; }
       setContextTag('已抓取：' + r.title);
       var content = '【网页标题】' + r.title + '\n【网页内容】\n' + r.content + '\n\n【用户指令】\n' + instruction;
-      var reqMessages = [{ role: 'system', content: systemPrompt }].concat([{ role: 'user', content: content }]);
+      var reqMessages = [{ role: 'system', content: buildSystemPrompt() }].concat([{ role: 'user', content: content }]);
       window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
         onDelta: function (d) { if (d && d.thinking) thinking += d.thinking; if (d && d.text) acc += d.text; render(); },
         onDone: function (d) { if (d && d.ok) finish(acc); else finish(acc, d && d.error); },
@@ -450,7 +603,7 @@
   el('micBtn').addEventListener('click', toggleVoice);
   input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   input.addEventListener('input', autoGrow);
-  el('clearBtn').addEventListener('click', function () { history = []; welcome(); setContextTag(''); });
+  el('clearBtn').addEventListener('click', function () { history = []; if (IS_DESKTOP) { try { window.ingrid.chatHistoryClear(AGENT_NAME); } catch (e) {} } welcome(); setContextTag(''); });
   el('exportBtn').addEventListener('click', exportWord);
   el('webBtn').addEventListener('click', function () {
     webEnabled = !webEnabled;
@@ -465,6 +618,7 @@
   loadSoul();
   loadEngines();
   welcome();
+  loadHistory();
   el('webBtn').classList.add('active');
   input.focus();
 })();

@@ -116,4 +116,15 @@ contextBridge.exposeInMainWorld('ingrid', {
   computerStart: (payload) => ipcRenderer.invoke('computer:start', payload),
   computerStop: () => ipcRenderer.invoke('computer:stop'),
   onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
+
+  // 工具能力（文件 / 数据库，只读安全白名单）
+  toolFsList: (payload) => ipcRenderer.invoke('tool:fs:list', payload),
+  toolFsSearch: (payload) => ipcRenderer.invoke('tool:fs:search', payload),
+  toolFsRead: (payload) => ipcRenderer.invoke('tool:fs:read', payload),
+  toolDbQuery: (payload) => ipcRenderer.invoke('tool:db:query', payload),
+
+  // 聊天记忆持久化（按 Agent 名隔离）
+  chatHistoryLoad: (name) => ipcRenderer.invoke('chat:history:load', name),
+  chatHistorySave: (name, history) => ipcRenderer.invoke('chat:history:save', name, history),
+  chatHistoryClear: (name) => ipcRenderer.invoke('chat:history:clear', name),
 });
