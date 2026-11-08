@@ -19,6 +19,7 @@ const fs = require('fs');
 const { spawn, execFile } = require('child_process');
 const os = require('os');
 const net = require('net');
+const http = require('http');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 const { KbEngine } = require('./kb-engine.js');
@@ -265,6 +266,7 @@ const CHAT_ENDPOINTS = {
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
   ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:32b',      keyField: null },
   'ollama-review': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'deepseek-r1:32b', keyField: null },  // 审稿专用（本地深度推理模型，跨模型对抗）
+  'ollama-vision': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen2.5vl:7b', keyField: null },   // 识图专用（本地视觉模型，支持图片输入）
 };
 
 function which(cmd) {
@@ -352,6 +354,7 @@ function listSyncAccounts() {
       authMethod: String(a.authMethod || 'basic'),
       active: a.active !== false,
       hasPassword: !!a.password,
+      oauthClientId: String(a.oauthClientId || ''),
       createdAt: Number(a.createdAt) || Date.now(),
     };
   });
@@ -372,11 +375,17 @@ function saveSyncAccount(acct) {
     createdAt: Number(acct.createdAt) || Date.now(),
   };
   if (acct.password) clean.password = encryptSecret(acct.password);  // 密码只在传入时更新
+  // OAuth 账户（google / microsoft）
+  if (acct.oauthClientId) clean.oauthClientId = String(acct.oauthClientId);
+  if (acct.oauthClientSecret) clean.oauthClientSecret = encryptSecret(acct.oauthClientSecret);
+  if (acct.oauthRefreshToken) clean.oauthRefreshToken = encryptSecret(acct.oauthRefreshToken);
   const idx = accounts.findIndex(function (a) { return a.id === clean.id; });
   if (idx >= 0) {
     const old = accounts[idx];
     accounts[idx] = Object.assign({}, old, clean);
     if (!acct.password && old.password) accounts[idx].password = old.password;
+    if (!acct.oauthClientSecret && old.oauthClientSecret) accounts[idx].oauthClientSecret = old.oauthClientSecret;
+    if (!acct.oauthRefreshToken && old.oauthRefreshToken) accounts[idx].oauthRefreshToken = old.oauthRefreshToken;
   } else {
     accounts.push(clean);
   }
@@ -391,7 +400,7 @@ function removeSyncAccount(id) {
   return listSyncAccounts();
 }
 
-/** 解密出可用于同步的账户（含明文密码，仅主进程内部使用） */
+/** 解密出可用于同步的账户（含明文密码/令牌，仅主进程内部使用） */
 function decryptSyncAccounts() {
   return (readSyncAccountsRaw().accounts || []).filter(function (a) { return a.active !== false; }).map(function (a) {
     return {
@@ -402,18 +411,48 @@ function decryptSyncAccounts() {
       username: String(a.username || ''),
       password: decryptSecret(a.password),
       authMethod: String(a.authMethod || 'basic'),
+      oauthClientId: String(a.oauthClientId || ''),
+      oauthClientSecret: decryptSecret(a.oauthClientSecret),
+      oauthRefreshToken: decryptSecret(a.oauthRefreshToken),
     };
   });
 }
 
-/** 触发日历同步：拉取所有 CalDAV 账户事件，合并进秘书日程 */
+/** 向所有窗口广播事件（日历面板 / 秘书面板接收） */
+function broadcast(channel, data) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send(channel, data); } catch { /* 忽略 */ }
+  }
+}
+
+/** 触发日历同步：拉取所有账户（CalDAV / Google / Microsoft）事件，合并进秘书日程 */
 async function runCalendarSync() {
-  const accounts = decryptSyncAccounts().filter(function (a) { return a.type === 'caldav'; });
+  const accounts = decryptSyncAccounts().filter(function (a) {
+    return a.type === 'caldav' || a.type === 'google' || a.type === 'microsoft';
+  });
   const results = [];
   let allEvents = [];
   for (const acct of accounts) {
-    const r = await syncEngine.syncCalendarAccount(acct, { lookbackDays: 14, lookaheadDays: 180 });
-    results.push({ id: acct.id, name: acct.name, ok: r.ok, count: (r.events || []).length, error: r.error || '' });
+    let r;
+    try {
+      if (acct.type === 'google' || acct.type === 'microsoft') {
+        // OAuth：先刷新 access_token，再拉取
+        if (!acct.oauthRefreshToken || !acct.oauthClientId) {
+          r = { ok: false, events: [], error: '该账户尚未完成 OAuth 授权（缺 refresh_token 或 client_id）' };
+        } else {
+          let tok = null;
+          try { tok = await syncEngine.refreshOAuthToken(acct.type, acct.oauthClientId, acct.oauthClientSecret, acct.oauthRefreshToken); } catch (e) { /* 继续，报错在下面 */ }
+          if (!tok || !tok.access_token) { r = { ok: false, events: [], error: '刷新访问令牌失败（可能授权已过期，请重新授权）' }; }
+          else if (acct.type === 'google') r = await syncEngine.syncGoogleCalendar(tok.access_token, { lookbackDays: 14, lookaheadDays: 180 });
+          else r = await syncEngine.syncMicrosoftCalendar(tok.access_token, { lookbackDays: 14, lookaheadDays: 180 });
+        }
+      } else {
+        r = await syncEngine.syncCalendarAccount(acct, { lookbackDays: 14, lookaheadDays: 180 });
+      }
+    } catch (e) {
+      r = { ok: false, events: [], error: String(e && e.message || e) };
+    }
+    results.push({ id: acct.id, name: acct.name, type: acct.type, ok: r.ok, count: (r.events || []).length, error: r.error || '' });
     if (r.ok && r.events) allEvents = allEvents.concat(r.events);
   }
   // 合并进 secretary.json：移除旧的同步事件（id 以 cal- 开头），写入新事件，保留手动事件
@@ -429,7 +468,9 @@ async function runCalendarSync() {
   const merged = manual.concat(synced);
   merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
   writeJson('secretary.json', { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] });
-  return { results: results, total: synced.length, syncedAt: Date.now() };
+  const summary = { results: results, total: synced.length, syncedAt: Date.now() };
+  broadcast('calendar:synced', summary);
+  return summary;
 }
 
 /* ---------------- 用量账本：按月 jsonl ---------------- */
@@ -1067,6 +1108,88 @@ ipcMain.handle('sync:accounts:list', () => listSyncAccounts());
 ipcMain.handle('sync:accounts:save', (_e, acct) => saveSyncAccount(acct));
 ipcMain.handle('sync:accounts:remove', (_e, id) => removeSyncAccount(id));
 ipcMain.handle('sync:calendar:run', () => runCalendarSync());
+
+/** 把一条本地日程写回默认 CalDAV 账户（手机/苹果日历可查看），返回远端 UID */
+ipcMain.handle('sync:calendar:push', async (_e, ev) => {
+  const accounts = decryptSyncAccounts().filter((a) => a.type === 'caldav');
+  if (!accounts.length) return { ok: false, error: '尚未配置日历账户（先在秘书面板「同步日历」配置 iCloud）' };
+  const r = await syncEngine.pushCalendarEvent(accounts[0], ev || {});
+  return r;
+});
+
+/* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
+const OAUTH_PORT = 18888;
+const OAUTH_REDIRECT = 'http://localhost:' + OAUTH_PORT;
+let oauthServer = null;
+const oauthPending = {};   // state -> { provider, clientId, clientSecret, name, id }
+
+function ensureOAuthServer() {
+  if (oauthServer) return;
+  oauthServer = http.createServer(async (req, res) => {
+    const reply = (ok, msg) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<html><head><meta charset="utf-8"><title>授权</title></head>' +
+        '<body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:grid;place-items:center;height:100vh;margin:0;color:#333;background:#f7f6f9">' +
+        '<div style="text-align:center;background:#fff;padding:40px 48px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08)">' +
+        '<div style="font-size:40px">' + (ok ? '✅' : '⚠️') + '</div>' +
+        '<h2 style="margin:14px 0 6px">' + (ok ? '授权成功' : '授权失败') + '</h2>' +
+        '<p style="color:#777;margin:0">' + (msg || '') + '</p>' +
+        '<p style="color:#aaa;font-size:13px;margin-top:14px">可以关闭本页，回到工作台查看结果。</p>' +
+        '</div></body></html>');
+    };
+    try {
+      const u = new URL(req.url, 'http://localhost');
+      if (u.pathname !== '/') { res.writeHead(404); res.end(); return; }
+      const code = u.searchParams.get('code');
+      const state = u.searchParams.get('state');
+      const pending = oauthPending[state];
+      if (!code || !pending) { reply(false, '缺少 code 或会话已过期，请重新发起授权'); return; }
+      delete oauthPending[state];
+      const tokens = await syncEngine.exchangeOAuthCode(pending.provider, pending.clientId, pending.clientSecret, OAUTH_REDIRECT, code);
+      if (!tokens || !tokens.refresh_token) throw new Error('未取得 refresh_token（请确认授权时选择了「允许」，且 OAuth 客户端类型为「Web 应用」）');
+      saveSyncAccount({
+        id: pending.id, name: pending.name, type: pending.provider,
+        serverUrl: '', username: '', authMethod: 'oauth',
+        oauthClientId: pending.clientId, oauthClientSecret: pending.clientSecret,
+        oauthRefreshToken: tokens.refresh_token, active: true,
+      });
+      reply(true, pending.name + ' 已成功授权并保存');
+      broadcast('oauth:done', { ok: true, provider: pending.provider, name: pending.name });
+      runCalendarSync().catch(() => {});
+    } catch (e) {
+      reply(false, String(e && e.message || e));
+      broadcast('oauth:done', { ok: false, error: String(e && e.message || e) });
+    }
+  });
+  oauthServer.on('error', () => {});
+  oauthServer.listen(OAUTH_PORT, '127.0.0.1');
+}
+
+ipcMain.handle('sync:oauth:start', async (_e, payload) => {
+  const p = payload || {};
+  const provider = String(p.provider || '');
+  const clientId = String(p.clientId || '').trim();
+  const clientSecret = String(p.clientSecret || '').trim();
+  const name = String(p.name || '').trim();
+  if (!syncEngine.OAUTH_PROVIDERS[provider]) return { ok: false, error: '未知提供方' };
+  if (!clientId) return { ok: false, error: '请先填写 Client ID' };
+  if (!clientSecret) return { ok: false, error: '请先填写 Client Secret' };
+  const state = 'st' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  oauthPending[state] = {
+    provider, clientId, clientSecret,
+    name: name || (syncEngine.OAUTH_PROVIDERS[provider].label + ' 日历'),
+    id: 'oauth-' + provider + '-' + Date.now(),
+  };
+  try {
+    ensureOAuthServer();
+    const url = syncEngine.buildOAuthUrl(provider, clientId, OAUTH_REDIRECT, state);
+    await shell.openExternal(url);
+    return { ok: true, url: url };
+  } catch (e) {
+    delete oauthPending[state];
+    return { ok: false, error: String(e && e.message || e) };
+  }
+});
 ipcMain.handle('notify', (_e, payload) => {
   const p = payload || {};
   if (!Notification.isSupported()) return false;
@@ -1124,6 +1247,9 @@ app.whenReady().then(() => {
   kbEngine.ensureConfig();
   kbEngine.scan().catch(() => {});
   startKbWatcher();
+  // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
+  runCalendarSync().catch(() => {});
+  setInterval(() => { runCalendarSync().catch(() => {}); }, 30 * 60 * 1000);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });

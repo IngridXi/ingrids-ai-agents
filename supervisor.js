@@ -63,7 +63,7 @@
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
   style.textContent = [
-    '.sup-panel{position:fixed;top:76px;right:22px;width:336px;z-index:70;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(23,59,73,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
+    '.sup-panel{position:fixed;top:470px;right:22px;width:336px;z-index:70;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(23,59,73,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
     '.sup-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--deep),var(--accent));color:#fff;cursor:move;user-select:none;}',
     '.sup-title{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:6px;}',
     '.sup-status{font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.16);}',

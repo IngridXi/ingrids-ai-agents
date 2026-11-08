@@ -91,6 +91,10 @@ contextBridge.exposeInMainWorld('ingrid', {
   syncAccountSave: (acct) => ipcRenderer.invoke('sync:accounts:save', acct),
   syncAccountRemove: (id) => ipcRenderer.invoke('sync:accounts:remove', id),
   syncCalendarRun: () => ipcRenderer.invoke('sync:calendar:run'),
+  syncCalendarPush: (ev) => ipcRenderer.invoke('sync:calendar:push', ev),
+  syncOauthStart: (payload) => ipcRenderer.invoke('sync:oauth:start', payload),
+  onCalendarSynced: (cb) => ipcRenderer.on('calendar:synced', (_e, d) => { if (cb) cb(d || {}); }),
+  onOauthDone: (cb) => ipcRenderer.on('oauth:done', (_e, d) => { if (cb) cb(d || {}); }),
 
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
   kbScan: () => ipcRenderer.invoke('kb:scan'),

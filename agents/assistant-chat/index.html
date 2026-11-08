@@ -94,6 +94,21 @@
   #sendBtn:hover { background: var(--accent-2); }
   #sendBtn:disabled { background: #c9c4e0; cursor: not-allowed; }
   #sendBtn svg { width: 20px; height: 20px; }
+  .tool-btn {
+    flex: none; width: 40px; height: 44px; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--card); color: var(--ink-soft); cursor: pointer; display: grid; place-items: center;
+  }
+  .tool-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .tool-btn svg { width: 19px; height: 19px; }
+  .tool-btn.rec { background: #fdecec; border-color: var(--danger); color: var(--danger); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .55; } }
+  .img-preview { display: flex; gap: 8px; align-items: center; max-width: 900px; margin: 8px auto 0; padding: 6px 8px; background: var(--surface-2, #efeef3); border: 1px dashed var(--line); border-radius: 10px; }
+  .img-preview img { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+  .img-preview .nm { font-size: 12px; color: var(--ink-soft); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .img-preview .x { border: none; background: none; color: var(--ink-faint); cursor: pointer; font-size: 16px; }
+  .img-preview .x:hover { color: var(--danger); }
+  .user-img { margin-bottom: 8px; }
+  .user-img img { max-width: 220px; max-height: 180px; border-radius: 10px; display: block; }
   .foot-note { text-align: center; font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
   .context-tag { font-size: 11px; color: var(--ink-faint); margin-top: 6px; text-align: center; min-height: 14px; }
 </style>
@@ -116,12 +131,16 @@
 
 <footer>
   <div class="input-row">
-    <textarea id="input" rows="1" placeholder="问我任何事；粘贴一个网址可让我抓取并总结…"></textarea>
+    <button class="tool-btn" id="imgBtn" title="添加图片（识图/OCR/看图提问）"></button>
+    <button class="tool-btn" id="micBtn" title="语音输入"></button>
+    <textarea id="input" rows="1" placeholder="问我任何事；粘贴一个网址可让我抓取并总结…（可粘贴/上传图片，或点麦克风说话）"></textarea>
     <button id="sendBtn" title="发送"></button>
   </div>
+  <div class="img-preview" id="imgPreview" hidden></div>
   <div class="context-tag" id="contextTag"></div>
   <div class="foot-note" id="footNote">本地 Ollama 免费 · 云端 API 需先在主界面「引擎设置」配 Key</div>
 </footer>
+<input type="file" id="imgFile" accept="image/*" hidden>
 
 <script src="../../icons.js"></script>
 <script>
@@ -135,6 +154,7 @@
 
   var ENGINE_META = {
     ollama:   { label: '本地 Ollama · qwen3:32b（免费）' },
+    'ollama-vision': { label: '本地视觉模型 · qwen2.5vl:7b（识图）' },
     deepseek: { label: 'DeepSeek · API Key' },
     gpt:      { label: 'GPT · API Key' },
     qwen:     { label: 'Qwen · API Key' },
@@ -143,6 +163,8 @@
   var history = [];
   var streaming = false;
   var webEnabled = true;
+  var pendingImage = null;   // { dataUrl, name }
+  var recognition = null;
 
   var el = function (id) { return document.getElementById(id); };
   var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
@@ -153,10 +175,64 @@
     sendBtn.innerHTML = window.iconSvg('send');
     el('webIcon').innerHTML = window.iconSvg('globe');
     el('exportIcon').innerHTML = window.iconSvg('file');
+    el('imgBtn').innerHTML = window.iconSvg('camera');
+    el('micBtn').innerHTML = window.iconSvg('mic');
   }
   function avatarHtml(role) {
     if (role === 'user') return '<div class="avatar">' + window.iconSvg('user') + '</div>';
     return '<div class="avatar">' + window.iconSvg('message') + '</div>';
+  }
+
+  /* ---------- 图片输入（上传 / 粘贴 / 拖拽） ---------- */
+  function renderImgPreview() {
+    var p = el('imgPreview');
+    if (!pendingImage) { p.hidden = true; p.innerHTML = ''; return; }
+    p.hidden = false;
+    p.innerHTML = '<img src="' + pendingImage.dataUrl + '">' +
+      '<span class="nm">' + esc(pendingImage.name) + '</span>' +
+      '<button class="x" id="imgClear" title="移除图片">✕</button>';
+    el('imgClear').addEventListener('click', function () { pendingImage = null; renderImgPreview(); });
+  }
+  function attachImage(file) {
+    if (!file || !file.type || file.type.indexOf('image/') !== 0) return;
+    if (file.size > 8 * 1024 * 1024) { alert('图片过大（超过 8MB），请压缩后重试'); return; }
+    var reader = new FileReader();
+    reader.onload = function () { pendingImage = { dataUrl: reader.result, name: file.name || '图片' }; renderImgPreview(); };
+    reader.readAsDataURL(file);
+  }
+  function bindImageInputs() {
+    var fileInput = el('imgFile');
+    el('imgBtn').addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () { if (fileInput.files && fileInput.files[0]) attachImage(fileInput.files[0]); fileInput.value = ''; });
+    document.addEventListener('paste', function (e) {
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.indexOf('image/') === 0) { attachImage(items[i].getAsFile()); return; }
+      }
+    });
+    document.addEventListener('dragover', function (e) { e.preventDefault(); });
+    document.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) attachImage(e.dataTransfer.files[0]); });
+  }
+
+  /* ---------- 语音输入（Web Speech API） ---------- */
+  function toggleVoice() {
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert('当前环境不支持语音识别（需要联网的 Chromium 内核）'); return; }
+    if (recognition) { recognition.stop(); recognition = null; el('micBtn').classList.remove('rec'); return; }
+    recognition = new SR();
+    recognition.lang = 'zh-CN';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = function (e) {
+      var t = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
+      input.value = t; autoGrow();
+    };
+    recognition.onend = function () { recognition = null; el('micBtn').classList.remove('rec'); };
+    recognition.onerror = function () { recognition = null; el('micBtn').classList.remove('rec'); };
+    recognition.start();
+    el('micBtn').classList.add('rec');
   }
 
   function loadSoul() {
@@ -169,7 +245,10 @@
   }
 
   function loadEngines() {
-    var opts = [{ id: 'ollama', label: ENGINE_META.ollama.label }];
+    var opts = [
+      { id: 'ollama', label: ENGINE_META.ollama.label },
+      { id: 'ollama-vision', label: ENGINE_META['ollama-vision'].label },
+    ];
     var preferred = null;
     function render() {
       engineSelect.innerHTML = '';
@@ -231,14 +310,17 @@
 
   function send() {
     var text = input.value.trim();
-    if (!text || streaming) return;
+    var img = pendingImage;
+    if ((!text && !img) || streaming) return;
     input.value = ''; autoGrow();
+    pendingImage = null; renderImgPreview();
     if (messages.querySelector('.welcome')) messages.innerHTML = '';
-    addBubble('user', esc(text));
+    var userHtml = (img ? '<div class="user-img"><img src="' + img.dataUrl + '"></div>' : '') + esc(text || (img ? '（发送了一张图片）' : ''));
+    addBubble('user', userHtml);
 
-    // 1) 粘贴网址 → 抓取网页正文，基于网页回答
+    // 1) 粘贴网址 → 抓取网页正文，基于网页回答（仅纯文本时）
     var urlMatch = text.match(/https?:\/\/\S+/);
-    if (urlMatch && IS_DESKTOP) {
+    if (urlMatch && !img && IS_DESKTOP) {
       var url = urlMatch[0];
       var instruction = text.replace(urlMatch[0], '').trim() || '请总结这个网页的主要内容';
       withWebFetch(url, instruction);
@@ -250,6 +332,7 @@
     var acc = '', thinking = '';
     streaming = true; sendBtn.disabled = true;
     var engine = engineSelect.value || 'ollama';
+    if (img && engine === 'ollama') engine = 'ollama-vision';
 
     function renderStream() {
       var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
@@ -257,7 +340,7 @@
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
-      history.push({ role: 'user', content: text });
+      history.push({ role: 'user', content: text || (img ? '（图片）' : '') });
       if (finalText) history.push({ role: 'assistant', content: finalText });
       if (history.length > 24) history = history.slice(-24);
       var thinkHtml = thinking ? '<details class="think"' + (finalText && !err ? '' : ' open') + '><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
@@ -268,9 +351,15 @@
       input.focus();
     }
     function run(content) {
+      var prompt = content || (img ? '请分析这张图片。' : '');
+      var userMsg = { role: 'user', content: prompt };
+      if (img) userMsg.content = [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: img.dataUrl } },
+      ];
       var reqMessages = [{ role: 'system', content: systemPrompt }]
         .concat(history.slice(-12))
-        .concat([{ role: 'user', content: content }]);
+        .concat([userMsg]);
       if (!IS_DESKTOP) { finish('（浏览器预览模式：无法调用模型。请用桌面应用运行。）'); return; }
       window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
         onDelta: function (d) { if (d && d.thinking) thinking += d.thinking; if (d && d.text) acc += d.text; renderStream(); },
@@ -357,6 +446,8 @@
 
   /* ---------- 事件 ---------- */
   sendBtn.addEventListener('click', send);
+  bindImageInputs();
+  el('micBtn').addEventListener('click', toggleVoice);
   input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   input.addEventListener('input', autoGrow);
   el('clearBtn').addEventListener('click', function () { history = []; welcome(); setContextTag(''); });

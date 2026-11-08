@@ -173,8 +173,225 @@ async function syncCalendarAccount(account, opts) {
   }
 }
 
+/* ---------------- ICS 生成（写回 CalDAV） ---------------- */
+
+/** 转义 ICS 文本（逗号/分号/换行/反斜杠） */
+function icalEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;');
+}
+
+/** ISO 时间字符串 → iCal 时间值；全天 → DATE，否则 → UTC 的 DATE-TIME（带 Z） */
+function toICalDate(iso, allDay) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  if (allDay) {
+    // 全天：取本地年月日（避免 UTC 换算跨天）
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return y + m + day;
+  }
+  const y = d.getUTCFullYear(), m = String(d.getUTCMonth() + 1).padStart(2, '0'), day = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0'), mi = String(d.getUTCMinutes()).padStart(2, '0'), se = String(d.getUTCSeconds()).padStart(2, '0');
+  return y + m + day + 'T' + h + mi + se + 'Z';
+}
+
+/** 由统一事件对象生成完整 ICS 文本 */
+function eventToICS(ev) {
+  const uid = String(ev.uid || ('ingrid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)));
+  const now = new Date();
+  const stamp = toICalDate(now.toISOString(), false);
+  const allDay = !!ev.allDay;
+  const dtstart = toICalDate(ev.at, allDay);
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Ingrid-AI-Agents//Calendar Sync//CN',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    'UID:' + uid,
+    'DTSTAMP:' + stamp,
+    'DTSTART' + (allDay ? ';VALUE=DATE:' : ':') + dtstart,
+  ];
+  if (ev.end) lines.push('DTEND' + (allDay ? ';VALUE=DATE:' : ':') + toICalDate(ev.end, allDay));
+  lines.push('SUMMARY:' + icalEscape(ev.title || '（无标题）'));
+  if (ev.location) lines.push('LOCATION:' + icalEscape(ev.location));
+  if (ev.note || ev.description) lines.push('DESCRIPTION:' + icalEscape(ev.note || ev.description));
+  lines.push('END:VEVENT', 'END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
+}
+
+/** 选一个「主日历」：优先名字形如「日历/Calendar」的非共享/订阅日历 */
+function pickMainCalendar(calendars) {
+  const list = calendars || [];
+  if (!list.length) return null;
+  const preferred = list.find((c) => {
+    const n = String(c.displayName || '').replace(/^['"]|['"]$/g, '');
+    return /(^|\s)(日历|Calendar)(\s|$)/i.test(n) && !/家庭|家人|Family|Shared|订阅|Birthday/i.test(n);
+  });
+  return preferred || list[0];
+}
+
+/**
+ * 写回一条日程到 CalDAV（新建，手机/苹果日历可看到）
+ * @param {object} account 解密后的账户（含明文 password）
+ * @param {object} ev { title, at, end, location, note, allDay, uid? }
+ * @returns {Promise<{ok:boolean, uid?:string, calendar?:string, error?:string}>}
+ */
+async function pushCalendarEvent(account, ev) {
+  try {
+    const authMethod = account.authMethod === 'oauth' ? 'Oauth' : 'Basic';
+    const client = await dav().createDAVClient({
+      serverUrl: account.serverUrl,
+      credentials: { username: account.username, password: account.password },
+      authMethod: authMethod,
+      defaultAccountType: 'caldav',
+    });
+    const calendars = await client.fetchCalendars();
+    if (!calendars || !calendars.length) return { ok: false, error: '该账户下没有可写入的日历' };
+    const cal = pickMainCalendar(calendars);
+    const iCalString = eventToICS(ev);
+    const uid = String(ev.uid || (iCalString.match(/UID:([^\r\n]+)/) || [])[1] || 'ingrid-' + Date.now());
+    await client.createCalendarObject({ calendar: cal, iCalString: iCalString, filename: uid + '.ics' });
+    return { ok: true, uid: uid, calendar: String(cal.displayName || '').replace(/^['"]|['"]$/g, '') };
+  } catch (e) {
+    const msg = String(e && e.message || e);
+    let friendly = '写回失败：' + msg;
+    if (/401|unauthor|forbidden|password|credential|principal/i.test(msg)) friendly = '认证失败：请检查账户密码/授权码。';
+    else if (/ENOTFOUND|ETIMEDOUT|ECONNREFUSED|network|fetch failed/i.test(msg)) friendly = '网络错误：无法连接日历服务器。';
+    return { ok: false, error: friendly };
+  }
+}
+
+/* ---------------- OAuth2（Google / Microsoft） ---------------- */
+
+const OAUTH_PROVIDERS = {
+  google: {
+    label: 'Google',
+    authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    scope: 'https://www.googleapis.com/auth/calendar',
+  },
+  microsoft: {
+    label: 'Microsoft',
+    authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    scope: 'https://graph.microsoft.com/Calendars.ReadWrite offline_access',
+  },
+};
+
+/** 构造 OAuth 授权 URL（含 offline/consent 以拿到 refresh_token） */
+function buildOAuthUrl(provider, clientId, redirectUri, state) {
+  const p = OAUTH_PROVIDERS[provider];
+  if (!p) throw new Error('未知 OAuth 提供方：' + provider);
+  const q = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: p.scope,
+    access_type: 'offline',
+    prompt: 'consent',
+    state: state || 'ingrid',
+  });
+  return p.authUrl + '?' + q.toString();
+}
+
+/** 用授权码换取 tokens（返回 access_token / refresh_token 等） */
+async function exchangeOAuthCode(provider, clientId, clientSecret, redirectUri, code) {
+  const p = OAUTH_PROVIDERS[provider];
+  if (!p) throw new Error('未知 OAuth 提供方：' + provider);
+  return dav().fetchOauthTokens({
+    authorizationCode: code, redirectUrl: redirectUri, clientId: clientId, clientSecret: clientSecret, tokenUrl: p.tokenUrl,
+  });
+}
+
+/** 用 refresh_token 刷新 access_token */
+async function refreshOAuthToken(provider, clientId, clientSecret, refreshToken) {
+  const p = OAUTH_PROVIDERS[provider];
+  if (!p) throw new Error('未知 OAuth 提供方：' + provider);
+  return dav().refreshAccessToken({ refreshToken: refreshToken, clientId: clientId, clientSecret: clientSecret, tokenUrl: p.tokenUrl });
+}
+
+/* ---------------- Google Calendar API v3（OAuth Bearer） ---------------- */
+
+async function syncGoogleCalendar(accessToken, opts) {
+  const o = opts || {};
+  const lookback = Number(o.lookbackDays) || 14, lookahead = Number(o.lookaheadDays) || 180;
+  const now = Date.now();
+  const minT = new Date(now - lookback * 86400000).toISOString();
+  const maxT = new Date(now + lookahead * 86400000).toISOString();
+  const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=' +
+    encodeURIComponent(minT) + '&timeMax=' + encodeURIComponent(maxT) + '&maxResults=2500';
+  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!resp.ok) {
+    const msg = 'Google 日历请求失败 HTTP ' + resp.status;
+    if (resp.status === 401) throw new Error('认证已过期：' + msg);
+    throw new Error(msg);
+  }
+  const j = await resp.json();
+  const events = [];
+  for (const it of (j.items || [])) {
+    const allDay = !!(it.start && it.start.date && !it.start.dateTime);
+    const at = allDay ? new Date(it.start.date + 'T00:00:00').toISOString() : new Date(it.start.dateTime).toISOString();
+    if (isNaN(Date.parse(at))) continue;
+    const end = (!allDay && it.end && it.end.dateTime) ? new Date(it.end.dateTime).toISOString() : '';
+    events.push({
+      id: 'gcal-' + String(it.id || it.iCalUID || Date.now()),
+      title: it.summary || '（无标题）', at: at, end: end,
+      location: it.location || '', note: (it.description || '').slice(0, 500),
+      source: 'Google 日历', allDay: allDay,
+    });
+  }
+  return { ok: true, events: events, calendars: [{ displayName: 'Google 日历', url: '' }] };
+}
+
+/* ---------------- Microsoft Graph（OAuth Bearer） ---------------- */
+
+async function syncMicrosoftCalendar(accessToken, opts) {
+  const o = opts || {};
+  const lookback = Number(o.lookbackDays) || 14, lookahead = Number(o.lookaheadDays) || 180;
+  const now = Date.now();
+  const minT = new Date(now - lookback * 86400000).toISOString();
+  const maxT = new Date(now + lookahead * 86400000).toISOString();
+  const url = 'https://graph.microsoft.com/v1.0/me/events?$select=id,subject,start,end,location,bodyPreview&$top=1000&startDateTime=' +
+    encodeURIComponent(minT) + '&endDateTime=' + encodeURIComponent(maxT);
+  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!resp.ok) {
+    const msg = 'Outlook 日历请求失败 HTTP ' + resp.status;
+    if (resp.status === 401) throw new Error('认证已过期：' + msg);
+    throw new Error(msg);
+  }
+  const j = await resp.json();
+  const events = [];
+  for (const it of (j.value || [])) {
+    const allDay = !!(it.start && it.start.date && !it.start.dateTime);
+    const at = allDay ? new Date(it.start.date + 'T00:00:00').toISOString() : new Date(it.start.dateTime).toISOString();
+    if (isNaN(Date.parse(at))) continue;
+    const end = (!allDay && it.end && it.end.dateTime) ? new Date(it.end.dateTime).toISOString() : '';
+    events.push({
+      id: 'ms-' + String(it.id || Date.now()),
+      title: it.subject || '（无标题）', at: at, end: end,
+      location: (it.location && it.location.displayName) || '', note: (it.bodyPreview || '').slice(0, 500),
+      source: 'Outlook 日历', allDay: allDay,
+    });
+  }
+  return { ok: true, events: events, calendars: [{ displayName: 'Outlook 日历', url: '' }] };
+}
+
 module.exports = {
   parseICalendar,
   parseCalDate,
   syncCalendarAccount,
+  eventToICS,
+  toICalDate,
+  pushCalendarEvent,
+  OAUTH_PROVIDERS,
+  buildOAuthUrl,
+  exchangeOAuthCode,
+  refreshOAuthToken,
+  syncGoogleCalendar,
+  syncMicrosoftCalendar,
 };

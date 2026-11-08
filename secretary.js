@@ -400,7 +400,20 @@
         '<div class="f"><label>App 专用密码</label><input type="password" id="calPass" placeholder="xxxx-xxxx-xxxx-xxxx"></div>' +
         '<div class="sec-bhint">生成方法：appleid.apple.com → 登录 → 登录与安全 → App 专用密码 → 生成后粘贴到上面。密码仅加密存在本机钥匙串，不会上传。</div>' +
         '<div class="foot"><button id="calCancel">取消</button><button class="primary" id="calSave">保存并同步</button></div>' +
-        '<div class="sec-bout" id="calResult" hidden></div></div>';
+        '<div class="sec-bout" id="calResult" hidden></div>' +
+        '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
+        '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('link') + ' Google 日历（OAuth 授权）</div>' +
+        '<div class="sec-bhint">先在 console.cloud.google.com 创建「Web 应用」OAuth 客户端，把 <code>http://localhost:18888</code> 加入「已获授权的重定向 URI」，并启用 Calendar API。</div>' +
+        '<div class="f"><label>Client ID</label><input id="gClientId" placeholder="xxx.apps.googleusercontent.com"></div>' +
+        '<div class="f"><label>Client Secret</label><input type="password" id="gClientSecret" placeholder="GOCSPX-..."></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="gConnect">' + iconSvg('link') + ' 连接 Google 日历</button></div>' +
+        '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
+        '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('link') + ' Outlook 日历（OAuth 授权）</div>' +
+        '<div class="sec-bhint">在 portal.azure.com 注册应用（重定向 URI 填 <code>http://localhost:18888</code>），授予 Calendars.ReadWrite 委托权限。</div>' +
+        '<div class="f"><label>Client ID</label><input id="mClientId" placeholder="Application (client) ID"></div>' +
+        '<div class="f"><label>Client Secret</label><input type="password" id="mClientSecret" placeholder="..."></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="mConnect">' + iconSvg('link') + ' 连接 Outlook 日历</button></div>' +
+        '</div>';
       modalMask.querySelector('#calCancel').addEventListener('click', closeModal);
       modalMask.querySelector('#calSave').addEventListener('click', function () {
         var user = modalMask.querySelector('#calUser').value.trim();
@@ -445,9 +458,40 @@
           box.innerHTML = esc(String(err && err.message || err));
         });
       });
+
+      // Google / Microsoft OAuth 授权（浏览器完成授权后由主进程回调 oauth:done）
+      function startOAuth(provider, label, idSel, secSel, btn) {
+        var cid = modalMask.querySelector(idSel).value.trim();
+        var csec = modalMask.querySelector(secSel).value.trim();
+        if (!cid || !csec) { alert('请先填写 ' + label + ' 的 Client ID 和 Client Secret'); return; }
+        btn.disabled = true; btn.textContent = '请在浏览器完成授权…';
+        window.ingrid.syncOauthStart({ provider: provider, clientId: cid, clientSecret: csec, name: label + ' 日历' })
+          .then(function (r) {
+            if (!r || !r.ok) { btn.disabled = false; btn.textContent = '连接 ' + label + ' 日历'; alert((r && r.error) || '启动授权失败'); }
+          })
+          .catch(function (e) { btn.disabled = false; btn.textContent = '连接 ' + label + ' 日历'; alert(String(e && e.message || e)); });
+      }
+      modalMask.querySelector('#gConnect').addEventListener('click', function () { startOAuth('google', 'Google', '#gClientId', '#gClientSecret', this); });
+      modalMask.querySelector('#mConnect').addEventListener('click', function () { startOAuth('microsoft', 'Outlook', '#mClientId', '#mClientSecret', this); });
     });
   }
   document.getElementById('secSyncCal').addEventListener('click', openSyncModal);
+
+  // OAuth 授权完成回调：刷新日程
+  if (DESKTOP && window.ingrid.onOauthDone) {
+    window.ingrid.onOauthDone(function (d) {
+      if (d && d.ok) {
+        addChat('a', (d.name || '日历') + ' 已授权，正在同步…');
+        window.ingrid.syncCalendarRun().then(function () {
+          try { var latest = window.ingrid.loadSecretarySync(); if (latest && Array.isArray(latest.events)) { events.events = latest.events; } } catch (e) {}
+          renderEvents();
+          addChat('a', '已同步完成。');
+        }).catch(function () {});
+      } else {
+        addChat('a', '授权失败：' + (d && d.error ? d.error : '未知错误'));
+      }
+    });
+  }
 
   /* ---------- 提醒循环：每 30 秒检查，到点发系统通知 ---------- */
   function checkReminders() {

@@ -242,6 +242,7 @@
         <span class="chip"><span class="dot"></span><span id="agentCount">1</span> 个 Agent 已就绪</span>
         <span class="chip warn"><span class="dot"></span>每个 Agent 独立模型</span>
         <button class="chip chip-btn" id="btnSkills" title="按板块管理技能、自动推荐、挂载"><span data-icon="grid"></span> <span id="skillsCount">0</span> 个技能板块</button>
+        <button class="chip chip-btn" id="btnCalendar" title="右侧日历面板：月历 + 日程汇总 + 同步"><span data-icon="calendar"></span> 日历</button>
         <button class="chip chip-btn" id="btnSettings" title="配置引擎与 API Key"><span data-icon="settings"></span> 引擎设置</button>
       </div>
     </header>
@@ -839,6 +840,9 @@ document.addEventListener('click', e => {
   if (e.target && e.target.closest && e.target.closest('#btnSkills')) {
     if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator();
   }
+  if (e.target && e.target.closest && e.target.closest('#btnCalendar')) {
+    if (typeof window.__openCalendar === 'function') window.__openCalendar();
+  }
 });
 
 // 在设置面板里拦截“保存”按钮（动态添加监听）
@@ -881,5 +885,6 @@ window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents:
 <script src="supervisor.js"></script>
 <script src="secretary-core.js"></script>
 <script src="secretary.js"></script>
+<script src="calendar.js"></script>
 </body>
 </html>
