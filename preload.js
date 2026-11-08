@@ -37,6 +37,20 @@ contextBridge.exposeInMainWorld('ingrid', {
   // 真正跑一个 Agent（主进程 spawn CLI / 调 API；默认演练不花钱）
   runAgent: (payload) => ipcRenderer.invoke('agent:run', payload),
 
+  // 研究助手聊天（流式）：invoke 开始后，主进程推 chat:delta / chat:done 事件
+  chatStream: (payload, handlers) => {
+    const h = handlers || {};
+    const onDelta = (_e, d) => { if (h.onDelta) h.onDelta(d || {}); };
+    const onDone = (_e, d) => {
+      ipcRenderer.removeListener('chat:delta', onDelta);
+      ipcRenderer.removeListener('chat:done', onDone);
+      if (h.onDone) h.onDone(d || {});
+    };
+    ipcRenderer.on('chat:delta', onDelta);
+    ipcRenderer.on('chat:done', onDone);
+    return ipcRenderer.invoke('chat:start', payload);
+  },
+
   // 技能板块 / 只读索引 / 按需读正文 / 预设（v3）
   scanSkillsSync: () => ipcRenderer.sendSync('skills:scan-sync'),
   scanSkills: () => ipcRenderer.invoke('skills:scan'),

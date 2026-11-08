@@ -120,7 +120,16 @@
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 
     // 信息（仅参考）
-    info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>'
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>',
+
+    // 烧瓶（研究助手 / 实验）
+    flask: '<path d="M10 2v6.3L4.7 17a2 2 0 0 0 1.7 3h11.2a2 2 0 0 0 1.7-3L14 8.3V2"/><path d="M8.5 2h7"/><path d="M7 14h10"/>',
+
+    // 发送（纸飞机）
+    send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
+
+    // 用户（人形）
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'
   };
 
   // ---- emoji → 图标名 映射（key 用 Unicode 转义，绝对精确） ----

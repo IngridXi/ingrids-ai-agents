@@ -356,6 +356,33 @@ const SEED_AGENTS = [
     },
   },
   {
+    name: '研究助手', emoji: '🔬',
+    tag: '读博全流程 · 问题 → 论文 → 发表',
+    status: 'active', featured: true, badge: '主力',
+    engine: 'deepseek', engineLabel: 'DeepSeek · 研究',
+    href: 'agents/research-chat/index.html',
+    soul: '你是研究助手（Research RA），Ingrid 读博阶段的日常主力。铁律：只依据给定证据与材料作答，结构化输出，不臆造文献、数据、作者与页码；缺来源时标注 [需补引]。先澄清研究问题（最多 3 问），再给一条核心判断、依据与风险、下一步最小可完成动作。不做代写、不替用户决定选题。覆盖全流程：研究问题提炼、论文拆解、文献综述、SOTA 搜索、研究设计、数据分析、引用审计、审稿、可重复性评审、写作（去 AI 味、反防御性写作）、综述写作、研究提案、学术表达、项目管理、研究导师。',
+    fallbacks: ['qwen', 'gpt'],
+    detail: {
+      sub: 'Research · 读博日常主力',
+      desc: '读博阶段的日常主力 Agent。挂 Research 板块全部 17 个 skill，覆盖从「一个想法」到「一篇论文」的完整流程。风格沿用 phd-ra-agent：只依据给定证据、结构化输出、不臆造文献与数据。',
+      workflow: [
+        { t: '问题提炼', s: '想法/现象 → 可检验、有边界的研究问题' },
+        { t: '文献与 SOTA', s: '逐篇分诊 + 跨文献综合 + 前沿追踪' },
+        { t: '研究设计', s: '变量/样本/测量/控制，排除替代解释' },
+        { t: '数据分析', s: '用正确方法回答问题，结果可复核' },
+        { t: '写作', s: '论点先行 + 去 AI 味 + 反防御性写作' },
+        { t: '审稿与可重复', s: '投稿前自查 + 引用审计 + 可重复性评审' },
+        { t: '投稿与推进', s: '研究提案、学术表达、项目管理、返修' },
+      ],
+      capabilities: ['研究问题提炼', '论文拆解', '研究设计', '文献综述', 'SOTA 搜索', '数据分析', '引用审计', '审稿', '可重复性评审', '写作', '去 AI 味', '防御性写作', '综述写作', '研究提案', '学术表达', '项目管理', '研究导师'],
+      route: [
+        { kind: '板块', label: 'Research · 17 个研究 skill' },
+        { kind: '引擎', label: 'Claude Code（可随时改绑）' },
+      ],
+    },
+  },
+  {
     name: '界面设计师', emoji: '🎨',
     tag: '配色方案 · 布局 · 视觉统一',
     status: 'active', badge: 'UI',
@@ -432,6 +459,17 @@ registry.list().forEach(function (a) {
     });
   }
 });
+// v4 迁移：补齐/升级内置核心 Agent（老用户数据里缺失的 active 种子，如「研究助手」「界面设计师」）
+SEED_AGENTS.forEach(function (seed) {
+  if (seed.status !== 'active') return;
+  var existing = registry.list().find(function (a) { return a.name === seed.name; });
+  if (!existing) {
+    registry.create(seed);
+  } else if (seed.name === '研究助手' && !existing.href) {
+    // 老数据里研究助手是「详情弹窗版」（无 href），升级为聊天入口
+    registry.update(existing.id, { href: seed.href, engine: seed.engine, engineLabel: seed.engineLabel, fallbacks: seed.fallbacks });
+  }
+});
 window.__reg = registry;
 
 /* ---------- 渲染 ---------- */
@@ -503,6 +541,8 @@ function updateBoardCount() {
 function renderAgents() {
   grid.innerHTML = '';
   const agents = registry.list();
+  // featured（主力）Agent 排最前，其余保持原有相对顺序
+  agents.sort((x, y) => (y.featured ? 1 : 0) - (x.featured ? 1 : 0));
   agentCount.textContent = String(agents.filter(a => a.status === 'active').length);
   updateBoardCount();
 

@@ -147,6 +147,12 @@ function scanSkills() {
   const records = [];
   skillRoots().forEach((r) => collectSkills(r, records));
   const boards = readBoards();
+  // 迁移：旧版 research 板块的青绿标识色统一为柔和高级紫（用户已弃用绿色系）
+  let boardsDirty = false;
+  boards.forEach((b) => {
+    if (b.color === '#2a746c') { b.color = '#7c6fd6'; boardsDirty = true; }
+  });
+  if (boardsDirty) writeBoards(boards);
   // 把模板里新增的板块（用户数据里还没有的 id）合并进来，老用户也能拿到新板块
   const savedIds = boards.map((b) => b.id);
   defaultBoards().forEach((b) => {
@@ -248,6 +254,14 @@ const API_ENDPOINTS = {
   deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat' },
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus' },
+};
+
+// 聊天流式端点（研究助手聊天用）：OpenAI 兼容 API + 本地 Ollama（Ollama 走 /v1 兼容端点，无需 Key）
+const CHAT_ENDPOINTS = {
+  deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat', keyField: 'deepseek' },
+  gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini',    keyField: 'gpt' },
+  qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
+  ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:8b',       keyField: null },
 };
 
 function which(cmd) {
@@ -503,6 +517,76 @@ ipcMain.handle('agent:run', async (_e, payload) => {
   if (CLI_ADAPTERS[engine]) return runCliAgent(engine, prompt, soul);
   if (API_ENDPOINTS[engine]) return runApiAgent(engine, prompt, soul, settings[engine]);
   return dryRunResult(engine, prompt, '本地引擎需自行接入推理服务（如 ollama / FunASR）', soul);
+});
+
+/* ---------------- IPC：研究助手聊天（流式） ---------------- */
+// 渲染进程 invoke('chat:start', {engine, messages}) 后，主进程把结果以
+// 'chat:delta'（逐块正文）和 'chat:done'（结束/错误）事件推回，Key 不经过渲染层。
+ipcMain.handle('chat:start', (e, payload) => {
+  const p = payload || {};
+  const engine = String(p.engine || 'ollama');
+  const messages = Array.isArray(p.messages) ? p.messages : [];
+  const cfg = CHAT_ENDPOINTS[engine];
+  if (!cfg) { e.sender.send('chat:done', { ok: false, error: '未知引擎：' + engine }); return true; }
+  if (messages.length === 0) { e.sender.send('chat:done', { ok: false, error: '消息为空' }); return true; }
+
+  const settings = decryptSettings(readSettingsRaw());
+  const key = cfg.keyField ? settings[cfg.keyField] : '';
+  if (cfg.keyField && !key) {
+    e.sender.send('chat:done', { ok: false, error: '尚未在「引擎设置」配置 ' + engine + ' 的 API Key' });
+    return true;
+  }
+
+  (async () => {
+    const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (key) headers.Authorization = 'Bearer ' + key;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 120000);
+      const resp = await fetch(cfg.url, {
+        method: 'POST', headers, signal: ctrl.signal,
+        body: JSON.stringify({ model: cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: 4000 }),
+      });
+      if (!resp.ok) {
+        clearTimeout(timer);
+        let msg = 'HTTP ' + resp.status;
+        try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
+        send('chat:done', { ok: false, error: msg });
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 1);
+          if (!line || line.indexOf('data:') !== 0) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const j = JSON.parse(data);
+            const delta = j.choices && j.choices[0] && j.choices[0].delta;
+            if (!delta) continue;
+            // 思考型模型（如 qwen3）先流 reasoning 再流 content，两者都要透传
+            const text = delta.content || '';
+            const thinking = delta.reasoning || delta.reasoning_content || '';
+            if (thinking) send('chat:delta', { thinking: thinking });
+            if (text) send('chat:delta', { text: text });
+          } catch { /* 忽略坏块 */ }
+        }
+      }
+      clearTimeout(timer);
+      send('chat:done', { ok: true });
+    } catch (err) {
+      send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err) });
+    }
+  })();
+  return true;
 });
 
 /* ---------------- IPC：技能板块 / 索引 / 正文 / 预设 ---------------- */

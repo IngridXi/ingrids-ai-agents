@@ -27,7 +27,7 @@
         "builtin:research/research-mentor"
       ],
       "defaultEngine": "claude-code",
-      "color": "#2a746c"
+      "color": "#7c6fd6"
     },
     {
       "id": "design",
