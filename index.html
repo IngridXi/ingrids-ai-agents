@@ -101,7 +101,7 @@
   .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   .shell {
     flex: 1; min-height: 0; overflow-y: auto;
-    padding: 26px 32px 22px;
+    padding: 24px 32px 14px;
     display: flex; flex-direction: column; gap: 22px;
   }
 
@@ -190,17 +190,13 @@
   .tile.preset .emoji { background: var(--gold-soft); }
   .badge.preset { background: var(--gold-text); }
 
-  /* ---------- Footer ---------- */
-  footer.router {
-    margin-top: auto; background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); box-shadow: var(--shadow);
-    padding: 15px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  /* ---------- 底部常驻区（秘书 + 监事） ---------- */
+  .resident-dock {
+    flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    padding: 12px 32px 20px; border-top: 1px solid var(--line); background: var(--bg);
   }
-  footer.router .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; color: var(--ink); white-space: nowrap; }
-  footer.router .label .ic { font-size: 17px; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 11px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-soft); }
-  .pill .st { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
-  .hint { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
+  @keyframes dockFlash { 0% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: var(--shadow); } }
+  .flash { animation: dockFlash 1s ease; }
 
   /* ---------- Modal ---------- */
   .mask { position: fixed; inset: 0; background: rgba(23,59,73,.42); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
@@ -295,10 +291,10 @@
         <button class="side-item" id="navSupervisor"><span class="ic" data-icon="eye"></span><span>监事</span></button>
         <button class="side-item" id="navCalendar"><span class="ic" data-icon="calendar"></span><span>日历</span></button>
         <div class="side-sep">系统</div>
-        <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>技能板块</span><span class="scnt" id="skillsCount">0</span></button>
+        <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>调度中枢</span><span class="scnt" id="skillsCount">0</span></button>
         <button class="side-item" id="navSettings"><span class="ic" data-icon="settings"></span><span>引擎设置</span></button>
       </nav>
-      <div class="side-foot">local-first · 本机优先<br>v5 · 板块 → 技能 → ra</div>
+      <div class="side-foot">local-first · 本机优先<br>一个 Agent 指挥多个 Agent</div>
     </aside>
 
     <div class="main-col">
@@ -317,13 +313,8 @@
 
       <div class="shell">
         <main class="grid" id="grid"></main>
-        <footer class="router">
-          <div class="label"><span class="ic" data-icon="home"></span>local-first · 每个 Agent 绑定自己的引擎</div>
-          <span class="pill"><span class="st"></span>ra 调度中枢 → 委派 · 限额切换 · 记账</span>
-          <span class="pill"><span class="st"></span><span data-icon="eye"></span> 监事 · <span data-icon="feather"></span> 秘书 · 左侧导航</span>
-          <span class="hint">v5 · 板块 → 技能 → ra 路由 → Agent</span>
-        </footer>
       </div>
+      <div class="resident-dock" id="residentDock"></div>
     </div>
 
     <aside class="cal-dock" id="calDock"></aside>
@@ -510,11 +501,6 @@ const SEED_AGENTS = [
     detail: { sub: '敬请期待', desc: '数据处理与可视化助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
   },
   {
-    name: '写作助手', emoji: '✍️', tag: '研报 · 文档 · 润色',
-    status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
-    detail: { sub: '敬请期待', desc: '专业写作与排版助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
-  },
-  {
     name: '翻译助手', emoji: '🌐', tag: '多语种互译 · 术语一致',
     status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
     detail: { sub: '敬请期待', desc: '多语言翻译助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
@@ -564,6 +550,11 @@ SEED_AGENTS.forEach(function (seed) {
       fallbacks: seed.fallbacks, status: 'active', tag: seed.tag, soul: seed.soul, detail: seed.detail,
     });
   }
+});
+// v6 迁移：删除「写作助手」（功能已并入研究助手/通用助手）
+['写作助手'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (a) registry.remove(a.id);
 });
 window.__reg = registry;
 
@@ -635,9 +626,19 @@ function updateBoardCount() {
 
 function renderAgents() {
   grid.innerHTML = '';
-  const agents = registry.list();
-  // featured（主力）Agent 排最前，其余保持原有相对顺序
-  agents.sort((x, y) => (y.featured ? 1 : 0) - (x.featured ? 1 : 0));
+  // 首页不显示「调度中枢」（它是控制面板，从左侧导航进入），其余 Agent 正常展示
+  const agents = registry.list().filter(a => a.role !== 'orchestrator');
+  // featured（主力）排最前，其余按固定顺序（通用助手排在音乐创作之前）
+  const ORDER = ['会议纪要官', '研究助手', '通用助手', '界面设计师', '音乐创作', '数据分析', '翻译助手'];
+  agents.sort((x, y) => {
+    const fx = x.featured ? 1 : 0, fy = y.featured ? 1 : 0;
+    if (fx !== fy) return fy - fx;
+    const ix = ORDER.indexOf(x.name), iy = ORDER.indexOf(y.name);
+    if (ix >= 0 && iy >= 0) return ix - iy;
+    if (ix >= 0) return -1;
+    if (iy >= 0) return 1;
+    return 0;
+  });
   agentCount.textContent = String(agents.filter(a => a.status === 'active').length);
   updateBoardCount();
 

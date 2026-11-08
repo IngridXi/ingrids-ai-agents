@@ -1,8 +1,8 @@
 /**
  * ============================================================
- *  secretary.js — 秘书悬浮面板（渲染层，零依赖）
+ *  secretary.js — 秘书常驻面板（渲染层，零依赖）
  *  ============================================================
- *  · 可拖拽、浮在窗口左侧（与右侧监事并排）。
+ *  · 常驻在主界面底部（与右侧监事并排），始终可见。
  *  · 随时对话：写想法 → 秘书记住 → 一键「分配给合适的 Agent」。
  *  · 日程：列表 + 添加 + 提醒（系统通知）+ 从邮件截图加日历。
  *  · 邮件：导入 + 自动分类分级 + 重要信息及时告知。
@@ -45,14 +45,14 @@
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
   style.textContent = [
-    '.sec-panel{position:fixed;top:76px;left:230px;width:342px;z-index:80;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(34,31,51,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
-    '.sec-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;cursor:move;user-select:none;}',
+    '.sec-panel{position:static;width:100%;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;font-size:12.5px;color:var(--ink);display:flex;flex-direction:column;}',
+    '.sec-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;user-select:none;flex:none;}',
     '.sec-title{font-weight:700;font-size:13.5px;}',
     '.sec-count{font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.2);}',
     '.sec-btns{margin-left:auto;display:flex;gap:6px;}',
     '.sec-btns button{width:22px;height:22px;border:none;border-radius:7px;background:rgba(255,255,255,.2);color:#fff;cursor:pointer;font-size:12px;line-height:1;}',
     '.sec-btns button:hover{background:rgba(255,255,255,.35);}',
-    '.sec-body{padding:12px 13px;max-height:calc(100vh - 150px);overflow:auto;display:flex;flex-direction:column;gap:13px;}',
+    '.sec-body{padding:12px 13px;max-height:236px;overflow:auto;display:flex;flex-direction:column;gap:13px;}',
     '.sec-body.hide{display:none;}',
     '.sec-sec label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:var(--ink-faint);margin-bottom:6px;text-transform:uppercase;}',
     '.sec-sec textarea,.sec-sec input[type=text],.sec-sec input[type=datetime-local]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:9px;font-size:12px;color:var(--ink);background:#fff;font-family:inherit;}',
@@ -102,7 +102,6 @@
       '<span class="sec-count" id="secCount">0 日程</span>' +
       '<span class="sec-btns">' +
         '<button id="secMin" title="收起/展开">—</button>' +
-        '<button id="secHide" title="隐藏（可从顶栏重新打开）">✕</button>' +
       '</span>' +
     '</div>' +
     '<div class="sec-body" id="secBody">' +
@@ -125,8 +124,8 @@
         '<div class="sec-bout" id="secBrowseOut" hidden></div>' +
         '<div class="sec-bhint">只读：打开网页 / 截图 / 取文本 · 不绕过验证码与登录</div></div>' +
     '</div>';
-  document.body.appendChild(panel);
-  panel.style.display = 'none';   // 默认收起，从右上角入口打开
+  var dock = document.getElementById('residentDock');
+  (dock || document.body).appendChild(panel);
 
   var modalMask = document.createElement('div');
   modalMask.id = 'secModalMask';
@@ -136,13 +135,14 @@
   fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
   document.body.appendChild(fileInput);
 
-  /* 左侧导航入口 */
+  /* 左侧导航入口：滚动定位到常驻面板 + 高亮 */
   var nav = document.getElementById('navSecretary');
   if (nav) {
     nav.addEventListener('click', function () {
-      var showing = panel.style.display === 'block';
-      panel.style.display = showing ? 'none' : 'block';
-      if (typeof window.__setActiveNav === 'function') window.__setActiveNav(showing ? 'navHome' : 'navSecretary');
+      if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navSecretary');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      panel.classList.add('flash');
+      setTimeout(function () { panel.classList.remove('flash'); }, 1000);
     });
   }
 
@@ -202,30 +202,12 @@
   }
   function renderAll() { renderEvents(); renderEmails(); renderChat(); }
 
-  /* ---------- 拖拽 ---------- */
-  var head = document.getElementById('secHead');
-  var drag = null;
-  head.addEventListener('mousedown', function (e) {
-    if (e.target.closest('button')) return;
-    var r = panel.getBoundingClientRect();
-    drag = { x: e.clientX - r.left, y: e.clientY - r.top };
-    document.body.style.userSelect = 'none';
-  });
-  document.addEventListener('mousemove', function (e) {
-    if (!drag) return;
-    panel.style.left = (e.clientX - drag.x) + 'px';
-    panel.style.top = (e.clientY - drag.y) + 'px';
-    panel.style.right = 'auto';
-  });
-  document.addEventListener('mouseup', function () { drag = null; document.body.style.userSelect = ''; });
-
   /* ---------- 事件 ---------- */
   document.getElementById('secMin').addEventListener('click', function () {
     minimized = !minimized;
     document.getElementById('secBody').classList.toggle('hide', minimized);
     this.textContent = minimized ? '＋' : '—';
   });
-  document.getElementById('secHide').addEventListener('click', function () { panel.style.display = 'none'; if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navHome'); });
 
   /* 想法：记住 / 分配 */
   function currentThought() { return document.getElementById('secThought').value.trim(); }

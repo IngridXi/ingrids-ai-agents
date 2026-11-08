@@ -1,8 +1,8 @@
 /**
  * ============================================================
- *  supervisor.js — 监事悬浮面板（渲染层，零依赖）
+ *  supervisor.js — 监事常驻面板（渲染层，零依赖）
  *  ============================================================
- *  · 可拖拽、浮在窗口表面的卡片；随时增删「核心需求」；
+ *  · 常驻在主界面底部；随时增删「核心需求」；
  *  · 先「对话确认」把模糊需求讲清楚，确认后写入 GoalStore；
  *  · 监督开关打开后，每轮委派结果都做快路径漂移检测，
  *    偏离时慢路径生成纠偏指令，自动挂回下一次委派。
@@ -63,15 +63,15 @@
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
   style.textContent = [
-    '.sup-panel{position:fixed;top:76px;right:322px;width:336px;z-index:80;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 48px rgba(34,31,51,.22);overflow:hidden;font-size:12.5px;color:var(--ink);}',
-    '.sup-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--deep),var(--accent));color:#fff;cursor:move;user-select:none;}',
+    '.sup-panel{position:static;width:100%;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;font-size:12.5px;color:var(--ink);display:flex;flex-direction:column;}',
+    '.sup-head{display:flex;align-items:center;gap:8px;padding:10px 13px;background:linear-gradient(135deg,var(--deep),var(--accent));color:#fff;user-select:none;flex:none;}',
     '.sup-title{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:6px;}',
     '.sup-status{font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.16);}',
     '.sup-status.on{background:rgba(255,255,255,.92);color:var(--accent);font-weight:700;}',
     '.sup-btns{margin-left:auto;display:flex;gap:6px;}',
     '.sup-btns button{width:22px;height:22px;border:none;border-radius:7px;background:rgba(255,255,255,.16);color:#fff;cursor:pointer;font-size:12px;line-height:1;}',
     '.sup-btns button:hover{background:rgba(255,255,255,.32);}',
-    '.sup-body{padding:12px 13px;max-height:calc(100vh - 150px);overflow:auto;display:flex;flex-direction:column;gap:13px;}',
+    '.sup-body{padding:12px 13px;max-height:236px;overflow:auto;display:flex;flex-direction:column;gap:13px;}',
     '.sup-body.hide{display:none;}',
     '.sup-sec label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:var(--ink-faint);margin-bottom:6px;text-transform:uppercase;}',
     '.sup-sec select,.sup-sec input[type=text]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:9px;font-size:12px;color:var(--ink);background:#fff;font-family:inherit;}',
@@ -123,7 +123,6 @@
       '<span class="sup-status" id="supStatus">已暂停</span>' +
       '<span class="sup-btns">' +
         '<button id="supMin" title="收起/展开">—</button>' +
-        '<button id="supHide" title="隐藏（可从顶栏重新打开）">✕</button>' +
       '</span>' +
     '</div>' +
     '<div class="sup-body" id="supBody">' +
@@ -136,21 +135,22 @@
       '<div class="sup-sec" id="supCorrWrap" style="display:none"><label>当前纠偏指令</label><div class="sup-corr" id="supCorr"></div></div>' +
       '<div class="sup-sec"><label>监督日志</label><div class="sup-log" id="supLog"></div></div>' +
     '</div>';
-  document.body.appendChild(panel);
-  panel.style.display = 'none';   // 默认收起，从右上角入口打开
+  var dock = document.getElementById('residentDock');
+  (dock || document.body).appendChild(panel);
 
   /* 澄清对话弹窗 */
   var clarifyMask = document.createElement('div');
   clarifyMask.id = 'supClarifyMask';
   document.body.appendChild(clarifyMask);
 
-  /* 左侧导航入口 */
+  /* 左侧导航入口：滚动定位到常驻面板 + 高亮 */
   var nav = document.getElementById('navSupervisor');
   if (nav) {
     nav.addEventListener('click', function () {
-      var showing = panel.style.display === 'block';
-      panel.style.display = showing ? 'none' : 'block';
-      if (typeof window.__setActiveNav === 'function') window.__setActiveNav(showing ? 'navHome' : 'navSupervisor');
+      if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navSupervisor');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      panel.classList.add('flash');
+      setTimeout(function () { panel.classList.remove('flash'); }, 1000);
     });
   }
 
@@ -218,30 +218,12 @@
     renderGoals(); renderStatus(); renderCorrection(); renderLog();
   }
 
-  /* ---------- 拖拽 ---------- */
-  var head = document.getElementById('supHead');
-  var drag = null;
-  head.addEventListener('mousedown', function (e) {
-    if (e.target.closest('button')) return;
-    var r = panel.getBoundingClientRect();
-    drag = { x: e.clientX - r.left, y: e.clientY - r.top };
-    document.body.style.userSelect = 'none';
-  });
-  document.addEventListener('mousemove', function (e) {
-    if (!drag) return;
-    panel.style.left = (e.clientX - drag.x) + 'px';
-    panel.style.top = (e.clientY - drag.y) + 'px';
-    panel.style.right = 'auto';
-  });
-  document.addEventListener('mouseup', function () { drag = null; document.body.style.userSelect = ''; });
-
   /* ---------- 事件 ---------- */
   document.getElementById('supMin').addEventListener('click', function () {
     minimized = !minimized;
     document.getElementById('supBody').classList.toggle('hide', minimized);
     this.textContent = minimized ? '＋' : '—';
   });
-  document.getElementById('supHide').addEventListener('click', function () { panel.style.display = 'none'; if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navHome'); });
 
   document.getElementById('supTarget').addEventListener('change', function (e) { supTarget = e.target.value; });
 
