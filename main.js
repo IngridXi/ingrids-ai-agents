@@ -261,7 +261,7 @@ const CHAT_ENDPOINTS = {
   deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat', keyField: 'deepseek' },
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini',    keyField: 'gpt' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
-  ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:8b',       keyField: null },
+  ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:32b',      keyField: null },
 };
 
 function which(cmd) {

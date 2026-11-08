@@ -232,7 +232,7 @@
   function updateEngineHint() {
     var hint = el('engine-hint'), v = el('summary-engine').value;
     if (v === 'ollama') {
-      hint.textContent = '本地 Ollama（qwen3:8b）总结，内容不上云';
+      hint.textContent = '本地 Ollama（qwen3:32b）总结，内容不上云';
       hint.className = 'eb-hint ok';
     } else {
       var m = API_ENGINE_META.filter(function (x) { return x.id === v; })[0];

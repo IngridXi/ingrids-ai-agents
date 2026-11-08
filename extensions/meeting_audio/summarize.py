@@ -1,4 +1,4 @@
-"""会议总结与纪要生成：本地 Ollama（默认 qwen3:8b），会议内容零上云。
+"""会议总结与纪要生成：本地 Ollama（默认 qwen3:32b），会议内容零上云。
 
 依赖：本机已运行 Ollama（http://127.0.0.1:11434）并已拉取模型。
 无 Ollama / 无模型时降级为「规则化纪要」（基于转写文本提取，不用 LLM）。
@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 OLLAMA_URL = os.environ.get("MEETING_AUDIO_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
-DEFAULT_MODEL = os.environ.get("MEETING_AUDIO_LLM", "qwen3:8b")
+DEFAULT_MODEL = os.environ.get("MEETING_AUDIO_LLM", "qwen3:32b")
 
 # 云端 API 引擎（OpenAI 兼容接口）。Key 由主进程经环境变量注入（MEETING_AUDIO_KEY_<id>）。
 API_ENGINES = {
