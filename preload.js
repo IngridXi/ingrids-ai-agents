@@ -86,6 +86,12 @@ contextBridge.exposeInMainWorld('ingrid', {
   saveSecretary: (state) => ipcRenderer.invoke('secretary:save', state),
   notify: (payload) => ipcRenderer.invoke('notify', payload),
 
+  // 邮箱 / 日历同步（CalDAV 账户 + 触发同步）
+  syncAccountsList: () => ipcRenderer.invoke('sync:accounts:list'),
+  syncAccountSave: (acct) => ipcRenderer.invoke('sync:accounts:save', acct),
+  syncAccountRemove: (id) => ipcRenderer.invoke('sync:accounts:remove', id),
+  syncCalendarRun: () => ipcRenderer.invoke('sync:calendar:run'),
+
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
   kbScan: () => ipcRenderer.invoke('kb:scan'),
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),

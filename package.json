@@ -19,6 +19,7 @@
     "cheerio": "^1.2.0",
     "docx": "^9.15.3",
     "exceljs": "^4.4.0",
-    "pptxgenjs": "^4.0.1"
+    "pptxgenjs": "^4.0.1",
+    "tsdav": "^2.5.0"
   }
 }

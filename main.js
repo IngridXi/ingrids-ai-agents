@@ -22,6 +22,7 @@ const net = require('net');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 const { KbEngine } = require('./kb-engine.js');
+const syncEngine = require('./sync-engine.js');
 
 /* ---------------- 数据目录（local-first） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -320,6 +321,115 @@ function writeSettings(patch) {
   }
   writeJson('settings.json', enc);
   return true;
+}
+
+/* ---------------- 同步账户（日历/邮箱）凭据加密存储 ---------------- */
+function readSyncAccountsRaw() { return readJson('sync-accounts.json', { accounts: [] }); }
+
+function encryptSecret(v) {
+  if (!v) return '';
+  return safeStorage.isEncryptionAvailable()
+    ? 'enc:' + safeStorage.encryptString(String(v)).toString('base64')
+    : String(v);
+}
+function decryptSecret(v) {
+  if (typeof v === 'string' && v.startsWith('enc:')) {
+    try { return safeStorage.decryptString(Buffer.from(v.slice(4), 'base64')); }
+    catch { return ''; }
+  }
+  return String(v || '');
+}
+
+/** 账户列表（对渲染层脱敏：密码不返回，只给 hasPassword） */
+function listSyncAccounts() {
+  return (readSyncAccountsRaw().accounts || []).map(function (a) {
+    return {
+      id: String(a.id || ''),
+      name: String(a.name || ''),
+      type: String(a.type || 'caldav'),
+      serverUrl: String(a.serverUrl || ''),
+      username: String(a.username || ''),
+      authMethod: String(a.authMethod || 'basic'),
+      active: a.active !== false,
+      hasPassword: !!a.password,
+      createdAt: Number(a.createdAt) || Date.now(),
+    };
+  });
+}
+
+function saveSyncAccount(acct) {
+  if (!acct || !acct.id || !acct.name) throw new Error('账户信息不完整');
+  const raw = readSyncAccountsRaw();
+  const accounts = Array.isArray(raw.accounts) ? raw.accounts : [];
+  const clean = {
+    id: String(acct.id),
+    name: String(acct.name),
+    type: String(acct.type || 'caldav'),
+    serverUrl: String(acct.serverUrl || ''),
+    username: String(acct.username || ''),
+    authMethod: String(acct.authMethod || 'basic'),
+    active: acct.active !== false,
+    createdAt: Number(acct.createdAt) || Date.now(),
+  };
+  if (acct.password) clean.password = encryptSecret(acct.password);  // 密码只在传入时更新
+  const idx = accounts.findIndex(function (a) { return a.id === clean.id; });
+  if (idx >= 0) {
+    const old = accounts[idx];
+    accounts[idx] = Object.assign({}, old, clean);
+    if (!acct.password && old.password) accounts[idx].password = old.password;
+  } else {
+    accounts.push(clean);
+  }
+  writeJson('sync-accounts.json', { accounts: accounts });
+  return listSyncAccounts();
+}
+
+function removeSyncAccount(id) {
+  const raw = readSyncAccountsRaw();
+  const accounts = Array.isArray(raw.accounts) ? raw.accounts.filter(function (a) { return a.id !== String(id); }) : [];
+  writeJson('sync-accounts.json', { accounts: accounts });
+  return listSyncAccounts();
+}
+
+/** 解密出可用于同步的账户（含明文密码，仅主进程内部使用） */
+function decryptSyncAccounts() {
+  return (readSyncAccountsRaw().accounts || []).filter(function (a) { return a.active !== false; }).map(function (a) {
+    return {
+      id: String(a.id),
+      name: String(a.name || ''),
+      type: String(a.type || 'caldav'),
+      serverUrl: String(a.serverUrl || ''),
+      username: String(a.username || ''),
+      password: decryptSecret(a.password),
+      authMethod: String(a.authMethod || 'basic'),
+    };
+  });
+}
+
+/** 触发日历同步：拉取所有 CalDAV 账户事件，合并进秘书日程 */
+async function runCalendarSync() {
+  const accounts = decryptSyncAccounts().filter(function (a) { return a.type === 'caldav'; });
+  const results = [];
+  let allEvents = [];
+  for (const acct of accounts) {
+    const r = await syncEngine.syncCalendarAccount(acct, { lookbackDays: 14, lookaheadDays: 180 });
+    results.push({ id: acct.id, name: acct.name, ok: r.ok, count: (r.events || []).length, error: r.error || '' });
+    if (r.ok && r.events) allEvents = allEvents.concat(r.events);
+  }
+  // 合并进 secretary.json：移除旧的同步事件（id 以 cal- 开头），写入新事件，保留手动事件
+  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+  const manual = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('cal-'); });
+  const synced = allEvents.map(function (e) {
+    return {
+      id: e.id, title: e.title, at: e.at, end: e.end || '',
+      location: e.location || '', source: e.source || '', note: e.note || '',
+      reminderMin: e.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
+    };
+  });
+  const merged = manual.concat(synced);
+  merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+  writeJson('secretary.json', { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] });
+  return { results: results, total: synced.length, syncedAt: Date.now() };
 }
 
 /* ---------------- 用量账本：按月 jsonl ---------------- */
@@ -951,6 +1061,12 @@ ipcMain.handle('secretary:save', (_e, state) => {
   writeJson('secretary.json', clean);
   return true;
 });
+
+/* ---------------- IPC：邮箱 / 日历同步 ---------------- */
+ipcMain.handle('sync:accounts:list', () => listSyncAccounts());
+ipcMain.handle('sync:accounts:save', (_e, acct) => saveSyncAccount(acct));
+ipcMain.handle('sync:accounts:remove', (_e, id) => removeSyncAccount(id));
+ipcMain.handle('sync:calendar:run', () => runCalendarSync());
 ipcMain.handle('notify', (_e, payload) => {
   const p = payload || {};
   if (!Notification.isSupported()) return false;

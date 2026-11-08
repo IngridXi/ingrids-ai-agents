@@ -113,7 +113,8 @@
         '<div class="sec-chat" id="secChat"></div></div>' +
       '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 添加日程</button>' +
-        '<button class="sec-btn ghost" id="secFromShot">' + iconSvg('camera') + ' 从邮件截图添加</button></div></div>' +
+        '<button class="sec-btn ghost" id="secFromShot">' + iconSvg('camera') + ' 从邮件截图添加</button></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历（iCloud）</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button></div></div>' +
       '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
@@ -385,6 +386,68 @@
       }
     });
   });
+
+  /* 日历同步（CalDAV：iCloud 等） */
+  function openSyncModal() {
+    if (!DESKTOP || !window.ingrid.syncAccountsList) { alert('日历同步需要在桌面版使用'); return; }
+    window.ingrid.syncAccountsList().then(function (accounts) {
+      var acct = (accounts && accounts[0]) || {};
+      modalMask.style.display = 'flex';
+      modalMask.innerHTML =
+        '<div class="sec-modal"><h3>' + iconSvg('calendar') + ' 同步日历</h3>' +
+        '<div class="sub">连接 Apple 日历（iCloud），日程会自动汇入秘书。需先在 appleid.apple.com 生成「App 专用密码」（不是 Apple ID 登录密码）。</div>' +
+        '<div class="f"><label>Apple ID（邮箱）</label><input id="calUser" value="' + esc(acct.username || '') + '" placeholder="you@icloud.com"></div>' +
+        '<div class="f"><label>App 专用密码</label><input type="password" id="calPass" placeholder="xxxx-xxxx-xxxx-xxxx"></div>' +
+        '<div class="sec-bhint">生成方法：appleid.apple.com → 登录 → 登录与安全 → App 专用密码 → 生成后粘贴到上面。密码仅加密存在本机钥匙串，不会上传。</div>' +
+        '<div class="foot"><button id="calCancel">取消</button><button class="primary" id="calSave">保存并同步</button></div>' +
+        '<div class="sec-bout" id="calResult" hidden></div></div>';
+      modalMask.querySelector('#calCancel').addEventListener('click', closeModal);
+      modalMask.querySelector('#calSave').addEventListener('click', function () {
+        var user = modalMask.querySelector('#calUser').value.trim();
+        var pass = modalMask.querySelector('#calPass').value.trim();
+        if (!user || !pass) { alert('请填写 Apple ID 和 App 专用密码'); return; }
+        var btn = modalMask.querySelector('#calSave');
+        btn.disabled = true; btn.textContent = '同步中…';
+        var acctObj = {
+          id: acct.id || 'cal-icloud',
+          name: 'iCloud',
+          type: 'caldav',
+          serverUrl: 'https://caldav.icloud.com',
+          username: user,
+          password: pass,
+          authMethod: 'basic',
+          active: true,
+        };
+        window.ingrid.syncAccountSave(acctObj).then(function () {
+          return window.ingrid.syncCalendarRun();
+        }).then(function (res) {
+          btn.disabled = false; btn.textContent = '保存并同步';
+          var box = modalMask.querySelector('#calResult');
+          box.hidden = false;
+          var r0 = (res && res.results && res.results[0]) || {};
+          if (r0.ok && res.total > 0) {
+            box.innerHTML = '同步成功，汇入 ' + res.total + ' 条日程。';
+          } else if (!r0.ok && r0.error) {
+            box.innerHTML = esc(r0.error);
+          } else {
+            box.innerHTML = '同步完成，但未找到近期日程。';
+          }
+          try {
+            var latest = window.ingrid.loadSecretarySync();
+            if (latest && Array.isArray(latest.events)) { events.events = latest.events; }
+          } catch (e) {}
+          renderEvents();
+          addChat('a', '日历已同步。');
+        }).catch(function (err) {
+          btn.disabled = false; btn.textContent = '保存并同步';
+          var box = modalMask.querySelector('#calResult');
+          box.hidden = false;
+          box.innerHTML = esc(String(err && err.message || err));
+        });
+      });
+    });
+  }
+  document.getElementById('secSyncCal').addEventListener('click', openSyncModal);
 
   /* ---------- 提醒循环：每 30 秒检查，到点发系统通知 ---------- */
   function checkReminders() {
