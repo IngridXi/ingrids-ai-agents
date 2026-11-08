@@ -88,6 +88,8 @@
     '.sec-modal .foot{display:flex;gap:9px;justify-content:flex-end;margin-top:16px;}',
     '.sec-modal .foot button{padding:9px 16px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:13px;font-weight:650;cursor:pointer;}',
     '.sec-modal .foot .primary{background:var(--accent);border-color:var(--accent);color:#fff;}',
+    '.sec-bout{margin-top:7px;max-height:150px;overflow:auto;font-size:11px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:8px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}',
+    '.sec-bhint{font-size:10px;color:var(--ink-faint);margin-top:5px;line-height:1.5;}',
   ].join('\n');
   document.head.appendChild(style);
 
@@ -114,6 +116,13 @@
         '<button class="sec-btn ghost" id="secFromShot">' + iconSvg('camera') + ' 从邮件截图添加</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button></div></div>' +
+      '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
+        '<div class="sec-row"><input type="text" id="secUrl" placeholder="粘贴网址，如 https://arxiv.org/abs/..." style="flex:1">' +
+        '<button class="sec-btn" id="secBrowse">打开</button></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secBrowseShot">' + iconSvg('camera') + ' 截图</button>' +
+        '<button class="sec-btn ghost" id="secBrowseText">提取文本</button></div>' +
+        '<div class="sec-bout" id="secBrowseOut" hidden></div>' +
+        '<div class="sec-bhint">只读：打开网页 / 截图 / 取文本 · 不绕过验证码与登录</div></div>' +
     '</div>';
   document.body.appendChild(panel);
   panel.style.display = 'none';   // 默认收起，从右上角入口打开
@@ -266,6 +275,32 @@
     reader.onload = function () { shotDataUrl = reader.result; openEventModal(null, true); };
     reader.readAsDataURL(f);
   });
+
+  /* 浏览器自动化（安全白名单：打开 / 截图 / 提取文本） */
+  function secUrl() { return document.getElementById('secUrl').value.trim(); }
+  function secBrowseOut(msg) {
+    var o = document.getElementById('secBrowseOut');
+    o.hidden = false; o.textContent = msg;
+  }
+  function secBusy(on) {
+    ['secBrowse', 'secBrowseShot', 'secBrowseText'].forEach(function (id) {
+      document.getElementById(id).disabled = !!on;
+    });
+  }
+  function secBrowseRun(action) {
+    var u = secUrl();
+    if (!u) { secBrowseOut('请先粘贴网址'); return; }
+    if (!/^https?:\/\//.test(u)) { secBrowseOut('网址需以 http:// 或 https:// 开头'); return; }
+    secBusy(true); secBrowseOut('执行中…');
+    window.ingrid.browserAutomate({ action: action, url: u }).then(function (r) {
+      secBusy(false);
+      if (r && r.ok) secBrowseOut((action === 'text' ? '已提取页面文本：\n\n' : '完成：\n\n') + (r.output || ''));
+      else secBrowseOut('失败：' + ((r && r.error) || '未知错误'));
+    }).catch(function (e) { secBusy(false); secBrowseOut('失败：' + (e && e.message || e)); });
+  }
+  document.getElementById('secBrowse').addEventListener('click', function () { secBrowseRun('open'); });
+  document.getElementById('secBrowseShot').addEventListener('click', function () { secBrowseRun('shot'); });
+  document.getElementById('secBrowseText').addEventListener('click', function () { secBrowseRun('text'); });
 
   /* 事件弹窗（新增日程 / 截图→日历） */
   function openEventModal(prefill, isShot) {

@@ -132,6 +132,21 @@
   .kb-btn:hover { background: var(--accent-2); }
   .kb-btn:disabled { background: #c9c4e0; cursor: wait; }
   .kb-hint { font-size: 11px; color: var(--ink-faint); }
+
+  /* 审稿闭环 */
+  .review-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
+  .phase-tag {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 9px;
+    border-radius: 8px; margin-bottom: 7px; letter-spacing: .3px;
+  }
+  .phase-tag.draft { background: #e6f1fb; color: #185fa5; }
+  .phase-tag.revise { background: #e1f5ee; color: #0f6e56; }
+  .review-block {
+    font-size: 13px; color: #6b5320; background: #faf3e3; border: 1px solid #f0dcae;
+    border-radius: 10px; padding: 10px 12px; line-height: 1.6;
+  }
+  .review-block summary { cursor: pointer; font-weight: 600; color: #854f0b; user-select: none; margin-bottom: 4px; }
+  .loop-status { font-size: 12px; color: var(--ink-faint); text-align: center; margin: 2px 0 14px; }
 </style>
 </head>
 <body>
@@ -144,6 +159,7 @@
   <div class="spacer"></div>
   <select id="engineSelect" title="选择聊天引擎"></select>
   <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge">–</span></button>
+  <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
   <button class="clear-btn" id="clearBtn">清空对话</button>
 </header>
 
@@ -266,6 +282,7 @@
 
   /* ---------- 知识库（本地 RAG） ---------- */
   var kbEnabled = true;
+  var reviewMode = false;  // 审稿闭环开关
 
   function renderKbStatus(s) {
     var badge = el('kbBadge'), statusEl = el('kbStatus');
@@ -335,6 +352,15 @@
 
     // 用户气泡
     addBubble('user', esc(text));
+
+    // 审稿闭环模式：产出 → 审稿 → 返修（独立多气泡渲染）
+    if (reviewMode && IS_DESKTOP) {
+      streaming = true; sendBtn.disabled = true;
+      withKbContext(text, function (content) {
+        sendReviewLoop(content, engineSelect.value || 'ollama');
+      });
+      return;
+    }
 
     // 助手气泡（流式填充）
     var bubble = addBubble('assistant', '<span class="cursor"></span>');
@@ -409,6 +435,97 @@
     }
   }
 
+  /* ---------- 知识库上下文注入（普通聊天与审稿闭环共用） ---------- */
+  function withKbContext(text, cb) {
+    if (kbEnabled && IS_DESKTOP) {
+      window.ingrid.kbSearch(text, 4).then(function (hits) {
+        if (hits && hits.length) {
+          var ctx = hits.map(function (h, i) {
+            return '[' + (i + 1) + '] ' + h.title + '（' + h.source + ' / ' + h.relPath + '）\n' + h.content;
+          }).join('\n\n');
+          cb('【本地知识库 · 相关片段，仅作证据参考，与问题无关则忽略】\n' + ctx + '\n\n【用户问题】\n' + text);
+        } else { cb(text); }
+      }).catch(function () { cb(text); });
+    } else { cb(text); }
+  }
+
+  /* ---------- 审稿闭环：产出 → 审稿 → 返修 ---------- */
+  function sendReviewLoop(text, engine) {
+    var bubble = null;       // 当前正文气泡（初稿 / 修订版）
+    var reviewEl = null;     // 当前审稿意见块
+    var curText = '', curThink = '';
+
+    function render() {
+      if (bubble) {
+        var thinkHtml = curThink ? '<details class="think" open><summary>思考过程</summary>' + esc(curThink) + '</details>' : '';
+        bubble.innerHTML = bubble._tag + thinkHtml + (curText ? esc(curText) : '') + '<span class="cursor"></span>';
+      } else if (reviewEl) {
+        reviewEl.innerHTML = reviewEl._summary + (curText ? esc(curText) : '') + '<span class="cursor"></span>';
+      }
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function close() {
+      if (bubble) {
+        var thinkHtml = curThink ? '<details class="think"><summary>思考过程</summary>' + esc(curThink) + '</details>' : '';
+        bubble.innerHTML = bubble._tag + thinkHtml + (curText ? esc(curText) : '');
+      } else if (reviewEl) {
+        reviewEl.innerHTML = reviewEl._summary + (curText ? esc(curText) : '');
+      }
+      bubble = null; reviewEl = null; curText = ''; curThink = '';
+    }
+
+    var reqMessages = [{ role: 'system', content: buildSystemPrompt() }]
+      .concat(history.slice(-12))
+      .concat([{ role: 'user', content: text }]);
+
+    window.ingrid.reviewLoop({ engine: engine, messages: reqMessages, rounds: 2 }, {
+      onPhase: function (d) {
+        close();
+        if (d.phase === 'draft') {
+          bubble = addBubble('assistant', '');
+          bubble._tag = '<span class="phase-tag draft">初稿</span>';
+          render();
+        } else if (d.phase === 'revise') {
+          bubble = addBubble('assistant', '');
+          bubble._tag = '<span class="phase-tag revise">修订版 · 第 ' + d.round + ' 轮</span>';
+          render();
+        } else if (d.phase === 'review') {
+          var wrap = document.createElement('div');
+          wrap.className = 'msg assistant';
+          wrap.innerHTML = avatarHtml('assistant') + '<div class="bubble"><div class="review-block"><details open><summary>审稿人意见 · 第 ' + d.round + ' 轮</summary></details></div></div>';
+          messages.appendChild(wrap);
+          reviewEl = wrap.querySelector('details');
+          reviewEl._summary = '<summary>审稿人意见 · 第 ' + d.round + ' 轮</summary>';
+          render();
+        }
+      },
+      onDelta: function (txt, think) {
+        if (txt) curText += txt;
+        if (think) curThink += think;
+        render();
+      },
+      onDone: function (d) {
+        close();
+        history.push({ role: 'user', content: text });
+        if (d && d.finalText) history.push({ role: 'assistant', content: d.finalText });
+        if (history.length > 24) history = history.slice(-24);
+        var status = document.createElement('div');
+        status.className = 'loop-status';
+        if (d && d.ok) {
+          var engLabel = { 'ollama': '本地 32b', 'ollama-review': '本地 8b', 'deepseek': 'DeepSeek', 'gpt': 'GPT', 'qwen': 'Qwen' };
+          status.textContent = '⚙ 审稿闭环 · ' + (d.passed ? '审稿人判定「通过」，无需再改' : '完成 ' + (d.rounds || 2) + ' 轮审稿返修') + '（干活 ' + (engLabel[d.engine] || d.engine || '') + ' / 审稿 ' + (engLabel[d.reviewer] || d.reviewer || '') + '）';
+        } else {
+          status.textContent = '⚙ 审稿闭环中断：' + (d && d.error ? d.error : '未知错误');
+        }
+        messages.appendChild(status);
+        messages.scrollTop = messages.scrollHeight;
+        streaming = false; sendBtn.disabled = false;
+        input.focus();
+      },
+    });
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -422,6 +539,15 @@
   el('clearBtn').addEventListener('click', function () {
     history = [];
     welcome();
+  });
+
+  // 审稿闭环开关
+  el('reviewBtn').addEventListener('click', function () {
+    reviewMode = !reviewMode;
+    el('reviewBtn').classList.toggle('active', reviewMode);
+    el('footNote').textContent = reviewMode
+      ? '审稿闭环：产出 → 审稿 → 返修（2 轮），干活与审稿用不同引擎'
+      : '本地 Ollama 免费 · 云端 API 需先在主界面「引擎设置」配 Key';
   });
 
   // 知识库交互

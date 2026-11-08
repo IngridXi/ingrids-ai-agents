@@ -51,6 +51,23 @@ contextBridge.exposeInMainWorld('ingrid', {
     return ipcRenderer.invoke('chat:start', payload);
   },
 
+  // 研究助手「审稿闭环」：invoke 开始后，主进程推 review:phase / review:delta / review:done 事件
+  reviewLoop: (payload, handlers) => {
+    const h = handlers || {};
+    const onPhase = (_e, d) => { if (h.onPhase) h.onPhase(d || {}); };
+    const onDelta = (_e, d) => { if (h.onDelta) h.onDelta(String((d && d.text) || ''), String((d && d.thinking) || '')); };
+    const onDone = (_e, d) => {
+      ipcRenderer.removeListener('review:phase', onPhase);
+      ipcRenderer.removeListener('review:delta', onDelta);
+      ipcRenderer.removeListener('review:done', onDone);
+      if (h.onDone) h.onDone(d || {});
+    };
+    ipcRenderer.on('review:phase', onPhase);
+    ipcRenderer.on('review:delta', onDelta);
+    ipcRenderer.on('review:done', onDone);
+    return ipcRenderer.invoke('chat:review-loop', payload);
+  },
+
   // 技能板块 / 只读索引 / 按需读正文 / 预设（v3）
   scanSkillsSync: () => ipcRenderer.sendSync('skills:scan-sync'),
   scanSkills: () => ipcRenderer.invoke('skills:scan'),
@@ -74,4 +91,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),
   kbStatus: () => ipcRenderer.invoke('kb:status'),
   kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),
+
+  // 浏览器自动化（安全白名单：打开 / 截图 / 提取文本）
+  browserAutomate: (payload) => ipcRenderer.invoke('browser:automate', payload),
 });

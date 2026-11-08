@@ -16,7 +16,7 @@
 const { app, BrowserWindow, ipcMain, safeStorage, shell, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const os = require('os');
 const net = require('net');
 require('./skills-core.js');
@@ -263,6 +263,7 @@ const CHAT_ENDPOINTS = {
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini',    keyField: 'gpt' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
   ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:32b',      keyField: null },
+  'ollama-review': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen3:8b', keyField: null },  // 审稿专用（本地小模型，跨模型对抗）
 };
 
 function which(cmd) {
@@ -588,6 +589,182 @@ ipcMain.handle('chat:start', (e, payload) => {
     }
   })();
   return true;
+});
+
+/* ---------------- IPC：研究助手「审稿闭环」（跨模型对抗式） ---------------- */
+// 借鉴 ARIS（Auto-Research-In-Sleep）的 cross-model adversarial review：
+// 一个引擎干活、另一个引擎当审稿人挑毛病，避免「自己给自己打分」的盲点。
+// 事件：review:phase {phase,round} → review:delta {text,thinking} → review:done {ok,finalText,passed,rounds,error}
+const REVIEWER_SYSTEM = '你是严谨的同行评审审稿人，专为研究内容挑毛病。只依据给定材料判断，不臆造文献与数据。逐项审查：①研究问题是否聚焦、论证有无循环或跳跃；②每条主张是否有证据支撑、能否回到材料溯源（缺来源必须标出）；③方法/数据/统计有无漏洞；④表达有无套话、空话、防御性措辞。输出：按严重程度排序的问题清单 + 一句话最关键修改指令。若确实挑不出实质问题，明确回复「通过」（不要为了挑毛病而硬挑）。';
+
+// 通用流式调用：向 CHAT_ENDPOINTS 引擎发请求，累积完整文本，逐块回调 onChunk(text, thinking)
+async function completeChatStream(engine, messages, onChunk, opts) {
+  const cfg = CHAT_ENDPOINTS[engine];
+  if (!cfg) throw new Error('未知引擎：' + engine);
+  const settings = decryptSettings(readSettingsRaw());
+  const key = cfg.keyField ? settings[cfg.keyField] : '';
+  if (cfg.keyField && !key) throw new Error('尚未在「引擎设置」配置 ' + engine + ' 的 API Key');
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers.Authorization = 'Bearer ' + key;
+  const o = opts || {};
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 180000);
+  const resp = await fetch(cfg.url, {
+    method: 'POST', headers, signal: ctrl.signal,
+    body: JSON.stringify({
+      model: cfg.model, messages: messages, stream: true,
+      temperature: o.temperature != null ? o.temperature : 0.7,
+      max_tokens: o.maxTokens || 4000,
+    }),
+  });
+  if (!resp.ok) {
+    clearTimeout(timer);
+    let msg = 'HTTP ' + resp.status;
+    try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
+    throw new Error(msg);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '', text = '', thinking = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 1);
+      if (!line || line.indexOf('data:') !== 0) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      try {
+        const j = JSON.parse(data);
+        const delta = j.choices && j.choices[0] && j.choices[0].delta;
+        if (!delta) continue;
+        const t = delta.content || '';
+        const th = delta.reasoning || delta.reasoning_content || '';
+        if (th) { thinking += th; if (onChunk) onChunk('', th); }
+        if (t) { text += t; if (onChunk) onChunk(t, ''); }
+      } catch { /* 忽略坏块 */ }
+    }
+  }
+  clearTimeout(timer);
+  return { text: text, thinking: thinking };
+}
+
+ipcMain.handle('chat:review-loop', (e, payload) => {
+  const p = payload || {};
+  const engine = String(p.engine || 'ollama');
+  const messages = Array.isArray(p.messages) ? p.messages : [];
+  const rounds = Math.min(Math.max(parseInt(p.rounds, 10) || 2, 1), 4);
+  const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
+
+  // 审稿引擎：跨模型对抗——干活是本地 ollama(32b) 时默认用本地 8b 审稿；否则选已配 Key 的不同 API 引擎
+  const settings = decryptSettings(readSettingsRaw());
+  let reviewerEngine = String(p.reviewer || '');
+  if (!reviewerEngine) {
+    if (engine === 'ollama') reviewerEngine = 'ollama-review';
+    else reviewerEngine = ['deepseek', 'qwen', 'gpt'].find((id) => id !== engine && settings[id]) || 'ollama';
+  }
+
+  const systemMsg = messages.find((m) => m.role === 'system') || { role: 'system', content: '' };
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const question = lastUser ? lastUser.content : '';
+
+  (async () => {
+    let finalText = '';
+    try {
+      // 初稿（干活引擎）
+      send('review:phase', { phase: 'draft', round: 0, engine: engine, reviewer: reviewerEngine });
+      const d = await completeChatStream(engine, messages, (t, th) => send('review:delta', { text: t, thinking: th }));
+      finalText = d.text;
+
+      // 对抗循环：审稿 → 返修
+      for (let r = 1; r <= rounds; r++) {
+        send('review:phase', { phase: 'review', round: r, engine: engine, reviewer: reviewerEngine });
+        const reviewMsgs = [
+          { role: 'system', content: REVIEWER_SYSTEM },
+          { role: 'user', content: '【原始任务】\n' + question + '\n\n【待审稿的内容】\n' + finalText },
+        ];
+        const rv = await completeChatStream(reviewerEngine, reviewMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { temperature: 0.4 });
+        const review = String(rv.text || '').trim();
+
+        if (/^\s*通过/.test(review) || review.length < 8) {
+          send('review:done', { ok: true, finalText: finalText, passed: true, rounds: r, engine: engine, reviewer: reviewerEngine });
+          return;
+        }
+
+        send('review:phase', { phase: 'revise', round: r, engine: engine, reviewer: reviewerEngine });
+        const reviseMsgs = [
+          systemMsg,
+          { role: 'user', content: '【原始任务】\n' + question },
+          { role: 'assistant', content: finalText },
+          { role: 'user', content: '【审稿人意见】\n' + review + '\n\n请据此返修：只修正审稿人指出的问题，保留原有优点，输出完整修订版（只输出修订后的正文，不要输出审稿意见）。' },
+        ];
+        const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }));
+        finalText = rv2.text;
+      }
+      send('review:done', { ok: true, finalText: finalText, passed: false, rounds: rounds, engine: engine, reviewer: reviewerEngine });
+    } catch (err) {
+      send('review:done', { ok: false, error: String(err && err.message || err), finalText: finalText, engine: engine, reviewer: reviewerEngine });
+    }
+  })();
+  return true;
+});
+
+/* ---------------- IPC：浏览器自动化（安全白名单） ---------------- */
+// 复用本机 browser-automation-cdp skill 的 CDP 脚本，只做只读操作（打开/截图/提取文本）。
+// 合规红线（明确不做）：验证码绕过、2FA/OTP 绕过、账号密码自动登录。
+function browserCdpDir() {
+  const home = app.getPath('home');
+  const candidates = [
+    path.join(home, '.workbuddy', 'skills', 'browser-automation-cdp', 'scripts'),
+  ];
+  for (const d of candidates) if (fs.existsSync(path.join(d, 'cdp.py'))) return d;
+  return null;
+}
+function pyBin() { return process.platform === 'win32' ? 'python' : 'python3'; }
+function execPy(args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(pyBin(), args, { timeout: timeoutMs || 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) resolve({ ok: false, output: String(stderr || '') + '\n' + String(stdout || ''), error: String(err.message || err) });
+      else resolve({ ok: true, output: String(stdout || '') });
+    });
+  });
+}
+ipcMain.handle('browser:automate', async (_e, payload) => {
+  const p = payload || {};
+  const action = String(p.action || '');
+  if (['open', 'text', 'shot'].indexOf(action) < 0) {
+    return { ok: false, error: '仅支持只读操作：open / text / shot' };
+  }
+  const dir = browserCdpDir();
+  if (!dir) return { ok: false, error: '未找到浏览器自动化脚本（请先安装 browser-automation-cdp skill）' };
+  const cdp = path.join(dir, 'cdp.py');
+  const startChrome = path.join(dir, 'start_chrome.py');
+
+  // 先探测 CDP 是否可达
+  const st = await execPy([cdp, 'status'], 8000);
+  if (!/CDP_OK/.test(st.output || '')) {
+    try { spawn(pyBin(), [startChrome], { detached: true, stdio: 'ignore' }).unref(); } catch { /* 忽略 */ }
+    await new Promise((res) => setTimeout(res, 3500));
+  }
+
+  let args = [cdp];
+  if (action === 'open') {
+    args.push('open', String(p.url || ''));
+    if (p.wait) args.push('--wait', String(p.wait));
+  } else if (action === 'text') {
+    args.push('text');
+    if (p.max) args.push('--max', String(p.max));
+  } else if (action === 'shot') {
+    const shotOut = String(p.output || path.join(app.getPath('temp'), 'sec-shot-' + Date.now() + '.png'));
+    args.push('shot', shotOut);
+    if (p.full) args.push('--full');
+  }
+
+  const r = await execPy(args, 90000);
+  return r.ok ? { ok: true, output: r.output } : { ok: false, error: r.error || r.output || '浏览器自动化失败' };
 });
 
 /* ---------------- IPC：技能板块 / 索引 / 正文 / 预设 ---------------- */

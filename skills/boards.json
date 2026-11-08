@@ -24,7 +24,9 @@
         "builtin:research/research-proposal",
         "builtin:research/academic-presentation",
         "builtin:research/research-project-management",
-        "builtin:research/research-mentor"
+        "builtin:research/research-mentor",
+        "builtin:research/adversarial-review",
+        "builtin:research/integrity-forensics"
       ],
       "defaultEngine": "claude-code",
       "color": "#7c6fd6"
