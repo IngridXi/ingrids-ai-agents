@@ -513,7 +513,7 @@
         var status = document.createElement('div');
         status.className = 'loop-status';
         if (d && d.ok) {
-          var engLabel = { 'ollama': '本地 32b', 'ollama-review': '本地 8b', 'deepseek': 'DeepSeek', 'gpt': 'GPT', 'qwen': 'Qwen' };
+          var engLabel = { 'ollama': '本地 qwen3:32b', 'ollama-review': '本地 r1:32b', 'deepseek': 'DeepSeek', 'gpt': 'GPT', 'qwen': 'Qwen' };
           status.textContent = '⚙ 审稿闭环 · ' + (d.passed ? '审稿人判定「通过」，无需再改' : '完成 ' + (d.rounds || 2) + ' 轮审稿返修') + '（干活 ' + (engLabel[d.engine] || d.engine || '') + ' / 审稿 ' + (engLabel[d.reviewer] || d.reviewer || '') + '）';
         } else {
           status.textContent = '⚙ 审稿闭环中断：' + (d && d.error ? d.error : '未知错误');

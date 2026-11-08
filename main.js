@@ -263,7 +263,7 @@ const CHAT_ENDPOINTS = {
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini',    keyField: 'gpt' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
   ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:32b',      keyField: null },
-  'ollama-review': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen3:8b', keyField: null },  // 审稿专用（本地小模型，跨模型对抗）
+  'ollama-review': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'deepseek-r1:32b', keyField: null },  // 审稿专用（本地深度推理模型，跨模型对抗）
 };
 
 function which(cmd) {
@@ -659,7 +659,7 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
   const rounds = Math.min(Math.max(parseInt(p.rounds, 10) || 2, 1), 4);
   const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
 
-  // 审稿引擎：跨模型对抗——干活是本地 ollama(32b) 时默认用本地 8b 审稿；否则选已配 Key 的不同 API 引擎
+  // 审稿引擎：跨模型对抗——干活是本地 ollama(qwen3:32b) 时默认用本地 deepseek-r1:32b 审稿；否则选已配 Key 的不同 API 引擎
   const settings = decryptSettings(readSettingsRaw());
   let reviewerEngine = String(p.reviewer || '');
   if (!reviewerEngine) {
