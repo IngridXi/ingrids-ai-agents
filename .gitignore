@@ -8,3 +8,4 @@ extensions/meeting_audio/generated/
 extensions/meeting_audio/speaker_profiles/
 extensions/meeting_audio/server.log
 extensions/meeting_audio/__pycache__/
+*.pyc
