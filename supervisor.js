@@ -6,9 +6,8 @@
  *  · 先「对话确认」把模糊需求讲清楚，确认后写入 GoalStore；
  *  · 监督开关打开后，每轮委派结果都做快路径漂移检测，
  *    偏离时慢路径生成纠偏指令，自动挂回下一次委派。
- *  · 另暴露 window.__taskRouter（ra 任务类型路由）供调度中枢调用。
  *
- *  依赖：index.html 的 window.__workbench、supervisor-core.js、task-router.js。
+ *  依赖：index.html 的 window.__workbench、supervisor-core.js。
  * ============================================================
  */
 (function () {
@@ -16,9 +15,7 @@
   var wb = window.__workbench;
   var C = window.AgentsCore;
   var SC = window.SupervisorCore;
-  var TR = window.TaskRouter;
   if (!wb || !C || !SC) return;
-
   var DESKTOP = wb.IS_DESKTOP;
   var registry = wb.registry;
   var esc = function (v) {
@@ -323,7 +320,6 @@
   /* ---------- 供调度中枢调用的接口 ---------- */
   window.__supervisor = sup;
   window.__supGoals = goals;
-  window.__taskRouter = TR;
   window.__supervisorReminder = function () { return sup.reminder(); };
   window.__superviseResult = function (r, task) {
     sup.realMode = realMode;

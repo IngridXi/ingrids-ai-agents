@@ -3,18 +3,17 @@
  *  secretary.js — 秘书常驻面板（渲染层，零依赖）
  *  ============================================================
  *  · 常驻在主界面底部（与右侧监事并排），始终可见。
- *  · 随时对话：写想法 → 秘书记住 → 一键「分配给合适的 Agent」。
+ *  · 随时对话：写想法 → 秘书记住。
  *  · 日程：列表 + 添加 + 提醒（系统通知）+ 从邮件截图加日历。
  *  · 邮件：导入 + 自动分类分级 + 重要信息及时告知。
  *
- *  依赖：index.html 的 window.__workbench、secretary-core.js、task-router.js。
+ *  依赖：index.html 的 window.__workbench、secretary-core.js。
  * ============================================================
  */
 (function () {
   'use strict';
   var wb = window.__workbench;
   var SC = window.SecretaryCore;
-  var TR = window.TaskRouter;
   if (!wb || !SC) return;
 
   var DESKTOP = wb.IS_DESKTOP;
@@ -107,8 +106,7 @@
     '<div class="sec-body" id="secBody">' +
       '<div class="sec-sec"><label>随时告诉秘书你的想法</label>' +
         '<textarea id="secThought" placeholder="例如：下周有个报告要交，帮我盯着点"></textarea>' +
-        '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button>' +
-        '<button class="sec-btn ghost" id="secAssign" style="flex:1">' + iconSvg('compass') + ' 记住并分配给合适的 Agent</button></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
         '<div class="sec-chat" id="secChat"></div></div>' +
       '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 添加日程</button>' +
@@ -217,23 +215,7 @@
     thoughts.add(t);
     document.getElementById('secThought').value = '';
     renderChat();
-    addChat('a', '已记住。需要的话点「分配给合适的 Agent」。');
-  });
-  document.getElementById('secAssign').addEventListener('click', function () {
-    var t = currentThought();
-    if (!t) { addChat('a', '先写一句你的想法，我才能分配。'); return; }
-    var th = thoughts.add(t); document.getElementById('secThought').value = '';
-    var agents = registry.list();
-    var commander = agents.filter(function (a) { return a.role === 'orchestrator' || a.canControl; })[0];
-    var skillsReg = (window.__skills && window.__skills.skills) || null;
-    addChat('a', '收到，我来判断交给谁、挂哪些技能…');
-    TR.route(t, { agents: agents, commanderId: commander ? commander.id : '', skills: skillsReg, maxTargets: 3, maxSkills: 3 })
-      .then(function (plan) {
-        thoughts.update(th.id, { status: 'assigned', assignedTo: plan.targetNames.join('、') });
-        addChat('a', '建议：' + plan.summary);
-        if (typeof window.__openOrchestratorTask === 'function') window.__openOrchestratorTask(t, plan);
-        renderChat();
-      }).catch(function (e) { addChat('a', '分配失败：' + (e && e.message || e)); });
+    addChat('a', '已记住。');
   });
   function addChat(who, text) {
     var box = document.getElementById('secChat');

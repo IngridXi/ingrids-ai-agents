@@ -455,8 +455,7 @@
       '<div class="orch-cols">' +
         '<div>' +
           '<div class="orch-field"><label>指挥官（有权限调度的 Agent）</label><select id="orch-cmd">' + cmdOpts + '</select></div>' +
-          '<div class="orch-field"><label>任务内容</label><textarea id="orch-task" placeholder="例如：审一下这段讨论，重点看论证链和证据缺口"></textarea>' +
-            '<div style="margin-top:6px"><button class="orch-btn ghost" id="orch-ra">' + iconSvg('compass') + ' 让 ra 自动判断：派谁 + 挂哪些 skill</button></div></div>' +
+          '<div class="orch-field"><label>任务内容</label><textarea id="orch-task" placeholder="例如：审一下这段讨论，重点看论证链和证据缺口"></textarea></div>' +
           '<div class="orch-field"><label>执行方式</label><select id="orch-mode">' +
             '<option value="parallel">并行 · 同时派给所有人</option>' +
             '<option value="sequential">串行 · 一个接一个</option>' +
@@ -515,8 +514,6 @@
       recTimer = setTimeout(renderRecommend, 280);
     });
 
-    document.getElementById('orch-ra').addEventListener('click', autoRoute);
-
     document.getElementById('orch-run').addEventListener('click', run);
     document.getElementById('orch-refresh').addEventListener('click', render);
     document.getElementById('orch-savepreset').addEventListener('click', savePreset);
@@ -567,25 +564,6 @@
     refreshHome(); render();
     document.getElementById('orch-preset').value = p.id;
     tip('已存为预设：' + p.name + '（首页多了一个方块）');
-  }
-
-  /* ---------- ra 任务类型路由：自动判断派谁 + 挂哪些 skill ---------- */
-  function autoRoute() {
-    if (!window.__taskRouter) { tip('任务路由不可用'); return; }
-    var task = document.getElementById('orch-task').value.trim();
-    if (!task) { tip('⚠ 请先填写任务内容，ra 才能判断'); return; }
-    tip('🧭 ra 正在判断派谁 + 挂哪些 skill…');
-    window.__taskRouter.route(task, {
-      agents: agents(), commanderId: commanderId(),
-      skills: skills, boardId: currentBoardId,
-      maxTargets: 3, maxSkills: 3,
-    }).then(function (plan) {
-      document.querySelectorAll('.ot').forEach(function (cb) { cb.checked = plan.targetIds.indexOf(cb.value) >= 0; });
-      if (plan.boardId) currentBoardId = plan.boardId;
-      selectedIds = (plan.skillIds || []).filter(function (id) { return skills.byId(id); });
-      renderSkillBox();
-      tip('🧭 ra 判断：' + plan.summary);
-    }).catch(function (e) { tip('✕ ' + (e && e.message || e)); });
   }
 
   function tip(text) {
@@ -690,18 +668,6 @@
     mask.classList.add('open');
   }
   window.__openOrchestratorWith = openWith;
-  // 秘书等外部调用：把一段任务 + ra 路由计划填进调度中枢
-  window.__openOrchestratorTask = function (task, plan) {
-    currentBoardId = (plan && plan.boardId) ? plan.boardId : currentBoardId;
-    selectedIds = (plan && plan.skillIds) ? plan.skillIds.filter(function (id) { return skills.byId(id); }) : [];
-    render();
-    document.getElementById('orch-task').value = task || '';
-    if (plan && plan.targetIds) {
-      document.querySelectorAll('.ot').forEach(function (cb) { cb.checked = plan.targetIds.indexOf(cb.value) >= 0; });
-    }
-    renderSkillBox();
-    mask.classList.add('open');
-  };
 
   if (DESKTOP && window.ingrid.getRunMode) {
     window.ingrid.getRunMode().then(function (on) { realMode = !!on; });
