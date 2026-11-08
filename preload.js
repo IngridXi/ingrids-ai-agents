@@ -68,4 +68,10 @@ contextBridge.exposeInMainWorld('ingrid', {
   loadSecretarySync: () => ipcRenderer.sendSync('secretary:list-sync'),
   saveSecretary: (state) => ipcRenderer.invoke('secretary:save', state),
   notify: (payload) => ipcRenderer.invoke('notify', payload),
+
+  // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
+  kbScan: () => ipcRenderer.invoke('kb:scan'),
+  kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),
+  kbStatus: () => ipcRenderer.invoke('kb:status'),
+  kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),
 });

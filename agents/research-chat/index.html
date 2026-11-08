@@ -30,7 +30,7 @@
   header {
     flex: none; display: flex; align-items: center; gap: 12px;
     padding: 14px 20px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
-    box-shadow: 0 2px 12px rgba(74,63,140,.18);
+    box-shadow: 0 2px 12px rgba(74,63,140,.18); position: relative;
   }
   header .logo {
     width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,.18);
@@ -111,6 +111,27 @@
   #sendBtn:disabled { background: #c9c4e0; cursor: not-allowed; }
   #sendBtn svg { width: 20px; height: 20px; }
   .foot-note { text-align: center; font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
+
+  /* 知识库面板 */
+  .kb-badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: rgba(255,255,255,.22); color: #fff; }
+  .kb-panel {
+    position: absolute; top: 60px; right: 20px; width: 340px; z-index: 30;
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 10px 34px rgba(30,26,50,.18); padding: 15px; text-align: left;
+  }
+  .kb-panel .kb-title { font-size: 13px; font-weight: 600; margin-bottom: 11px; display: flex; align-items: center; gap: 7px; color: var(--ink); }
+  .kb-panel .kb-row { margin-bottom: 11px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; }
+  .kb-panel label { display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--ink); }
+  .kb-panel .kb-status .ok { color: #1d9e75; font-weight: 600; }
+  .kb-panel .kb-status .warn { color: #b7791f; font-weight: 600; }
+  .kb-panel .kb-actions { display: flex; align-items: center; gap: 10px; }
+  .kb-btn {
+    padding: 6px 13px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 12.5px; cursor: pointer;
+  }
+  .kb-btn:hover { background: var(--accent-2); }
+  .kb-btn:disabled { background: #c9c4e0; cursor: wait; }
+  .kb-hint { font-size: 11px; color: var(--ink-faint); }
 </style>
 </head>
 <body>
@@ -122,8 +143,19 @@
   </div>
   <div class="spacer"></div>
   <select id="engineSelect" title="选择聊天引擎"></select>
+  <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge">–</span></button>
   <button class="clear-btn" id="clearBtn">清空对话</button>
 </header>
+
+<div class="kb-panel" id="kbPanel" hidden>
+  <div class="kb-title">本地知识库 · 文献支持</div>
+  <div class="kb-row"><label><input type="checkbox" id="kbToggle" checked> 引用本地知识库（每次提问自动检索注入）</label></div>
+  <div class="kb-row kb-status" id="kbStatus">加载中…</div>
+  <div class="kb-actions">
+    <button class="kb-btn" id="kbRescan">重建索引</button>
+    <span class="kb-hint">笔记保存后约 3 秒自动增量更新</span>
+  </div>
+</div>
 
 <main id="messages"></main>
 
@@ -232,6 +264,33 @@
     }
   }
 
+  /* ---------- 知识库（本地 RAG） ---------- */
+  var kbEnabled = true;
+
+  function renderKbStatus(s) {
+    var badge = el('kbBadge'), statusEl = el('kbStatus');
+    if (!s) return;
+    badge.textContent = s.totalChunks ? (s.totalChunks + ' 片段') : '–';
+    var lines = [];
+    if (s.totalChunks) {
+      lines.push('已索引 ' + s.totalFiles + ' 篇笔记 / ' + s.totalChunks + ' 个片段');
+      lines.push(s.embedReady
+        ? '<span class="ok">✓ 语义检索就绪（' + s.embedModel + '）</span>'
+        : '<span class="warn">⚠ 语义模型未就绪，暂用关键词检索；模型就绪后点「重建索引」升级</span>');
+    } else {
+      lines.push('尚无内容：把笔记放进 Obsidian 库即可自动收录并更新');
+    }
+    if (s.sources && s.sources.length) {
+      lines.push('源：' + s.sources.map(function (x) { return x.label; }).join('、'));
+    }
+    statusEl.innerHTML = lines.join('<br>');
+  }
+
+  function loadKbStatus() {
+    if (!IS_DESKTOP) return;
+    window.ingrid.kbStatus().then(renderKbStatus).catch(function () { el('kbStatus').textContent = '知识库不可用'; });
+  }
+
   /* ---------- 渲染消息 ---------- */
   function addBubble(role, html) {
     var wrap = document.createElement('div');
@@ -284,15 +343,6 @@
     streaming = true; sendBtn.disabled = true;
 
     var engine = engineSelect.value || 'ollama';
-    var reqMessages = [{ role: 'system', content: buildSystemPrompt() }]
-      .concat(history.slice(-12))
-      .concat([{ role: 'user', content: text }]);
-
-    if (!IS_DESKTOP) {
-      // 浏览器预览：无后端，模拟一段回复
-      finish('（浏览器预览模式：无法调用模型。请用桌面应用运行，并在主界面「引擎设置」配置 Key 或保持本地 Ollama。）');
-      return;
-    }
 
     function renderStream() {
       var thinkHtml = thinking
@@ -301,18 +351,6 @@
       bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
-
-    window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
-      onDelta: function (chunk) {
-        if (chunk && chunk.thinking) thinking += chunk.thinking;
-        if (chunk && chunk.text) acc += chunk.text;
-        renderStream();
-      },
-      onDone: function (d) {
-        if (d && d.ok) finish(acc);
-        else finish(acc, d && d.error);
-      },
-    });
 
     function finish(finalText, err) {
       history.push({ role: 'user', content: text });
@@ -328,6 +366,46 @@
       if (err) bubble.classList.add('err');
       streaming = false; sendBtn.disabled = false;
       input.focus();
+    }
+
+    function run(content) {
+      var reqMessages = [{ role: 'system', content: buildSystemPrompt() }]
+        .concat(history.slice(-12))
+        .concat([{ role: 'user', content: content }]);
+
+      if (!IS_DESKTOP) {
+        // 浏览器预览：无后端，模拟一段回复
+        finish('（浏览器预览模式：无法调用模型。请用桌面应用运行，并在主界面「引擎设置」配置 Key 或保持本地 Ollama。）');
+        return;
+      }
+
+      window.ingrid.chatStream({ engine: engine, messages: reqMessages }, {
+        onDelta: function (chunk) {
+          if (chunk && chunk.thinking) thinking += chunk.thinking;
+          if (chunk && chunk.text) acc += chunk.text;
+          renderStream();
+        },
+        onDone: function (d) {
+          if (d && d.ok) finish(acc);
+          else finish(acc, d && d.error);
+        },
+      });
+    }
+
+    // 本地知识库 RAG：启用且有内容时，检索相关片段注入上下文
+    if (kbEnabled && IS_DESKTOP) {
+      window.ingrid.kbSearch(text, 4).then(function (hits) {
+        if (hits && hits.length) {
+          var ctx = hits.map(function (h, i) {
+            return '[' + (i + 1) + '] ' + h.title + '（' + h.source + ' / ' + h.relPath + '）\n' + h.content;
+          }).join('\n\n');
+          run('【本地知识库 · 相关片段，仅作证据参考，与问题无关则忽略】\n' + ctx + '\n\n【用户问题】\n' + text);
+        } else {
+          run(text);
+        }
+      }).catch(function () { run(text); });
+    } else {
+      run(text);
     }
   }
 
@@ -346,11 +424,28 @@
     welcome();
   });
 
+  // 知识库交互
+  el('kbBtn').addEventListener('click', function () {
+    var p = el('kbPanel');
+    p.hidden = !p.hidden;
+    if (!p.hidden) loadKbStatus();
+  });
+  el('kbToggle').addEventListener('change', function () { kbEnabled = el('kbToggle').checked; });
+  el('kbRescan').addEventListener('click', function () {
+    var btn = el('kbRescan');
+    btn.disabled = true; btn.textContent = '索引中…';
+    window.ingrid.kbScan().then(function () {
+      btn.disabled = false; btn.textContent = '重建索引';
+      loadKbStatus();
+    }).catch(function () { btn.disabled = false; btn.textContent = '重建索引'; });
+  });
+
   /* ---------- 启动 ---------- */
   setLogo();
   loadSoul();
   loadEngines();
   welcome();
+  loadKbStatus();
   input.focus();
 })();
 </script>

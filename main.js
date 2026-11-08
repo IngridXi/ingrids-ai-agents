@@ -21,6 +21,7 @@ const os = require('os');
 const net = require('net');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
+const { KbEngine } = require('./kb-engine.js');
 
 /* ---------------- 数据目录（local-first） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -661,9 +662,53 @@ ipcMain.handle('notify', (_e, payload) => {
   } catch (e) { return false; }
 });
 
+/* ---------------- 知识库引擎（本地 RAG） ---------------- */
+const kbEngine = new KbEngine({ dataDir: path.join(dataDir(), 'kb') });
+
+let kbWatchTimer = null;
+let kbWatchers = [];
+
+function startKbWatcher() {
+  try {
+    const cfg = kbEngine.ensureConfig();
+    for (const w of kbWatchers) { try { w.close(); } catch { /* 忽略 */ } }
+    kbWatchers = [];
+    for (const src of (cfg.sources || []).filter((s) => s.enabled && s.path && s.type === 'markdown')) {
+      if (!fs.existsSync(src.path)) continue;
+      try {
+        const w = fs.watch(src.path, { recursive: true }, () => {
+          if (kbWatchTimer) clearTimeout(kbWatchTimer);
+          kbWatchTimer = setTimeout(() => { kbEngine.scan().catch(() => {}); }, 3000);
+        });
+        kbWatchers.push(w);
+      } catch { /* 递归 watch 失败则跳过，手动重建索引兜底 */ }
+    }
+  } catch { /* 忽略 */ }
+}
+
+ipcMain.handle('kb:scan', () => kbEngine.scan());
+ipcMain.handle('kb:search', (_e, query, k) => kbEngine.search(String(query || ''), k));
+ipcMain.handle('kb:status', () => kbEngine.status());
+ipcMain.handle('kb:configure', (_e, patch) => {
+  const cfg = kbEngine.loadConfig();
+  if (patch && typeof patch === 'object') {
+    if (Array.isArray(patch.sources)) cfg.sources = patch.sources;
+    if (patch.embedModel) cfg.embedModel = String(patch.embedModel);
+    if (typeof patch.chunkSize === 'number') cfg.chunkSize = patch.chunkSize;
+    if (typeof patch.chunkOverlap === 'number') cfg.chunkOverlap = patch.chunkOverlap;
+  }
+  kbEngine.saveConfig(cfg);
+  startKbWatcher();
+  return kbEngine.status();
+});
+
 /* ---------------- 生命周期 ---------------- */
 app.whenReady().then(() => {
   createMainWindow();
+  // 知识库：首次运行自动检测源 + 后台增量索引 + 文件监听自动更新
+  kbEngine.ensureConfig();
+  kbEngine.scan().catch(() => {});
+  startKbWatcher();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
