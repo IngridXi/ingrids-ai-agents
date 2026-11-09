@@ -65,7 +65,7 @@
   if (DESKTOP && window.ingrid.onKbTermsProgress) {
     window.ingrid.onKbTermsProgress(function (p) {
       if (termsStatusEl && p && p.phase === 'extract') {
-        termsStatusEl.textContent = '正在提取术语… 已处理 ' + p.done + ' / ' + p.total + ' 篇文献';
+        termsStatusEl.textContent = '正在提取术语… 本次处理 ' + p.done + ' / ' + p.total + ' 篇（已构建的自动跳过）';
       }
     });
   }
@@ -199,14 +199,22 @@
           btn.textContent = '构建术语网';
           termsStatusEl = null;
           if (!r || !r.ok) { status.textContent = '失败：' + ((r && r.error) || '未知错误'); return; }
-          status.textContent = '完成：' + r.allTermCount + ' 个术语 · 生成 ' + r.noteCount + ' 篇笔记';
+          if (r.processedCount === 0 && r.skippedCount > 0) {
+            status.textContent = '已完成：全部 ' + r.skippedCount + ' 篇文献都已构建过，本次跳过（无新文献）。';
+          } else if (r.skippedCount > 0) {
+            status.textContent = '完成：本次新处理 ' + r.processedCount + ' 篇，跳过已构建 ' + r.skippedCount + ' 篇；共 ' + r.allTermCount + ' 个术语';
+          } else {
+            status.textContent = '完成：' + r.allTermCount + ' 个术语 · 生成 ' + r.noteCount + ' 篇笔记';
+          }
           result.style.display = 'block';
           var termsHtml = (r.terms || []).slice(0, 25).map(function (t) {
             return '<div class="it"><span class="src">' + esc(t.category) + '</span> · <b>' + esc(t.term) + '</b>' +
               (t.zh ? '<div style="color:#5e596e;margin-top:2px">' + esc(t.zh) + '</div>' : '') + '</div>';
           }).join('');
-          result.innerHTML = '<div style="margin-bottom:8px">已写入 Obsidian「术语库/」：' + r.allTermCount +
-            ' 个术语笔记 + 总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。点上方「打开 Obsidian 看图谱」→ 打开「术语总览」→ 切到图谱视图看网状图。</div>' + termsHtml;
+          var writeNote = (r.processedCount === 0)
+            ? '本次无新文献，未重写笔记。当前术语网共 ' + r.allTermCount + ' 个术语、' + (r.edges ? r.edges.length : 0) + ' 条关联。'
+            : '已写入 Obsidian「术语库/」：' + r.allTermCount + ' 个术语笔记 + 总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。';
+          result.innerHTML = '<div style="margin-bottom:8px">' + writeNote + ' 点上方「打开 Obsidian 看图谱」→ 打开「术语总览」→ 切到图谱视图看网状图。</div>' + termsHtml;
         }).catch(function (e) {
           btn.disabled = false;
           btn.textContent = '构建术语网';

@@ -1681,15 +1681,24 @@ ipcMain.handle('kb:terms:build', async (e, opts) => {
       .then(function (r) { return r.text; });
   };
 
-  return await TermsEngine.buildTermsGraph({
+  // 增量：读上次构建状态，已处理文献自动跳过（不重跑 LLM）
+  const prevState = readJson('terms-state.json', null);
+
+  const result = await TermsEngine.buildTermsGraph({
     items: items,
     llm: llm,
     vaultPath: vaultPath(),
     batchSize: 10,
     maxItems: parseInt(opts.maxItems, 10) || 200,
     topK: parseInt(opts.topK, 10) || 80,
+    prevState: prevState,
     onProgress: function (phase, done, total) { send({ phase: phase, done: done, total: total }); },
   });
+
+  if (result && result.ok && result.state) {
+    try { writeJson('terms-state.json', result.state); } catch (e2) { /* 状态写失败不影响返回 */ }
+  }
+  return result;
 });
 
 /* ---------------- 工具能力（文件 / 数据库 / 电脑操作） ----------------

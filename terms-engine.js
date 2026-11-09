@@ -149,17 +149,37 @@ async function buildTermsGraph(opts) {
   const maxItems = opts.maxItems || 200;
   const topK = opts.topK || 80;
   const onProgress = opts.onProgress || function () {};
+  const prevState = (opts.prevState && typeof opts.prevState === 'object') ? opts.prevState : null;
 
   if (!items.length) return { ok: false, error: 'Zotero 里没有可提取的文献（请先在 Zotero 添加文献）' };
   if (typeof llm !== 'function') return { ok: false, error: '未提供 LLM 调用（需本地 Ollama 运行）' };
 
   const selected = items.slice(0, maxItems);
+
+  // 1) 从上次状态恢复 termMap（增量：已构建的术语不重新跑 LLM）
   const termMap = new Map();
+  if (prevState && prevState.terms) {
+    Object.keys(prevState.terms).forEach(function (term) {
+      const t = prevState.terms[term] || {};
+      termMap.set(term, {
+        term: term,
+        zh: t.zh || '',
+        category: t.category || '概念',
+        docs: new Set(Array.isArray(t.docs) ? t.docs : []),
+        titles: Array.isArray(t.titles) ? t.titles : [],
+      });
+    });
+  }
+
+  // 2) 过滤已处理文献，只对新文献跑 LLM（自动跳过已构建完成的）
+  const processedKeys = new Set(prevState && prevState.docs ? Object.keys(prevState.docs) : []);
+  const todo = selected.filter(function (d) { return !processedKeys.has(d.key); });
+  const skippedCount = selected.length - todo.length;
   let llmOk = false;
 
-  for (let i = 0; i < selected.length; i += batchSize) {
-    const batch = selected.slice(i, i + batchSize);
-    onProgress('extract', Math.min(i + batchSize, selected.length), selected.length);
+  for (let i = 0; i < todo.length; i += batchSize) {
+    const batch = todo.slice(i, i + batchSize);
+    onProgress('extract', Math.min(i + batchSize, todo.length), todo.length);
 
     let text;
     try {
@@ -191,10 +211,11 @@ async function buildTermsGraph(opts) {
       termMap.set(term, info);
     });
   }
-  onProgress('extract', selected.length, selected.length);
+  onProgress('extract', todo.length, todo.length);
 
   if (!termMap.size) return { ok: false, error: '未提取到术语（文献可能缺少标题/摘要，或模型未就绪）' };
 
+  // 3) 计算 terms / topK / 共现边（合并旧术语 + 新术语）
   const terms = Array.from(termMap.values()).map(function (info) {
     return { term: info.term, zh: info.zh, category: info.category, freq: info.docs.size, titles: info.titles };
   }).sort(function (a, b) { return b.freq - a.freq; });
@@ -202,10 +223,20 @@ async function buildTermsGraph(opts) {
   const topTerms = terms.slice(0, topK);
   const edges = buildEdges(termMap, topTerms);
 
-  // 写 Obsidian
+  // 4) 构建新状态（已处理文献标记 + 术语全量），供 main.js 持久化
+  const newDocs = {};
+  if (prevState && prevState.docs) Object.keys(prevState.docs).forEach(function (k) { newDocs[k] = prevState.docs[k]; });
+  todo.forEach(function (d) { newDocs[d.key] = d.title || ''; });
+  const newTermsState = {};
+  termMap.forEach(function (info, term) {
+    newTermsState[term] = { zh: info.zh, category: info.category, docs: Array.from(info.docs), titles: info.titles };
+  });
+  const newState = { v: 1, docs: newDocs, terms: newTermsState };
+
+  // 5) 写 Obsidian（仅在有新增文献时才重写笔记；全跳过则不重写，避免无谓覆盖）
   let noteCount = 0;
   let overviewPath = '';
-  if (vaultPath) {
+  if (vaultPath && todo.length) {
     try {
       const dir = path.join(vaultPath, '术语库');
       fs.mkdirSync(dir, { recursive: true });
@@ -233,6 +264,9 @@ async function buildTermsGraph(opts) {
     noteCount: noteCount,
     overviewPath: overviewPath,
     vaultPath: vaultPath,
+    skippedCount: skippedCount,
+    processedCount: todo.length,
+    state: newState,
   };
 }
 
