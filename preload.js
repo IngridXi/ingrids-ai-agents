@@ -96,6 +96,10 @@ contextBridge.exposeInMainWorld('ingrid', {
   onCalendarSynced: (cb) => ipcRenderer.on('calendar:synced', (_e, d) => { if (cb) cb(d || {}); }),
   onOauthDone: (cb) => ipcRenderer.on('oauth:done', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // 研究日历：即将到期日程 + 到期提醒事件监听
+  calendarUpcoming: (days) => ipcRenderer.invoke('calendar:upcoming', days),
+  onCalendarReminder: (cb) => ipcRenderer.on('calendar:reminder', (_e, d) => { if (cb) cb(d || []); }),
+
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
   kbScan: () => ipcRenderer.invoke('kb:scan'),
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),

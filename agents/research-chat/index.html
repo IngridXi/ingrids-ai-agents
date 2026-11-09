@@ -1074,6 +1074,13 @@
     if (skills.length) {
       extra = '\n\n你具备以下研究能力（按需调用，始终遵循上面的铁律）：\n' + skills.join('\n');
     }
+    if (upcomingDeadlinesCache.length) {
+      var dl = upcomingDeadlinesCache.map(function (e) {
+        return '- ' + (e.emoji || '') + ' [' + (e.categoryLabel || '日程') + '] ' + e.title + ' · ' + fmtDeadline(e) + (e.location ? ' · 📍' + e.location : '');
+      }).join('\n');
+      extra += '\n\n【你主人最近的研究日程（未来两周内到期）】\n' + dl +
+        '\n当对话涉及这些事项、或用户请你做时间规划 / 排优先级 / 收尾时，主动提醒临近的截止日期，并给出轻重缓急建议。';
+    }
     var caps = agentCapabilities();
     var s = systemPrompt + extra + toolSpecText(caps);
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
@@ -1096,6 +1103,21 @@
         }
       }
     } catch (e) { /* 保持 fallback */ }
+  }
+
+  /* ---------- 研究日历：即将到期日程（注入系统提示词，主动提醒） ---------- */
+  var upcomingDeadlinesCache = [];
+  function fmtDeadline(e) {
+    var d = new Date(e.at);
+    if (!isFinite(d.getTime())) return '';
+    var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+  }
+  function refreshDeadlines() {
+    if (!IS_DESKTOP || !window.ingrid.calendarUpcoming) { upcomingDeadlinesCache = []; return; }
+    window.ingrid.calendarUpcoming(14).then(function (list) {
+      upcomingDeadlinesCache = Array.isArray(list) ? list : [];
+    }).catch(function () { upcomingDeadlinesCache = []; });
   }
 
   function loadEngines() {
@@ -1583,6 +1605,8 @@
   applySidebarWidth();
   initSidebarResize();
   updateModeBtn();
+  refreshDeadlines();
+  setInterval(refreshDeadlines, 5 * 60 * 1000);   // 每 5 分钟刷新一次到期日程
   input.focus();
 })();
 </script>

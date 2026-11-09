@@ -24,6 +24,8 @@ require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 const { KbEngine, detectObsidianVaults, detectZoteroDir } = require('./kb-engine.js');
 const syncEngine = require('./sync-engine.js');
+require('./secretary-core.js');
+const SecretaryCore = globalThis.SecretaryCore;
 
 /* ---------------- 数据目录（local-first） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -471,6 +473,65 @@ async function runCalendarSync() {
   const summary = { results: results, total: synced.length, syncedAt: Date.now() };
   broadcast('calendar:synced', summary);
   return summary;
+}
+
+/* ---------------- 研究日历：分类 + 到期自动提醒 ---------------- */
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+function fmtDateTime(ts) {
+  var d = new Date(ts);
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+function fmtLead(min) {
+  if (min >= 1440) return (min / 1440) + ' 天前';
+  if (min >= 60) return (min / 60) + ' 小时前';
+  if (min > 0) return min + ' 分钟前';
+  return '此刻';
+}
+function categoryOf(cat) { return (SecretaryCore && SecretaryCore.categoryOf) ? SecretaryCore.categoryOf(cat) : { id: 'other', label: '其他', emoji: '📌', color: '#8a8f98' }; }
+
+/** 扫描秘书日程，对「到点且未提醒」的事件发系统通知并标记已提醒 */
+function runReminderCheck() {
+  let state;
+  try { state = readJson('secretary.json', { events: [], emails: [], thoughts: [] }); }
+  catch (e) { return []; }
+  const events = Array.isArray(state.events) ? state.events : [];
+  const now = Date.now();
+  const fired = [];
+  let changed = false;
+  for (const ev of events) {
+    if (ev.done || ev.reminded || !ev.at) continue;
+    const lead = Number(ev.reminderMin) || 0;
+    const at = new Date(ev.at).getTime();
+    if (!isFinite(at)) continue;
+    // 到点：now >= at - lead（lead=0 表示到了当天/当时才提醒）
+    if (now < at - lead * 60000) continue;
+    ev.reminded = true; changed = true;
+    fired.push(ev);
+    const c = categoryOf(ev.category);
+    const title = c.emoji + ' ' + (ev.title || '研究日程提醒');
+    const body = fmtDateTime(at) + ' · ' + c.label + (lead > 0 ? '（' + fmtLead(lead) + '提醒）' : '') +
+      (ev.location ? ' · 📍 ' + ev.location : '');
+    try { if (Notification.isSupported()) new Notification({ title: title, body: body }).show(); } catch (e) { /* 通知失败不阻断 */ }
+  }
+  if (changed) { try { writeJson('secretary.json', state); } catch (e) {} }
+  if (fired.length) broadcast('calendar:reminder', fired);
+  return fired;
+}
+
+/** 即将到来的研究日程（供研究助手注入上下文） */
+function upcomingDeadlines(days) {
+  let state;
+  try { state = readJson('secretary.json', { events: [], emails: [], thoughts: [] }); }
+  catch (e) { return []; }
+  const horizon = Date.now() + (Number(days) || 7) * 86400000;
+  return (Array.isArray(state.events) ? state.events : [])
+    .filter(function (e) { return !e.done && e.at; })
+    .map(function (e) {
+      var c = categoryOf(e.category);
+      return { id: e.id, title: e.title, at: e.at, category: c.id, categoryLabel: c.label, emoji: c.emoji, location: e.location, done: !!e.done };
+    })
+    .filter(function (e) { var t = new Date(e.at).getTime(); return isFinite(t) && t <= horizon; })
+    .sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
 }
 
 /* ---------------- 用量账本：按月 jsonl ---------------- */
@@ -1219,6 +1280,9 @@ ipcMain.handle('sync:calendar:push', async (_e, ev) => {
   return r;
 });
 
+/** 即将到来的研究日程（研究助手注入上下文用） */
+ipcMain.handle('calendar:upcoming', (_e, days) => upcomingDeadlines(days));
+
 /* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
 const OAUTH_PORT = 18888;
 const OAUTH_REDIRECT = 'http://localhost:' + OAUTH_PORT;
@@ -1796,6 +1860,9 @@ app.whenReady().then(() => {
   // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
   runCalendarSync().catch(() => {});
   setInterval(() => { runCalendarSync().catch(() => {}); }, 30 * 60 * 1000);
+  // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
+  runReminderCheck();
+  setInterval(() => { runReminderCheck(); }, 60 * 1000);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });

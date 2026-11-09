@@ -19,6 +19,7 @@
   var viewY, viewM;       // 当前显示的年/月（0-based 月）
   var selectedDate;       // 'YYYY-MM-DD'
   var minimized = false;
+  var pendingCategory = 'other';  // 新增日程弹窗里选中的研究分类
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function toDateStr(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
@@ -63,6 +64,12 @@
     '.cal-ev .t{font-size:12.5px;font-weight:650;color:var(--ink);word-break:break-word;}',
     '.cal-ev .meta{font-size:10.5px;color:var(--ink-faint);margin-top:2px;word-break:break-word;}',
     '.cal-ev .src{font-size:9.5px;color:var(--ink-faint);background:#fff;border:1px solid var(--line);padding:0 5px;border-radius:6px;margin-top:3px;display:inline-block;}',
+    '.cal-ev .cat{display:inline-block;font-size:9.5px;font-weight:600;padding:1px 6px;border-radius:6px;margin-top:3px;margin-right:4px;}',
+    '.cal-ev.due{border-left:3px solid #e5484d;}',
+    '.cal-ev .due-tag{font-size:9.5px;color:#e5484d;font-weight:700;margin-top:3px;}',
+    '.cal-modal .cat-grid{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:11px;}',
+    '.cal-modal .cat-opt{border:1px solid var(--line);border-radius:9px;padding:5px 9px;font-size:12px;cursor:pointer;background:#fff;color:var(--ink-soft);user-select:none;}',
+    '.cal-modal .cat-opt.on{border-color:var(--accent);color:var(--accent);font-weight:700;background:var(--accent-soft);}',
     '.cal-empty{color:var(--ink-faint);font-size:11.5px;text-align:center;padding:12px 0;}',
     '.cal-foot{font-size:10.5px;color:var(--ink-faint);line-height:1.6;border-top:1px solid var(--line);padding-top:9px;}',
     '.cal-foot .ok{color:#1d9e75;font-weight:600;}',
@@ -201,10 +208,13 @@
       return;
     }
     $('calEvents').innerHTML = list.map(function (e) {
+      var c = catOf(e.category);
       var src = e.source ? '<span class="src">' + esc(e.source) + '</span>' : '';
       var loc = e.location ? '<div class="meta">📍 ' + esc(e.location) + '</div>' : '';
-      return '<div class="cal-ev"><div class="time">' + fmtTime(e.at, e.allDay) + '</div>' +
-        '<div class="body"><div class="t">' + esc(e.title) + '</div>' + loc + src + '</div></div>';
+      var cat = '<span class="cat" style="color:' + c.color + ';background:' + c.color + '1a">' + c.emoji + ' ' + esc(c.label) + '</span>';
+      var due = isDue(e) ? '<div class="due-tag">⏰ 即将到期 · ' + reminderLabel(e.reminderMin) + '</div>' : '';
+      return '<div class="cal-ev' + (isDue(e) ? ' due' : '') + '"><div class="time">' + fmtTime(e.at, e.allDay) + '</div>' +
+        '<div class="body"><div class="t">' + esc(e.title) + '</div>' + cat + loc + src + due + '</div></div>';
     }).join('');
   }
 
@@ -233,6 +243,37 @@
 
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
+  /* ---------- 研究分类（复用 SecretaryCore，兜底内置） ---------- */
+  var RESEARCH_CATEGORIES = (window.SecretaryCore && window.SecretaryCore.RESEARCH_CATEGORIES) || [
+    { id: 'submission', label: '投稿 deadline', emoji: '📮', color: '#e5484d' },
+    { id: 'review',     label: '审稿',         emoji: '🔎', color: '#f08c00' },
+    { id: 'meeting',    label: '会议 / 组会',  emoji: '📅', color: '#4c8df6' },
+    { id: 'advisor',    label: '导师 / 答辩',  emoji: '🎓', color: '#8e6ef2' },
+    { id: 'grant',      label: '基金 / 申请',  emoji: '💰', color: '#1d9e75' },
+    { id: 'other',      label: '其他',         emoji: '📌', color: '#8a8f98' },
+  ];
+  var REMINDER_OPTIONS = [
+    { min: 0, label: '到点提醒' },
+    { min: 60, label: '提前 1 小时' },
+    { min: 1440, label: '提前 1 天' },
+    { min: 4320, label: '提前 3 天' },
+    { min: 10080, label: '提前 1 周' },
+  ];
+  function catOf(c) {
+    for (var i = 0; i < RESEARCH_CATEGORIES.length; i++) if (RESEARCH_CATEGORIES[i].id === c) return RESEARCH_CATEGORIES[i];
+    return RESEARCH_CATEGORIES[RESEARCH_CATEGORIES.length - 1];
+  }
+  function reminderLabel(min) {
+    for (var i = 0; i < REMINDER_OPTIONS.length; i++) if (REMINDER_OPTIONS[i].min === Number(min)) return REMINDER_OPTIONS[i].label;
+    return min ? (min + ' 分钟前') : '到点提醒';
+  }
+  function isDue(e) {
+    if (e.done || !e.at) return false;
+    var d = new Date(e.at).getTime();
+    var now = Date.now();
+    return isFinite(d) && d >= now && d - now <= 3 * 86400000;   // 3 天内即将到期
+  }
+
   /* ---------- 选日 / 换月 ---------- */
   function selectDay(ds) { selectedDate = ds; render(); }
   $('calPrev').addEventListener('click', function () { viewM--; if (viewM < 0) { viewM = 11; viewY--; } render(); });
@@ -259,11 +300,19 @@
   /* ---------- 新增日程（含写回 iCloud） ---------- */
   function openAddModal() {
     var defDate = selectedDate || toDateStr(new Date());
+    pendingCategory = 'other';
+    var catOpts = RESEARCH_CATEGORIES.map(function (c) {
+      return '<div class="cat-opt" data-cat="' + c.id + '" style="color:' + c.color + '">' + c.emoji + ' ' + esc(c.label) + '</div>';
+    }).join('');
+    var remOpts = REMINDER_OPTIONS.map(function (r) {
+      return '<option value="' + r.min + '">' + r.label + '</option>';
+    }).join('');
     modalMask.innerHTML =
       '<div class="cal-modal">' +
-        '<h3>＋ 新增日程</h3>' +
-        '<div class="sub">保存到本机，并同步写回 iCloud（手机「日历」可查看）</div>' +
-        '<div class="kv"><label>标题</label><input id="evTitle" placeholder="例如：组会讨论"></div>' +
+        '<h3>＋ 新增研究日程</h3>' +
+        '<div class="sub">保存到本机，按分类到期自动提醒；有 iCloud 账户时同步写回手机日历</div>' +
+        '<div class="kv"><label>标题</label><input id="evTitle" placeholder="例如：CVPR 投稿 deadline"></div>' +
+        '<div class="kv"><label>研究分类</label><div class="cat-grid" id="evCats">' + catOpts + '</div></div>' +
         '<div class="row">' +
           '<div class="kv"><label>日期</label><input id="evDate" type="date" value="' + defDate + '"></div>' +
           '<div class="kv"><label>开始时间</label><input id="evStart" type="time" value="09:00"></div>' +
@@ -273,10 +322,24 @@
           '<div class="kv"><label>地点（可选）</label><input id="evLoc" placeholder="会议室 / Zoom"></div>' +
         '</div>' +
         '<label class="check"><input type="checkbox" id="evAllDay"> 全天</label>' +
+        '<div class="kv"><label>提醒时间</label><select id="evRemind">' + remOpts + '</select></div>' +
         '<div class="kv"><label>备注（可选）</label><input id="evNote" placeholder="补充说明"></div>' +
-        '<div class="foot"><button id="evCancel">取消</button><button class="primary" id="evSave">保存并同步</button></div>' +
+        '<div class="foot"><button id="evCancel">取消</button><button class="primary" id="evSave">保存</button></div>' +
       '</div>';
     modalMask.style.display = 'flex';
+    if (!document.getElementById('calRemindStyle')) { var st = document.createElement('style'); st.id = 'calRemindStyle'; st.textContent = '.cal-modal .kv select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px;color:var(--ink);background:#fff;font-family:inherit;}'; document.head.appendChild(st); }
+    function refreshCats() {
+      Array.prototype.forEach.call($('evCats').querySelectorAll('.cat-opt'), function (n) {
+        n.classList.toggle('on', n.getAttribute('data-cat') === pendingCategory);
+      });
+    }
+    refreshCats();
+    $('evCats').addEventListener('click', function (e) {
+      var t = e.target.closest ? e.target.closest('.cat-opt') : null;
+      if (!t) return;
+      pendingCategory = t.getAttribute('data-cat');
+      refreshCats();
+    });
     $('evCancel').addEventListener('click', closeModal);
     modalMask.addEventListener('click', function (e) { if (e.target === modalMask) closeModal(); });
     $('evAllDay').addEventListener('change', function () {
@@ -294,6 +357,8 @@
     var allDay = $('evAllDay').checked;
     var start = $('evStart').value, end = $('evEnd').value;
     var loc = $('evLoc').value.trim(), note = $('evNote').value.trim();
+    var category = pendingCategory || 'other';
+    var remindMin = Number(($('evRemind') && $('evRemind').value) || '0');
     var at = allDay ? new Date(dateStr + 'T00:00:00').toISOString() : new Date(dateStr + 'T' + start + ':00').toISOString();
     var endIso = allDay ? '' : new Date(dateStr + 'T' + end + ':00').toISOString();
 
@@ -312,7 +377,7 @@
 
     var base = {
       title: title, at: at, end: endIso, location: loc, note: note, allDay: allDay,
-      reminderMin: allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
+      category: category, reminderMin: remindMin, reminded: false, done: false, createdAt: Date.now(),
     };
 
     // 有 iCloud 账户 → 先写回远端，成功则用远端 uid 标记（避免下次拉取重复）
@@ -371,6 +436,17 @@
     if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navCalendar');
     loadAll();
   };
+
+  /* ---------- 到期提醒自动刷新 ---------- */
+  if (IS_DESKTOP && window.ingrid.onCalendarReminder) {
+    window.ingrid.onCalendarReminder(function (fired) {
+      loadEvents();
+      // 面板内也轻提示一下（不打扰，仅当面板可见）
+      if (fired && fired.length && $('calStatus')) {
+        $('calStatus').textContent = '⏰ ' + fired.length + ' 项提醒'; $('calStatus').classList.add('ok');
+      }
+    });
+  }
 
   /* ---------- 启动 ---------- */
   now();

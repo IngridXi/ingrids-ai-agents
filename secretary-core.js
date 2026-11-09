@@ -252,6 +252,21 @@
     return { todayEvents: todayEvents, upcoming: upcoming.slice(0, 6), importantEmails: important.slice(0, 6) };
   }
 
+  /* ---------- 研究日历分类（日程 category 字段，主进程与渲染层共用） ---------- */
+  var RESEARCH_CATEGORIES = [
+    { id: 'submission', label: '投稿 deadline', emoji: '📮', color: '#e5484d' },
+    { id: 'review',     label: '审稿',         emoji: '🔎', color: '#f08c00' },
+    { id: 'meeting',    label: '会议 / 组会',  emoji: '📅', color: '#4c8df6' },
+    { id: 'advisor',    label: '导师 / 答辩',  emoji: '🎓', color: '#8e6ef2' },
+    { id: 'grant',      label: '基金 / 申请',  emoji: '💰', color: '#1d9e75' },
+    { id: 'other',      label: '其他',         emoji: '📌', color: '#8a8f98' },
+  ];
+  function categoryOf(cat) {
+    var id = String(cat || 'other');
+    for (var i = 0; i < RESEARCH_CATEGORIES.length; i++) if (RESEARCH_CATEGORIES[i].id === id) return RESEARCH_CATEGORIES[i];
+    return RESEARCH_CATEGORIES[RESEARCH_CATEGORIES.length - 1];
+  }
+
   /* ---------- 导出 ---------- */
   global.SecretaryCore = {
     EventStore: EventStore,
@@ -263,5 +278,7 @@
     extractEventHint: extractEventHint,
     brief: brief,
     CATEGORY_RULES: CATEGORY_RULES,
+    RESEARCH_CATEGORIES: RESEARCH_CATEGORIES,
+    categoryOf: categoryOf,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
