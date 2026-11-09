@@ -257,8 +257,9 @@
     { id: 'submission', label: '投稿 deadline', emoji: '📮', color: '#e5484d' },
     { id: 'review',     label: '审稿',         emoji: '🔎', color: '#f08c00' },
     { id: 'meeting',    label: '会议 / 组会',  emoji: '📅', color: '#4c8df6' },
-    { id: 'advisor',    label: '导师 / 答辩',  emoji: '🎓', color: '#8e6ef2' },
+    { id: 'advisor',    label: '导师 / 1:1',   emoji: '🎓', color: '#4c8df6' },
     { id: 'grant',      label: '基金 / 申请',  emoji: '💰', color: '#1d9e75' },
+    { id: 'campus',     label: '学校活动',     emoji: '🏫', color: '#4c8df6' },
     { id: 'other',      label: '其他',         emoji: '📌', color: '#8a8f98' },
   ];
   function categoryOf(cat) {
@@ -271,10 +272,12 @@
   // 顺序即优先级：同命中数时，排在前面的分类胜出
   var EVENT_CATEGORY_RULES = [
     { cat: 'submission', words: ['deadline', 'submission', 'submit', 'camera-ready', 'camera ready', 'paper due', 'due date', 'abstract', 'ddl', '投稿', '截止', '交稿', '截稿', '提交'] },
-    { cat: 'meeting',    words: ['meeting', 'seminar', 'conference', 'workshop', 'standup', 'sync', '1:1', '1-1', 'lab meeting', 'group meeting', 'colloquium', 'talk', 'presentation', '组会', '会议', '研讨会', '例会', '碰头', '讨论'] },
-    { cat: 'advisor',    words: ['supervisor', 'advisor', 'supervision', 'tutorial', 'viva', 'defense', 'thesis', 'dissertation', '导师', '答辩', '开题'] },
+    // 「1:1」= 与导师的一对一；「mohamed」= 导师名字（可再加其他人名）
+    { cat: 'advisor',    words: ['supervisor', 'advisor', 'supervision', 'tutorial', 'viva', 'defense', 'thesis', 'dissertation', '1:1', '1-1', 'one on one', 'one-on-one', 'mohamed', '导师', '答辩', '开题'] },
+    { cat: 'meeting',    words: ['meeting', 'seminar', 'conference', 'workshop', 'standup', 'sync', 'lab meeting', 'group meeting', 'colloquium', 'talk', 'presentation', '组会', '会议', '研讨会', '例会', '碰头', '讨论'] },
     { cat: 'review',     words: ['review', 'rebuttal', 'referee', 'revision', 'revise', '审稿', '返修', '修改意见'] },
     { cat: 'grant',      words: ['grant', 'funding', 'fellowship', 'scholarship', 'proposal', '基金', '经费', '奖学金', '项目申请'] },
+    { cat: 'campus',     words: ['orientation', 'induction', 'open day', 'campus', 'college', 'ceremony', 'graduation', 'welcome', 'careers', 'formal', 'society', 'club', '社团', '学校', '学院', '迎新', '开学', '毕业', '活动'] },
   ];
 
   /** 按标题/来源关键词自动识别活动类型 → 研究分类 id（匹配不到返回 'other'） */

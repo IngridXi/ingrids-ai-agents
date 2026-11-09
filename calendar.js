@@ -288,8 +288,9 @@
     { id: 'submission', label: '投稿 deadline', emoji: '📮', color: '#e5484d' },
     { id: 'review',     label: '审稿',         emoji: '🔎', color: '#f08c00' },
     { id: 'meeting',    label: '会议 / 组会',  emoji: '📅', color: '#4c8df6' },
-    { id: 'advisor',    label: '导师 / 答辩',  emoji: '🎓', color: '#8e6ef2' },
+    { id: 'advisor',    label: '导师 / 1:1',   emoji: '🎓', color: '#4c8df6' },
     { id: 'grant',      label: '基金 / 申请',  emoji: '💰', color: '#1d9e75' },
+    { id: 'campus',     label: '学校活动',     emoji: '🏫', color: '#4c8df6' },
     { id: 'other',      label: '其他',         emoji: '📌', color: '#8a8f98' },
   ];
   var REMINDER_OPTIONS = [
