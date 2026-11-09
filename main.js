@@ -1686,8 +1686,8 @@ ipcMain.handle('kb:terms:build', async (e, opts) => {
     llm: llm,
     vaultPath: vaultPath(),
     batchSize: 10,
-    maxItems: parseInt(opts.maxItems, 10) || 40,
-    topK: parseInt(opts.topK, 10) || 40,
+    maxItems: parseInt(opts.maxItems, 10) || 200,
+    topK: parseInt(opts.topK, 10) || 80,
     onProgress: function (phase, done, total) { send({ phase: phase, done: done, total: total }); },
   });
 });

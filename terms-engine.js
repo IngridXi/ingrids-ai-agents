@@ -146,8 +146,8 @@ async function buildTermsGraph(opts) {
   const llm = opts.llm;
   const vaultPath = opts.vaultPath || null;
   const batchSize = opts.batchSize || 10;
-  const maxItems = opts.maxItems || 40;
-  const topK = opts.topK || 40;
+  const maxItems = opts.maxItems || 200;
+  const topK = opts.topK || 80;
   const onProgress = opts.onProgress || function () {};
 
   if (!items.length) return { ok: false, error: 'Zotero 里没有可提取的文献（请先在 Zotero 添加文献）' };

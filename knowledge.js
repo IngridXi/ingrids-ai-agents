@@ -152,6 +152,10 @@
       '<div class="kb-src" style="border-color:#6c5ce7">' +
         '<div class="top"><div class="ic">🕸️</div><div><div class="nm">术语图谱</div></div><span class="st miss">Zotero → Obsidian</span></div>' +
         '<div class="meta">从 Zotero 文献自动提取术语（理论 / 概念 / 商业词汇），按共现关系连线，写入 Obsidian「术语库/」，用图谱视图看网状图。</div>' +
+        '<div class="cfgrow" style="margin-top:11px">' +
+          '<label style="flex:1;display:flex;flex-direction:column;font-size:11px;color:#a29baf;gap:4px">文献数<input id="kbTermsMax" type="number" min="10" max="1000" step="10" value="200" style="width:100%;padding:8px 10px;border:1px solid #eae8f0;border-radius:8px;font-size:13px;color:#221f33"></label>' +
+          '<label style="flex:1;display:flex;flex-direction:column;font-size:11px;color:#a29baf;gap:4px">术语数<input id="kbTermsTopK" type="number" min="10" max="300" step="10" value="80" style="width:100%;padding:8px 10px;border:1px solid #eae8f0;border-radius:8px;font-size:13px;color:#221f33"></label>' +
+        '</div>' +
         '<div class="acts">' +
           '<button id="kbTermsBuild" class="primary">' + iconSvg('sparkles') + '构建术语网</button>' +
           '<button data-kind="obsidian">' + iconSvg('link') + '打开 Obsidian 看图谱</button>' +
@@ -182,12 +186,15 @@
         if (!DESKTOP || !window.ingrid.kbTermsBuild) { alert('术语图谱需在桌面版使用（并运行本地 Ollama）'); return; }
         var status = modal.querySelector('#kbTermsStatus');
         var result = modal.querySelector('#kbTermsResult');
+        var maxItems = parseInt(modal.querySelector('#kbTermsMax').value, 10) || 200;
+        var topK = parseInt(modal.querySelector('#kbTermsTopK').value, 10) || 80;
+        if (maxItems < 1 || topK < 1) { alert('文献数与术语数需为正整数'); return; }
         var btn = this;
         btn.disabled = true;
         btn.textContent = '构建中…（需本地 Ollama）';
         termsStatusEl = status;
-        status.textContent = '准备中…（可能需 1–2 分钟）';
-        window.ingrid.kbTermsBuild({ maxItems: 40, topK: 40 }).then(function (r) {
+        status.textContent = '准备中… 将处理 ' + maxItems + ' 篇文献，约需 1–10 分钟（取决于本地模型速度）';
+        window.ingrid.kbTermsBuild({ maxItems: maxItems, topK: topK }).then(function (r) {
           btn.disabled = false;
           btn.textContent = '构建术语网';
           termsStatusEl = null;
