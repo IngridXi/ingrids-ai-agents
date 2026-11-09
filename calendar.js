@@ -47,13 +47,19 @@
     '.cal-nav .today{margin-left:4px;width:auto;padding:0 9px;font-size:11.5px;font-weight:650;}',
     '.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}',
     '.cal-grid .wd{text-align:center;font-size:10px;font-weight:700;color:var(--ink-faint);padding:2px 0;}',
-    '.cal-grid .day{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:12px;color:var(--ink);cursor:pointer;position:relative;}',
+    '.cal-grid .day{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:5px 2px 6px;border-radius:9px;font-size:12px;color:var(--ink);cursor:pointer;position:relative;}',
     '.cal-grid .day:hover{background:var(--accent-soft);}',
     '.cal-grid .day.other{color:var(--ink-faint);}',
-    '.cal-grid .day.sel{background:var(--accent);color:#fff;font-weight:700;}',
-    '.cal-grid .day.today:not(.sel){box-shadow:inset 0 0 0 1.5px var(--accent);}',
-    '.cal-grid .day.has::after{content:"";position:absolute;bottom:4px;width:4px;height:4px;border-radius:50%;background:var(--accent);}',
-    '.cal-grid .day.sel.has::after{background:#fff;}',
+    '.cal-grid .day.other .dots i{opacity:.4;}',
+    '.cal-grid .day.sel{background:var(--accent);color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.18);}',
+    '.cal-grid .day.today:not(.sel){box-shadow:inset 0 0 0 2px var(--accent);}',
+    '.cal-grid .day.today:not(.sel) .num{color:var(--accent);font-weight:800;}',
+    '.cal-grid .day .num{line-height:1;}',
+    '.cal-grid .day .dots{display:flex;gap:2.5px;align-items:center;height:6px;}',
+    '.cal-grid .day .dots i{width:6px;height:6px;border-radius:50%;display:block;box-shadow:0 0 0 1.5px #fff;}',
+    '.cal-grid .day.sel .dots i{box-shadow:0 0 0 1.5px rgba(255,255,255,.45);}',
+    '.cal-grid .day .more{position:absolute;top:3px;right:3px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--accent);color:#fff;font-size:8px;font-weight:700;line-height:14px;text-align:center;}',
+    '.cal-grid .day.sel .more{background:#fff;color:var(--accent);}',
     '.cal-day-head{display:flex;align-items:baseline;gap:8px;}',
     '.cal-day-head .d{font-weight:700;font-size:13px;}',
     '.cal-day-head .cnt{font-size:11px;color:var(--ink-faint);}',
@@ -154,26 +160,20 @@
     var nextDate = new Date(viewY, viewM + 1, 1);  // 下月（自动处理跨年）
     var py = prevDate.getFullYear(), pm = prevDate.getMonth();
     var ny = nextDate.getFullYear(), nm = nextDate.getMonth();
-    var today = toDateStr(new Date());
     var html = ['一', '二', '三', '四', '五', '六', '日'].map(function (w) { return '<div class="wd">' + w + '</div>'; }).join('');
     // 上月补位
     for (var i = startDow - 1; i >= 0; i--) {
-      html += '<div class="day other" data-d="' + (py + '-' + pad(pm + 1) + '-' + pad(daysInPrev - i)) + '">' + (daysInPrev - i) + '</div>';
+      html += cellHtml(py + '-' + pad(pm + 1) + '-' + pad(daysInPrev - i), daysInPrev - i, true);
     }
     for (var d = 1; d <= daysInMonth; d++) {
-      var ds = viewY + '-' + pad(viewM + 1) + '-' + pad(d);
-      var cls = 'day';
-      if (ds === selectedDate) cls += ' sel';
-      if (ds === today) cls += ' today';
-      if (hasEvent(ds)) cls += ' has';
-      html += '<div class="' + cls + '" data-d="' + ds + '">' + d + '</div>';
+      html += cellHtml(viewY + '-' + pad(viewM + 1) + '-' + pad(d), d, false);
     }
     // 下月补位（补齐到 35/42 格）
     var total = Math.ceil((startDow + daysInMonth) / 7) * 7;
     if (total < 35) total = 35;
     var cells = startDow + daysInMonth;
     for (var j = 0; cells + j < total; j++) {
-      html += '<div class="day other" data-d="' + (ny + '-' + pad(nm + 1) + '-' + pad(1 + j)) + '">' + (1 + j) + '</div>';
+      html += cellHtml(ny + '-' + pad(nm + 1) + '-' + pad(1 + j), 1 + j, true);
     }
     $('calGrid').innerHTML = html;
     Array.prototype.forEach.call($('calGrid').querySelectorAll('.day'), function (n) {
@@ -181,8 +181,31 @@
     });
   }
 
-  function hasEvent(ds) {
-    return events.some(function (e) { return e.at && toDateStr(new Date(e.at)) === ds; });
+  // 某天的日程分类点阵（最多 3 个不同分类色，超出用数字角标）
+  function dayDots(ds) {
+    var list = eventsOn(ds);
+    if (!list.length) return { colors: [], count: 0 };
+    var colors = [];
+    list.forEach(function (e) {
+      var c = catOf(e.category).color;
+      if (colors.indexOf(c) < 0 && colors.length < 3) colors.push(c);
+    });
+    return { colors: colors, count: list.length };
+  }
+
+  // 生成单个日期格子：数字在上、分类彩色点阵在下、数量角标在右上角
+  function cellHtml(ds, num, other) {
+    var cls = 'day' + (other ? ' other' : '');
+    if (ds === selectedDate) cls += ' sel';
+    if (ds === toDateStr(new Date())) cls += ' today';
+    var dd = dayDots(ds);
+    var dots = '';
+    if (dd.count) {
+      cls += ' has';
+      dots = '<span class="dots">' + dd.colors.map(function (c) { return '<i style="background:' + c + '"></i>'; }).join('') + '</span>' +
+        (dd.count > dd.colors.length ? '<span class="more">' + dd.count + '</span>' : '');
+    }
+    return '<div class="' + cls + '" data-d="' + ds + '"><span class="num">' + num + '</span>' + dots + '</div>';
   }
 
   function eventsOn(ds) {
