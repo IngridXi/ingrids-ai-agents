@@ -190,6 +190,7 @@ const WEB_PREFS = {
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: false,
+  webviewTag: true,   // 单窗口：agent 页面用 <webview> 内嵌在主窗口里，不再每开一个 agent 就新开窗口
 };
 
 function createMainWindow() {
@@ -206,16 +207,8 @@ function createMainWindow() {
   });
 }
 
-function openAgentWindow(href) {
-  if (typeof href !== 'string' || !href || href.includes('..')) return;
-  if (href.includes('meeting-audio')) ensureMeetingAudioBackend();
-  const win = new BrowserWindow({
-    width: 1200, height: 820, minWidth: 720, minHeight: 520,
-    title: "Ingrid's AI Agents", backgroundColor: '#f7f6f9',
-    webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
-  });
-  win.loadFile(path.join(__dirname, href));
-}
+// 单窗口：agent 不再新开 BrowserWindow，改为返回 file:// URL 由主窗口 <webview> 内嵌。
+// （原 openAgentWindow 多窗口行为已移除，避免「像网页一样开一堆窗口」）
 
 /* ---------------- 会议纪要后端自动拉起 ---------------- */
 const MEETING_AUDIO_PORT = 8950;
@@ -867,8 +860,18 @@ ipcMain.handle('agents:save', (_e, agents) => {
 });
 ipcMain.on('agents:list-sync', (e) => { e.returnValue = readJson('agents.json', []); });
 
-/* ---------------- IPC：打开 agent ---------------- */
-ipcMain.handle('open-agent', (_e, href) => { openAgentWindow(href); return true; });
+/* ---------------- IPC：打开 agent（单窗口，返回 file:// URL 供 webview 内嵌） ---------------- */
+ipcMain.handle('open-agent', (_e, href) => {
+  if (typeof href !== 'string' || !href || href.includes('..')) return '';
+  if (href.includes('meeting-audio')) ensureMeetingAudioBackend();
+  return 'file://' + path.join(__dirname, href);
+});
+
+/* ---------------- IPC：用系统浏览器打开外链（webview 内 agent 的 window.open / 下载链接） ---------------- */
+ipcMain.handle('open-external', (_e, url) => {
+  if (typeof url === 'string' && /^https?:\/\//.test(url)) { shell.openExternal(url); return true; }
+  return false;
+});
 
 /* ---------------- 聊天记忆持久化（local-first，按 Agent 隔离） ---------------- */
 // 每个 Agent 一个 json 文件，落在 userData/data/chat-history/<名字>.json，关窗不丢、下次自动恢复。

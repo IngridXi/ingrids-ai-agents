@@ -346,6 +346,32 @@
     <aside class="cal-dock" id="calDock"></aside>
   </div>
 
+  <!-- 单窗口 agent 内嵌层：点 agent 卡片时，agent 页面在这里用 webview 加载，不再新开窗口 -->
+  <style>
+    .agent-shell { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; background: var(--bg); }
+    .agent-shell[hidden] { display: none; }
+    .agent-shell-bar {
+      flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px;
+      background: var(--side-bg); color: #e6e1f5; box-shadow: 0 2px 10px rgba(34,31,51,.15); user-select: none;
+    }
+    .agent-back, .agent-close {
+      border: none; background: rgba(255,255,255,.12); color: #fff; border-radius: 8px;
+      padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; line-height: 1;
+    }
+    .agent-back:hover, .agent-close:hover { background: rgba(255,255,255,.26); }
+    .agent-shell-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-close { padding: 7px 12px; font-size: 17px; }
+    .agent-shell webview { flex: 1; border: none; background: #fff; }
+  </style>
+  <div class="agent-shell" id="agentShell" hidden>
+    <div class="agent-shell-bar">
+      <button class="agent-back" id="agentBackBtn" type="button">← 返回工作台</button>
+      <span class="agent-shell-title" id="agentShellTitle">Agent</span>
+      <button class="agent-close" id="agentCloseBtn" type="button" title="关闭">×</button>
+    </div>
+    <webview id="agentView" src="about:blank"></webview>
+  </div>
+
   <!-- Modal -->
   <div class="mask" id="mask">
     <div class="modal" id="modal"></div>
@@ -648,6 +674,56 @@ function escHtml(v) {
   return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+/* ---------- 单窗口 agent 内嵌：用 <webview> 在主窗口里打开，不再新开窗口 ---------- */
+function openAgentInView(a) {
+  if (!IS_DESKTOP) return;
+  const shell = document.getElementById('agentShell');
+  const view = document.getElementById('agentView');
+  const title = document.getElementById('agentShellTitle');
+  title.textContent = a.name || 'Agent';
+  shell.hidden = false;
+  // preload 必须先于 src 设置，否则 agent 页面拿不到 window.ingrid
+  if (!view.getAttribute('preload')) {
+    view.setAttribute('preload', 'file://' + window.ingrid.preloadPath);
+  }
+  window.ingrid.openAgent(a.href).then((url) => {
+    if (!url) { shell.hidden = true; openModal(a); return; }
+    view.src = url;
+  });
+}
+function closeAgentView() {
+  const shell = document.getElementById('agentShell');
+  const view = document.getElementById('agentView');
+  try { view.src = 'about:blank'; } catch (e) { /* 忽略 */ }
+  shell.hidden = true;
+}
+function bindAgentShell() {
+  const back = document.getElementById('agentBackBtn');
+  const close = document.getElementById('agentCloseBtn');
+  const view = document.getElementById('agentView');
+  if (back) back.addEventListener('click', closeAgentView);
+  if (close) close.addEventListener('click', closeAgentView);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('agentShell').hidden) closeAgentView();
+  });
+  // 拦截 webview 里可能的 window.open / 外链：外链交给系统浏览器打开，避免又弹出新窗口
+  if (view) {
+    view.addEventListener('new-window', (e) => {
+      e.preventDefault();
+      if (e.url && /^https?:\/\//.test(e.url) && window.ingrid && window.ingrid.openExternal) {
+        window.ingrid.openExternal(e.url);
+      }
+    });
+    view.addEventListener('will-navigate', (e) => {
+      // 点击 agent 回复里的外链时，交给系统浏览器打开，不在 webview 内跳转（避免丢失 agent 页面）
+      if (e.url && /^https?:\/\//.test(e.url)) {
+        e.preventDefault();
+        if (window.ingrid && window.ingrid.openExternal) window.ingrid.openExternal(e.url);
+      }
+    });
+  }
+}
 function loadPresets() {
   if (IS_DESKTOP) { try { return window.ingrid.loadPresetsSync() || []; } catch (e) { return []; } }
   try { return JSON.parse(localStorage.getItem('ingrid.presets') || '[]'); } catch (e) { return []; }
@@ -706,7 +782,7 @@ function renderAgents() {
         return;
       }
       if (a.href) {
-        if (IS_DESKTOP) window.ingrid.openAgent(a.href);
+        if (IS_DESKTOP) openAgentInView(a);
         else window.open(a.href, '_blank');
       } else openModal(a);
     });
@@ -1062,6 +1138,7 @@ document.querySelectorAll('[data-icon]').forEach(function (el) {
 });
 
 renderAgents();
+bindAgentShell();
 
 /* 暴露给 orchestrator.js（调度中枢面板） */
 window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents: renderAgents };

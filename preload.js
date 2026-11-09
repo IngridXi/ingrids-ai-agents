@@ -8,13 +8,17 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('ingrid', {
   isDesktop: true,
   platform: process.platform,
+  // 本 preload 脚本的绝对路径，供主窗口 <webview> 的 preload 属性复用（单窗口内嵌 agent）
+  preloadPath: __filename,
 
   // agents（local-first 文件存储）
   loadAgentsSync: () => ipcRenderer.sendSync('agents:list-sync'),
   saveAgents: (agents) => ipcRenderer.invoke('agents:save', agents),
 
-  // 打开 agent
+  // 打开 agent（单窗口：返回 file:// URL，由主窗口 webview 内嵌；不再新开窗口）
   openAgent: (href) => ipcRenderer.invoke('open-agent', href),
+  // 用系统浏览器打开外链（webview 内 agent 的 window.open / 下载链接）
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
   // 本机 CLI（bring-your-own-agent）
   detectCli: (engineId) => ipcRenderer.invoke('cli:detect', engineId),
