@@ -320,6 +320,10 @@
   var __mmdMap = {};
   function mdToHtml(text) {
     var s = String(text == null ? '' : text);
+    // 防工具调用标签残留被 marked 当作 HTML 元素吞掉或注入
+    s = s.replace(/<\s*\/?\s*tool\b[^>]*>/gi, function (tag) { return tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
+    s = s.replace(/<\|DSML\|[^>]*>/g, function (tag) { return tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
+    s = s.replace(/<\/?[^>]*\bparameter\b[^>]*>/gi, function (tag) { return tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
     var blocks = [];
     s = s.replace(/```mermaid\s*\n([\s\S]*?)```/g, function (m, code) {
       var id = 'mmd' + (++__mmdSeq);
@@ -739,15 +743,61 @@
     });
   }
 
+  // 归一化工具调用文本：全角竖线→ASCII、<DSML< 变体→<|DSML|
+  function normToolText(t) {
+    return String(t == null ? '' : t)
+      .replace(/\uFF5C/g, '|')
+      .replace(/<DSML</g, '<|DSML|')
+      .replace(/<\/DSML<\//g, '</|DSML|')
+      .replace(/<\/DSML</g, '</|DSML|');
+  }
   function stripToolMarkers(t) {
-    return String(t || '').replace(/<\s*tool\s+name="[^"]*"\s*>[\s\S]*?<\s*\/\s*tool\s*>/g, '');
+    var s = normToolText(t);
+    // <tool> 工具调用块：容忍闭合标签变体（如 </tool parameter>）与额外属性
+    s = s.replace(/<\s*tool\b[^>]*>[\s\S]*?<\s*\/\s*tool\b[^>]*>/g, '');
+    // DeepSeek DSML 工具调用整块（含前导空格变体 <|DSML| tool_calls>）
+    s = s.replace(/<\|DSML\|\s*tool_calls\s*>[\s\S]*?<\/\|DSML\|\s*tool_calls\s*>/g, '');
+    s = s.replace(/<\|DSML\|\s*invoke\s+name="[^"]*"\s*>[\s\S]*?<\/\|DSML\|\s*invoke\s*>/g, '');
+    s = s.replace(/<\|DSML\|\s*parameter\s+name="[^"]*"\s+string="(?:true|false)"\s*>[\s\S]*?<\/\|DSML\|\s*parameter\s*>/g, '');
+    // 残留标签
+    s = s.replace(/<\/?\s*tool\b[^>]*>/g, '');
+    s = s.replace(/<\/?[^>]*\bparameter\b[^>]*>/g, '');
+    s = s.replace(/<\/?\|DSML\|[^>]*>/g, '');
+    s = s.replace(/<\/?\|[A-Za-z0-9_\u2581 ]{1,24}\|>/g, '');
+    s = s.replace(/\|DSML\|/g, '');
+    s = s.replace(/<\/?parameter[^>]*>/g, '');
+    s = s.replace(/<\|[^>]*\|>/g, '');
+    s = s.replace(/<\|[^>]*?(?:DSML|invoke|parameter|tool_calls)[^>]*>/g, '');
+    return s;
   }
   function extractToolCalls(t) {
-    var out = [], re = /<\s*tool\s+name="([^"]+)"\s*>([\s\S]*?)<\s*\/\s*tool\s*>/g, m;
-    while ((m = re.exec(String(t || ''))) !== null) {
+    var s = normToolText(t);
+    var out = [], m;
+    // <tool> 通用块：容忍 name 位置、额外属性、闭合标签变体
+    var re1 = /<\s*tool\b([^>]*)>([\s\S]*?)<\s*\/\s*tool\b[^>]*>/g;
+    while ((m = re1.exec(s)) !== null) {
+      var nm = m[1].match(/\bname\s*=\s*"([^"]+)"/i);
+      if (!nm) continue;
+      var inner = m[2].trim();
       var args = {};
-      try { args = JSON.parse(m[2].trim()); } catch (e) { args = { raw: m[2].trim() }; }
-      out.push({ name: m[1].trim(), args: args });
+      if (inner) { try { args = JSON.parse(inner); } catch (e) { args = { raw: inner }; } }
+      out.push({ name: nm[1].trim(), args: args });
+    }
+    // DeepSeek DSML 格式（含前导空格变体）
+    var re2 = /<\|DSML\|\s*invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|DSML\|\s*invoke\s*>/g;
+    while ((m = re2.exec(s)) !== null) {
+      var args2 = {};
+      var body = m[2];
+      var pre = /<\|DSML\|\s*parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>([\s\S]*?)<\/\|DSML\|\s*parameter\s*>/g, pm;
+      while ((pm = pre.exec(body)) !== null) {
+        var pname = pm[1].trim();
+        var isStr = pm[2] === 'true';
+        var raw = pm[3].trim();
+        if (isStr) args2[pname] = raw;
+        else { try { args2[pname] = JSON.parse(raw); } catch (e) { args2[pname] = raw; } }
+      }
+      if (!Object.keys(args2).length && body.trim()) { try { args2 = JSON.parse(body.trim()); } catch (e) { args2 = { raw: body.trim() }; } }
+      out.push({ name: m[1].trim(), args: args2 });
     }
     return out;
   }
@@ -777,7 +827,8 @@
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
-      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。\n' +
+      '\n\n【工具调用格式铁律】开始标签必须是 <tool name="工具名">，结束标签必须是 </tool>，两者完全一致、成对出现；结束标签绝不能写成 </tool parameter> 或加任何多余文字。参数必须是合法的 JSON 对象，例如 <tool name="fs_read">{"path":"/绝对路径"}</tool>。\n' +
+      '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。\n' +
       '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   function executeTool(call, caps) {

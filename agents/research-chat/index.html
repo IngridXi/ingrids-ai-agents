@@ -400,6 +400,10 @@
   var __mmdMap = {};
   function mdToHtml(text) {
     var s = String(text == null ? '' : text);
+    // 防工具调用标签残留被 marked 当作 HTML 元素吞掉或注入：转义 <tool...>、<|DSML|...> 等
+    s = s.replace(/<\s*\/?\s*tool\b[^>]*>/gi, function (tag) { return tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
+    s = s.replace(/<\|DSML\|[^>]*>/g, function (tag) { return tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
+    s = s.replace(/<\/?[^>]*\bparameter\b[^>]*>/gi, function (tag) { return tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
     var blocks = [];
     s = s.replace(/```mermaid\s*\n([\s\S]*?)```/g, function (m, code) {
       var id = 'mmd' + (++__mmdSeq);
@@ -906,42 +910,55 @@
   }
 
   // 清理模型输出里残留的标记：旧 <tool> 格式 + DeepSeek DSML 格式 + 特殊控制 token
+  // 归一化工具调用文本：全角竖线→ASCII、<DSML< 变体→<|DSML|
+  function normToolText(t) {
+    return String(t == null ? '' : t)
+      .replace(/\uFF5C/g, '|')
+      .replace(/<DSML</g, '<|DSML|')
+      .replace(/<\/DSML<\//g, '</|DSML|')
+      .replace(/<\/DSML</g, '</|DSML|');
+  }
   function stripToolMarkers(t) {
-    var s = String(t == null ? '' : t);
-    // 1) 旧格式 <tool name="...">...</tool>
-    s = s.replace(/<\s*tool\s+name="[^"]*"\s*>[\s\S]*?<\s*\/\s*tool\s*>/g, '');
-    // 2) DeepSeek DSML 工具调用整块（tool_calls / invoke / parameter 的闭合对）
-    s = s.replace(/<\|DSML\|tool_calls\s*>[\s\S]*?<\/\|DSML\|tool_calls\s*>/g, '');
-    s = s.replace(/<\|DSML\|invoke\s+name="[^"]*"\s*>[\s\S]*?<\/\|DSML\|invoke\s*>/g, '');
-    s = s.replace(/<\|DSML\|parameter\s+name="[^"]*"\s+string="(?:true|false)"\s*>[\s\S]*?<\/\|DSML\|parameter\s*>/g, '');
-    // 3) 残留的 DSML 标签 / 特殊控制 token（<|begin_of_sentence|> <|User|> <|Assistant|> <|end_of_sentence|> 等）
+    var s = normToolText(t);
+    // 1) <tool> 工具调用块：容忍闭合标签变体（如 </tool parameter>、</tool name=...>）与额外属性
+    s = s.replace(/<\s*tool\b[^>]*>[\s\S]*?<\s*\/\s*tool\b[^>]*>/g, '');
+    // 2) DeepSeek DSML 工具调用整块（含前导空格变体 <|DSML| tool_calls>）
+    s = s.replace(/<\|DSML\|\s*tool_calls\s*>[\s\S]*?<\/\|DSML\|\s*tool_calls\s*>/g, '');
+    s = s.replace(/<\|DSML\|\s*invoke\s+name="[^"]*"\s*>[\s\S]*?<\/\|DSML\|\s*invoke\s*>/g, '');
+    s = s.replace(/<\|DSML\|\s*parameter\s+name="[^"]*"\s+string="(?:true|false)"\s*>[\s\S]*?<\/\|DSML\|\s*parameter\s*>/g, '');
+    // 3) 残留标签：<tool ...> / </tool ...> / <parameter ...> / </parameter ...> / <|DSML|...> / 控制 token
+    s = s.replace(/<\/?\s*tool\b[^>]*>/g, '');
+    s = s.replace(/<\/?[^>]*\bparameter\b[^>]*>/g, '');
     s = s.replace(/<\/?\|DSML\|[^>]*>/g, '');
     s = s.replace(/<\/?\|[A-Za-z0-9_\u2581 ]{1,24}\|>/g, '');
-    // 4) 裸符号残留（|DSML| / <parameter> / 断裂的 <| |>
+    // 4) 裸符号残留（|DSML| / 断裂的 <| |>
     s = s.replace(/\|DSML\|/g, '');
     s = s.replace(/<\/?parameter[^>]*>/g, '');
     s = s.replace(/<\|[^>]*\|>/g, '');
-    // 5) 断裂的 DSML 标签残片（流式截断导致，如 <| | DSML | | parameter>）
     s = s.replace(/<\|[^>]*?(?:DSML|invoke|parameter|tool_calls)[^>]*>/g, '');
     s = s.replace(/\|[^|]{0,3}DSML[^>]*>/g, '');
     return s;
   }
   function extractToolCalls(t) {
-    var s = String(t || '');
+    var s = normToolText(t);
     var out = [];
-    // 1) 旧格式 <tool name="...">...</tool>
-    var re1 = /<\s*tool\s+name="([^"]+)"\s*>([\s\S]*?)<\s*\/\s*tool\s*>/g, m;
+    var m;
+    // 1) <tool> 通用块：容忍 name 位置、额外属性（parameter 等）、闭合标签变体
+    var re1 = /<\s*tool\b([^>]*)>([\s\S]*?)<\s*\/\s*tool\b[^>]*>/g;
     while ((m = re1.exec(s)) !== null) {
+      var nm = m[1].match(/\bname\s*=\s*"([^"]+)"/i);
+      if (!nm) continue;   // 无工具名，无法执行
+      var inner = m[2].trim();
       var args1 = {};
-      try { args1 = JSON.parse(m[2].trim()); } catch (e) { args1 = { raw: m[2].trim() }; }
-      out.push({ name: m[1].trim(), args: args1 });
+      if (inner) { try { args1 = JSON.parse(inner); } catch (e) { args1 = { raw: inner }; } }
+      out.push({ name: nm[1].trim(), args: args1 });
     }
-    // 2) DeepSeek DSML 格式
-    var re2 = /<\|DSML\|invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|DSML\|invoke\s*>/g;
+    // 2) DeepSeek DSML 格式（含前导空格变体）
+    var re2 = /<\|DSML\|\s*invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|DSML\|\s*invoke\s*>/g;
     while ((m = re2.exec(s)) !== null) {
       var args = {};
       var body = m[2];
-      var pre = /<\|DSML\|parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>([\s\S]*?)<\/\|DSML\|parameter\s*>/g, pm;
+      var pre = /<\|DSML\|\s*parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>([\s\S]*?)<\/\|DSML\|\s*parameter\s*>/g, pm;
       while ((pm = pre.exec(body)) !== null) {
         var pname = pm[1].trim();
         var isStr = pm[2] === 'true';
@@ -980,7 +997,8 @@
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
-      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
+      '\n\n【工具调用格式铁律】开始标签必须是 <tool name="工具名">，结束标签必须是 </tool>，两者完全一致、成对出现；结束标签绝不能写成 </tool parameter> 或加任何多余文字。参数必须是合法的 JSON 对象，例如 <tool name="fs_read">{"path":"/绝对路径"}</tool>。\n' +
+      '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
       '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   function executeTool(call, caps) {
