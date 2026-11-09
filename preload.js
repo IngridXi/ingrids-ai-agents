@@ -139,4 +139,5 @@ contextBridge.exposeInMainWorld('ingrid', {
   chatHistoryLoad: (name) => ipcRenderer.invoke('chat:history:load', name),
   chatHistorySave: (name, history) => ipcRenderer.invoke('chat:history:save', name, history),
   chatHistoryClear: (name) => ipcRenderer.invoke('chat:history:clear', name),
+  chatBackup: () => ipcRenderer.invoke('chat:backup'),
 });

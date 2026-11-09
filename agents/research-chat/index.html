@@ -77,6 +77,20 @@
   .sb-search-2 { padding: 0 12px 8px; display: flex; gap: 6px; align-items: center; }
   .sb-search-2 #searchCount { flex: 1; text-align: left; }
   .resize-handle { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 10; }
+  .sidebar .sb-foot { padding: 8px 12px 12px; border-top: 1px solid var(--line); }
+  #backupBtn { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink-soft); font-size: 12px; cursor: pointer; }
+  #backupBtn:hover { border-color: var(--accent); color: var(--accent); }
+  .session .s-pin { flex: none; width: 20px; height: 20px; border: none; background: none; color: var(--ink-faint); cursor: pointer; font-size: 13px; border-radius: 5px; display: none; line-height: 1; padding: 0; }
+  .session:hover .s-pin { display: block; }
+  .session.pinned .s-pin { display: block; color: var(--accent-2); }
+  .session .s-pin:hover { color: var(--accent); }
+  .msg .copy-btn {
+    position: absolute; top: 6px; right: 12px; padding: 3px 9px; font-size: 11px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink-soft);
+    cursor: pointer; opacity: 0; transition: opacity .12s; z-index: 5;
+  }
+  .msg.assistant:hover .copy-btn { opacity: 1; }
+  .msg .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
   .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
   /* 会话内检索高亮 */
@@ -111,7 +125,7 @@
 
   /* 消息区 */
   #messages { flex: 1; overflow-y: auto; padding: 22px 20px 10px; scroll-behavior: smooth; }
-  .msg { display: flex; margin-bottom: 18px; }
+  .msg { display: flex; margin-bottom: 18px; position: relative; }
   .msg .avatar {
     width: 34px; height: 34px; border-radius: 10px; flex: none;
     display: grid; place-items: center; font-size: 15px;
@@ -301,6 +315,7 @@
       <button id="searchNext" title="下一条">↓</button>
     </div>
     <div id="sessionList"></div>
+    <div class="sb-foot"><button id="backupBtn" title="把全部聊天记录导出为一个 JSON 备份文件">⤓ 备份全部对话</button></div>
     <div class="resize-handle"></div>
   </aside>
   <div class="main-col">
@@ -315,6 +330,8 @@
   <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge">–</span></button>
   <button class="clear-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息，研究助手默认关以保持「只依据证据」）">联网</button>
   <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
+  <button class="clear-btn" id="grillBtn" title="追问挑战：不直接给答案，连环追问逼你理清假设、变量与边界">追问挑战</button>
+  <button class="clear-btn" id="mdBtn" title="把当前对话导出为 Markdown 文件">导出 MD</button>
   <button class="clear-btn" id="batchAuthBtn" title="批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复">🔓 批量授权</button>
   <button class="clear-btn" id="clearBtn" title="开启一个新对话">新对话</button>
 </header>
@@ -470,7 +487,7 @@
     return null;
   }
   function serializeSession(s) {
-    return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, messages: serializeHistory(s.messages) };
+    return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, pinned: !!s.pinned, messages: serializeHistory(s.messages) };
   }
   function persistSessions() {
     if (!IS_DESKTOP) return;
@@ -501,22 +518,29 @@
   function renderSessionList() {
     var box = el('sessionList');
     if (!box) return;
-    var sorted = sessions.slice().sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
+    var sorted = sessions.slice().sort(function (a, b) {
+      if ((a.pinned ? 1 : 0) !== (b.pinned ? 1 : 0)) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
     box.innerHTML = '';
     sorted.forEach(function (s) {
       var row = document.createElement('div');
-      row.className = 'session' + (s.id === activeId ? ' active' : '');
+      row.className = 'session' + (s.id === activeId ? ' active' : '') + (s.pinned ? ' pinned' : '');
       row.title = '单击切换 · 双击重命名';
-      row.innerHTML = '<div class="s-title"></div><div class="s-time"></div><button class="s-del" title="删除会话">✕</button>';
+      row.innerHTML = '<div class="s-title"></div><div class="s-time"></div><button class="s-pin" title="置顶/取消置顶">📌</button><button class="s-del" title="删除会话">✕</button>';
       row.querySelector('.s-title').textContent = s.title || '新对话';
       row.querySelector('.s-time').textContent = relTime(s.updatedAt || s.createdAt || Date.now());
       row.addEventListener('click', function (e) {
-        if (e.target && e.target.classList && e.target.classList.contains('s-del')) return;
+        if (e.target && e.target.classList && (e.target.classList.contains('s-del') || e.target.classList.contains('s-pin'))) return;
         switchSession(s.id);
       });
       row.addEventListener('dblclick', function (e) {
-        if (e.target && e.target.classList && e.target.classList.contains('s-del')) return;
+        if (e.target && e.target.classList && (e.target.classList.contains('s-del') || e.target.classList.contains('s-pin'))) return;
         startRename(s.id, row);
+      });
+      row.querySelector('.s-pin').addEventListener('click', function (e) {
+        e.stopPropagation();
+        togglePin(s.id);
       });
       row.querySelector('.s-del').addEventListener('click', function (e) {
         e.stopPropagation();
@@ -524,6 +548,13 @@
       });
       box.appendChild(row);
     });
+  }
+  function togglePin(id) {
+    var s = sessionById(id);
+    if (!s) return;
+    s.pinned = !s.pinned;
+    persistSessions();
+    renderSessionList();
   }
   function startRename(id, row) {
     var s = sessionById(id);
@@ -606,7 +637,7 @@
         list = [{ id: uid(), title: '历史会话', createdAt: Date.now(), updatedAt: Date.now(), messages: data }];
       } else if (data && Array.isArray(data.sessions)) {
         list = data.sessions.map(function (s) {
-          return { id: s.id || uid(), title: s.title || '新对话', createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), messages: Array.isArray(s.messages) ? s.messages : [] };
+          return { id: s.id || uid(), title: s.title || '新对话', createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), pinned: !!s.pinned, messages: Array.isArray(s.messages) ? s.messages : [] };
         });
         activeId = data.activeId;
       }
@@ -1040,6 +1071,9 @@
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
       s += '\n\n【批量授权模式】用户已开启批量授权：你可以在一次回复里连续输出多个写操作工具（一次多个 <tool>），系统会全部自动执行，无需等待逐个确认。';
     }
+    if (grillMode) {
+      s += '\n\n【追问挑战模式】你此刻不是给答案的助手，而是苏格拉底式思维陪练。铁律：① 每次只问一个问题，聚焦用户陈述里最模糊、最薄弱或最值得怀疑的那一点；② 追问要逼出核心假设、关键变量、反例、边界条件与证据来源；③ 不急于给结论、方案或夸赞，除非用户明确请你收敛，否则持续追问；④ 可以引用用户原话反问，也可抛出一个反例或两难情境检验他的判断；⑤ 语气克制、犀利但不刻薄，一次只打一个点。';
+    }
     s += '\n\n【输出格式】用 Markdown 排版：标题用 # / ##，重点加粗，善用列表、表格、引用；需要展示关系、流程或数据对比时，用 ```mermaid 代码块输出图表（flowchart 流程图、sequenceDiagram 时序图、pie 饼图、xychart-beta 柱状/折线图），不要用纯文字描述本可图示的内容。';
     return s;
   }
@@ -1091,6 +1125,7 @@
   var kbEnabled = true;
   var webEnabled = false;  // 联网搜索开关（研究助手默认关，保持「只依据证据」）
   var reviewMode = false;  // 审稿闭环开关
+  var grillMode = false;   // 追问挑战开关（苏格拉底式连环追问）
 
   function renderKbStatus(s) {
     var badge = el('kbBadge'), statusEl = el('kbStatus');
@@ -1121,9 +1156,39 @@
     var wrap = document.createElement('div');
     wrap.className = 'msg ' + role;
     wrap.innerHTML = avatarHtml(role) + '<div class="bubble">' + html + '</div>';
+    if (role === 'assistant') {
+      var cb = document.createElement('button');
+      cb.className = 'copy-btn';
+      cb.title = '复制回答';
+      cb.textContent = '复制';
+      cb.addEventListener('click', function () { copyBubbleText(wrap.querySelector('.bubble'), cb); });
+      wrap.appendChild(cb);
+    }
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
     return wrap.querySelector('.bubble');
+  }
+  function fallbackCopyText(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  function flashCopy(btn) {
+    if (!btn) return;
+    var o = btn.textContent; btn.textContent = '✓ 已复制';
+    setTimeout(function () { btn.textContent = o; }, 1200);
+  }
+  function copyBubbleText(bubble, btn) {
+    var clone = bubble.cloneNode(true);
+    Array.prototype.forEach.call(clone.querySelectorAll('.think, .cursor, .copy-btn'), function (n) { n.remove(); });
+    var text = clone.textContent.replace(/\n{3,}/g, '\n\n').trim();
+    if (!text) return;
+    var done = function () { flashCopy(btn); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopyText(text); done(); });
+    } else { fallbackCopyText(text); done(); }
   }
   function welcome() {
     var hints = [
@@ -1426,6 +1491,13 @@
     updateModeBtn();
     doSearch(currentQuery);
   });
+  el('backupBtn').addEventListener('click', function () {
+    if (!IS_DESKTOP) { alert('浏览器预览模式无法备份，请用桌面应用'); return; }
+    window.ingrid.chatBackup().then(function (r) {
+      if (r && r.ok) alert('已备份 ' + r.count + ' 个会话文件到：\n' + r.path);
+      else alert('备份失败：' + ((r && r.error) || '未知错误'));
+    }).catch(function (e) { alert('备份失败：' + String(e && e.message || e)); });
+  });
 
   // 批量授权开关
   el('batchAuthBtn').addEventListener('click', function () {
@@ -1441,11 +1513,42 @@
   // 审稿闭环开关
   el('reviewBtn').addEventListener('click', function () {
     reviewMode = !reviewMode;
+    if (reviewMode) { grillMode = false; el('grillBtn').classList.remove('active'); }
     el('reviewBtn').classList.toggle('active', reviewMode);
     el('footNote').textContent = reviewMode
       ? '审稿闭环：产出 → 审稿 → 返修（2 轮），干活与审稿用不同引擎'
       : '本地 Ollama 免费 · 云端 API 需先在主界面「引擎设置」配 Key';
   });
+
+  // 追问挑战开关
+  el('grillBtn').addEventListener('click', function () {
+    grillMode = !grillMode;
+    if (grillMode) { reviewMode = false; el('reviewBtn').classList.remove('active'); }
+    el('grillBtn').classList.toggle('active', grillMode);
+    el('footNote').textContent = grillMode
+      ? '追问挑战：不直接给答案，连环追问逼你理清假设与边界'
+      : '本地 Ollama 免费 · 云端 API 需先在主界面「引擎设置」配 Key';
+  });
+
+  // 导出当前对话为 Markdown
+  function exportMarkdown() {
+    var s = currentSession();
+    if (!s || !s.messages.length) { alert('当前对话还没有内容'); return; }
+    var title = (s.title && s.title !== '新对话') ? s.title : '研究助手对话';
+    var lines = ['# ' + title, ''];
+    s.messages.forEach(function (m) {
+      var who = m.role === 'user' ? '我' : '研究助手';
+      lines.push('## ' + who, '');
+      lines.push(m.content || '', '');
+    });
+    var md = lines.join('\n');
+    if (!IS_DESKTOP) { alert('浏览器预览模式无法导出，请用桌面应用'); return; }
+    window.ingrid.docGenerate({ type: 'md', title: title, content: md }).then(function (r) {
+      if (r && r.ok) alert('已导出：\n' + r.path);
+      else alert('导出失败：' + ((r && r.error) || '未知错误'));
+    }).catch(function (e) { alert('导出失败：' + String(e && e.message || e)); });
+  }
+  el('mdBtn').addEventListener('click', exportMarkdown);
 
   // 知识库交互
   el('kbBtn').addEventListener('click', function () {

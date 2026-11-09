@@ -639,6 +639,26 @@ ipcMain.handle('chat:history:clear', (_e, name) => {
   try { fs.unlinkSync(chatHistoryFile(name)); } catch { /* 不存在则忽略 */ }
   return true;
 });
+// 一键备份：把 chat-history 目录下所有 agent 会话导出为一个 JSON 文件
+ipcMain.handle('chat:backup', () => {
+  try {
+    const dir = path.join(dataDir(), 'chat-history');
+    if (!fs.existsSync(dir)) return { ok: false, error: '还没有聊天记录' };
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+    if (!files.length) return { ok: false, error: '还没有聊天记录' };
+    const payload = { exportedAt: new Date().toISOString(), files: {} };
+    files.forEach(function (f) {
+      try { payload.files[f] = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); }
+      catch { payload.files[f] = null; }
+    });
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    const out = path.join(exportDir(), 'Ingrid-AI-Agents-聊天备份-' + stamp + '.json');
+    fs.writeFileSync(out, JSON.stringify(payload, null, 2), 'utf8');
+    return { ok: true, path: out, name: path.basename(out), count: files.length };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
 
 /* ---------------- IPC：电脑操作员（computer use） ---------------- */
 let computerUseProc = null;
@@ -1054,8 +1074,10 @@ ipcMain.handle('doc:generate', async (_e, payload) => {
         (Array.isArray(sh.rows) ? sh.rows : []).forEach(function (r) { ws.addRow(Array.isArray(r) ? r : [r]); });
       });
       await wb.xlsx.writeFile(file);
+    } else if (type === 'md') {
+      fs.writeFileSync(file, String(p.content || ''), 'utf8');
     } else {
-      return { ok: false, error: '不支持的文档类型：' + type + '（支持 docx / pptx / xlsx）' };
+      return { ok: false, error: '不支持的文档类型：' + type + '（支持 docx / pptx / xlsx / md）' };
     }
     return { ok: true, path: file, name: path.basename(file) };
   } catch (err) {
