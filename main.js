@@ -1050,14 +1050,19 @@ ipcMain.handle('chat:start', (e, payload) => {
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (key) headers.Authorization = 'Bearer ' + key;
+      // 空闲超时：只要持续有数据流入就不中断，仅当 90 秒无任何数据才 abort；总时长上限 10 分钟兜底。
+      // 这样复杂任务（多轮工具调用 + 深度推理）不再被固定超时打断。
+      const STALL_MS = 120000, MAX_MS = 900000;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 120000);
+      let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
+      const maxTimer = setTimeout(() => ctrl.abort(), MAX_MS);
+      const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
       const resp = await fetch(cfg.url, {
         method: 'POST', headers, signal: ctrl.signal,
-        body: JSON.stringify({ model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 4000 }),
+        body: JSON.stringify({ model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 }),
       });
       if (!resp.ok) {
-        clearTimeout(timer);
+        clearTimeout(stallTimer); clearTimeout(maxTimer);
         let msg = 'HTTP ' + resp.status;
         try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
         send('chat:done', { ok: false, error: msg });
@@ -1065,10 +1070,11 @@ ipcMain.handle('chat:start', (e, payload) => {
       }
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
-      let buf = '';
+      let buf = '', truncated = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        resetStall();   // 有数据流入就续期，不再被固定超时打断
         buf += decoder.decode(value, { stream: true });
         let idx;
         while ((idx = buf.indexOf('\n')) >= 0) {
@@ -1078,7 +1084,9 @@ ipcMain.handle('chat:start', (e, payload) => {
           if (data === '[DONE]') continue;
           try {
             const j = JSON.parse(data);
-            const delta = j.choices && j.choices[0] && j.choices[0].delta;
+            const choice = j.choices && j.choices[0];
+            if (choice && choice.finish_reason === 'length') truncated = true;  // 被 max_tokens 截断
+            const delta = choice && choice.delta;
             if (!delta) continue;
             // 思考型模型（如 qwen3）先流 reasoning 再流 content，两者都要透传
             const text = delta.content || '';
@@ -1088,8 +1096,8 @@ ipcMain.handle('chat:start', (e, payload) => {
           } catch { /* 忽略坏块 */ }
         }
       }
-      clearTimeout(timer);
-      send('chat:done', { ok: true });
+      clearTimeout(stallTimer); clearTimeout(maxTimer);
+      send('chat:done', { ok: true, truncated: truncated });
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err) });
     }
@@ -1115,28 +1123,33 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   if (key) headers.Authorization = 'Bearer ' + key;
   const o = opts || {};
   const model = String(o.model || cfg.model);   // 允许调用方覆盖模型
+  // 空闲超时：有数据持续流入就不中断，90 秒无数据才 abort；总时长上限 10 分钟兜底
+  const STALL_MS = 120000, MAX_MS = 900000;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 180000);
+  let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
+  const maxTimer = setTimeout(() => ctrl.abort(), MAX_MS);
+  const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
   const resp = await fetch(cfg.url, {
     method: 'POST', headers, signal: ctrl.signal,
     body: JSON.stringify({
       model: model, messages: messages, stream: true,
       temperature: o.temperature != null ? o.temperature : 0.7,
-      max_tokens: o.maxTokens || 4000,
+      max_tokens: o.maxTokens || 8000,
     }),
   });
   if (!resp.ok) {
-    clearTimeout(timer);
+    clearTimeout(stallTimer); clearTimeout(maxTimer);
     let msg = 'HTTP ' + resp.status;
     try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
     throw new Error(msg);
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
-  let buf = '', text = '', thinking = '';
+  let buf = '', text = '', thinking = '', truncated = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    resetStall();
     buf += decoder.decode(value, { stream: true });
     let idx;
     while ((idx = buf.indexOf('\n')) >= 0) {
@@ -1146,7 +1159,9 @@ async function completeChatStream(engine, messages, onChunk, opts) {
       if (data === '[DONE]') continue;
       try {
         const j = JSON.parse(data);
-        const delta = j.choices && j.choices[0] && j.choices[0].delta;
+        const choice = j.choices && j.choices[0];
+        if (choice && choice.finish_reason === 'length') truncated = true;
+        const delta = choice && choice.delta;
         if (!delta) continue;
         const t = delta.content || '';
         const th = delta.reasoning || delta.reasoning_content || '';
@@ -1155,8 +1170,8 @@ async function completeChatStream(engine, messages, onChunk, opts) {
       } catch { /* 忽略坏块 */ }
     }
   }
-  clearTimeout(timer);
-  return { text: text, thinking: thinking };
+  clearTimeout(stallTimer); clearTimeout(maxTimer);
+  return { text: text, thinking: thinking, truncated: truncated };
 }
 
 ipcMain.handle('chat:review-loop', (e, payload) => {

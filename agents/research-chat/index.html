@@ -193,6 +193,7 @@
   .msg .bubble .status-line .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; animation: blink 1.2s infinite; }
   .msg .bubble .status-line .dots i:nth-child(2) { animation-delay: .2s; }
   .msg .bubble .status-line .dots i:nth-child(3) { animation-delay: .4s; }
+  .msg.user .bubble .engine-note { margin-top: 8px; padding: 6px 10px; font-size: 12px; line-height: 1.5; color: var(--accent-2); background: rgba(126,108,209,.10); border-radius: 8px; }
 
   /* 写操作审批卡片 */
   .approval-card {
@@ -452,7 +453,7 @@
       { id: 'qwen2.5vl:7b', label: 'qwen2.5vl:7b · 识图', desc: '本地视觉模型 · 看图 / OCR / 截图提问' },
     ],
     deepseek: [
-      { id: 'deepseek-flash', label: 'Flash · 快 / 便宜', desc: '日常聊天、文献综述、工具调用、RAG、识图；速度快、最便宜' },
+      { id: 'deepseek-flash', label: 'Flash · 快 / 便宜', desc: '日常聊天、文献综述、工具调用、RAG；速度快、最便宜（不支持图片）' },
       { id: 'deepseek-v4-pro', label: 'V4-Pro · 深度推理', desc: '最难推理、长链路编程与数学难题；更强但更贵更慢' },
     ],
     gpt: [
@@ -955,7 +956,7 @@
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
-      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。\n' +
+      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
       '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   function executeTool(call, caps) {
@@ -1413,13 +1414,23 @@
     input.value = ''; autoGrow();
     pendingImage = null; renderImgPreview();
 
+    // 带图片时：自动切到支持图片的视觉引擎（DeepSeek / Qwen / 本地文本模型均不支持图片输入）
+    var engine = engineSelect.value || 'ollama';
+    var model = modelSelect.value || '';
+    var imgEngineNote = '';
+    if (img && engine !== 'ollama-vision' && engine !== 'gpt') {
+      engine = 'ollama-vision'; model = defaultModelId('ollama-vision');
+      imgEngineNote = '<div class="engine-note">📷 当前引擎不支持图片，已自动切换到本地视觉模型（qwen2.5vl:7b）</div>';
+    }
+
     // 清掉欢迎态
     if (messages.querySelector('.welcome')) messages.innerHTML = '';
 
-    // 用户气泡（含图片缩略）
+    // 用户气泡（含图片缩略 + 引擎切换提示）
     var userHtml = '';
     if (img) userHtml += '<div class="user-img"><img src="' + img.dataUrl + '"></div>';
     userHtml += esc(text || (img ? '（发送了一张图片）' : ''));
+    userHtml += imgEngineNote;
     addBubble('user', userHtml);
 
     // 审稿闭环模式：产出 → 审稿 → 返修（独立多气泡渲染）
@@ -1439,10 +1450,7 @@
     var statusText = '正在思考…';   // 当前状态提示（首字延迟 / 工具调用往返）
     streaming = true; sendBtn.disabled = true;
 
-    // 带图片时：本地文本模型自动切到视觉模型
-    var engine = engineSelect.value || 'ollama';
-    var model = modelSelect.value || '';
-    if (img && engine === 'ollama') { engine = 'ollama-vision'; model = defaultModelId('ollama-vision'); }
+    // engine / model 已在上面确定（含图片自动切换逻辑）
 
     function statusHtml(txt) {
       return '<div class="status-line">' + esc(txt) + '<span class="dots"><i></i><i></i><i></i></span></div>';
@@ -1499,7 +1507,7 @@
         return;
       }
 
-      function runToolTurn(msgs, round) {
+      function runToolTurn(msgs, round, contN) {
         live = '';
         window.ingrid.chatStream({ engine: engine, model: model, messages: msgs }, {
           onDelta: function (chunk) {
@@ -1512,7 +1520,11 @@
             if (d && !d.ok) { finish(acc + stripToolMarkers(rawRound), d && d.error); return; }
             var calls = extractToolCalls(rawRound);
             if (calls.length && round < MAX_TOOL_ROUNDS) {
-              acc += stripToolMarkers(rawRound);
+              // 中间轮：叙述 + 工具调用记录折叠进「思考过程」，不累进正文，
+              // 避免模型每轮重复叙述导致最终答案出现重复段落
+              var narrate = stripToolMarkers(rawRound).trim();
+              var trace = (narrate ? narrate + '\n' : '') + '[已使用工具 ' + calls.map(function (c) { return c.name; }).join('、') + ']';
+              thinking += (thinking ? '\n\n' : '') + trace;
               live = '';
               statusText = '正在使用工具 ' + calls.map(function (c) { return c.name; }).join('、') + '…';
               renderStream();
@@ -1520,15 +1532,25 @@
               Promise.all(calls.map(function (c) {
                 return executeTool(c, caps).then(function (r) { return formatToolResult(c, r); });
               })).then(function (results) {
-                acc += '\n\n[已使用工具 ' + calls.map(function (c) { return c.name; }).join('、') + ']\n\n';
                 statusText = '正在思考…';
                 renderStream();
                 var next = msgs.concat([{ role: 'assistant', content: rawRound }])
                   .concat([{ role: 'user', content: results.join('\n\n') }]);
-                runToolTurn(next, round + 1);
-              }).catch(function () { finish(acc + stripToolMarkers(rawRound)); });
+                runToolTurn(next, round + 1, 0);
+              }).catch(function () { finish(acc + stripToolMarkers(rawRound), '工具执行失败，已停止'); });
             } else {
               acc += stripToolMarkers(rawRound);
+              var c = contN || 0;
+              if (d && d.truncated && c < 3) {
+                // 被 max_tokens 截断：自动续写，直到自然结束或续写 3 次封顶
+                var contMsgs = msgs.concat([{ role: 'assistant', content: rawRound }])
+                  .concat([{ role: 'user', content: '（继续，紧接上文接着写，不要重复已写内容）' }]);
+                statusText = '内容较长，继续生成…';
+                live = '';
+                renderStream();
+                runToolTurn(contMsgs, round, c + 1);
+                return;
+              }
               finish(acc);
             }
           },
