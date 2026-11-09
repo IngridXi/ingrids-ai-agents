@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, safeStorage, shell, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, shell, Notification, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execFile } = require('child_process');
@@ -474,6 +474,113 @@ async function runCalendarSync() {
   const summary = { results: results, total: synced.length, syncedAt: Date.now() };
   broadcast('calendar:synced', summary);
   return summary;
+}
+
+/* ---------------- ICS 订阅：只读自动同步外部日历（Teams/Outlook 等发布的 .ics 链接） ---------------- */
+function readIcsFeedsRaw() { return readJson('ics-feeds.json', { feeds: [] }); }
+
+function listIcsFeeds() {
+  return (readIcsFeedsRaw().feeds || []).map(function (f) {
+    return { id: String(f.id || ''), name: String(f.name || ''), url: String(f.url || ''), createdAt: Number(f.createdAt) || Date.now() };
+  });
+}
+
+function addIcsFeed(name, url) {
+  const cleanUrl = String(url || '').trim();
+  const cleanName = String(name || '').trim() || '外部日历';
+  if (!/^https?:\/\//i.test(cleanUrl)) return { ok: false, error: '链接必须以 http:// 或 https:// 开头' };
+  const raw = readIcsFeedsRaw();
+  const feeds = Array.isArray(raw.feeds) ? raw.feeds : [];
+  const feed = { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: cleanName, url: cleanUrl, createdAt: Date.now() };
+  feeds.push(feed);
+  writeJson('ics-feeds.json', { feeds: feeds });
+  return { ok: true, feed: feed };
+}
+
+function removeIcsFeed(id) {
+  const raw = readIcsFeedsRaw();
+  const feeds = Array.isArray(raw.feeds) ? raw.feeds.filter(function (f) { return String(f.id) !== String(id); }) : [];
+  writeJson('ics-feeds.json', { feeds: feeds });
+  // 顺带清掉该订阅同步进来的日程
+  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+  const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-' + id + '-'); });
+  writeJson('secretary.json', { events: others, emails: state.emails || [], thoughts: state.thoughts || [] });
+  return listIcsFeeds();
+}
+
+/** 拉取所有 ICS 订阅并合并进秘书日程（只读；每 30 分钟自动调用） */
+async function runIcsSync() {
+  const feeds = listIcsFeeds();
+  const results = [];
+  let allEvents = [];
+  for (const feed of feeds) {
+    let r;
+    try {
+      const resp = await fetch(feed.url, { headers: { 'User-Agent': 'Ingrid-AI-Agents/1.0', 'Accept': 'text/calendar' }, redirect: 'follow' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const text = await resp.text();
+      const events = syncEngine.parseICalendar(text);
+      if (!events.length) throw new Error('未解析到日程（链接可能已失效或不是 ICS 格式）');
+      events.forEach(function (ev) { ev._feedId = feed.id; ev._feedName = feed.name; });
+      allEvents = allEvents.concat(events);
+      r = { ok: true, count: events.length };
+    } catch (e) {
+      r = { ok: false, count: 0, error: String(e && e.message || e) };
+    }
+    results.push({ id: feed.id, name: feed.name, ok: r.ok, count: r.count, error: r.error || '' });
+  }
+  // 合并：移除旧的 ics- 订阅事件，写入新事件；保留 cal-/手动/导入事件；继承 reminded/done 防重复提醒
+  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+  const oldIcs = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return String(e.id).startsWith('ics-'); });
+  const oldMap = {};
+  oldIcs.forEach(function (e) { oldMap[e.id] = e; });
+  const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-'); });
+  const synced = [];
+  allEvents.forEach(function (ev, i) {
+    var uid = ev.uid ? String(ev.uid).replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 40) : ('n' + i);
+    var id = 'ics-' + ev._feedId + '-' + uid;
+    var old = oldMap[id];
+    synced.push({
+      id: id, title: ev.title, at: ev.at, end: ev.end || '',
+      location: ev.location || '', source: ev._feedName || 'ICS 订阅', note: ev.description || '',
+      reminderMin: ev.allDay ? 0 : 30,
+      reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
+      createdAt: old ? old.createdAt : Date.now(), category: 'other',
+    });
+  });
+  const merged = others.concat(synced);
+  merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+  writeJson('secretary.json', { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] });
+  const summary = { results: results, total: synced.length, syncedAt: Date.now() };
+  broadcast('calendar:synced', summary);
+  return summary;
+}
+
+/** 导入一次性 .ics 文件（手动兜底，无需订阅链接） */
+async function importIcsFile() {
+  const r = await dialog.showOpenDialog({ title: '导入 .ics 日历文件', properties: ['openFile'], filters: [{ name: 'iCalendar', extensions: ['ics'] }] });
+  if (r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, canceled: true };
+  try {
+    const text = fs.readFileSync(r.filePaths[0], 'utf8');
+    const events = syncEngine.parseICalendar(text);
+    if (!events.length) return { ok: false, error: '该文件里没有解析到日程' };
+    const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+    const list = Array.isArray(state.events) ? state.events.slice() : [];
+    const stamp = Date.now().toString(36);
+    events.forEach(function (ev, i) {
+      list.push({
+        id: 'icsimp-' + stamp + '-' + i, title: ev.title, at: ev.at, end: ev.end || '',
+        location: ev.location || '', source: '导入 · ' + path.basename(r.filePaths[0]), note: ev.description || '',
+        reminderMin: ev.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(), category: 'other',
+      });
+    });
+    list.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+    writeJson('secretary.json', { events: list, emails: state.emails || [], thoughts: state.thoughts || [] });
+    broadcast('calendar:synced', { total: events.length, syncedAt: Date.now() });
+    return { ok: true, count: events.length };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
 }
 
 /* ---------------- 研究日历：分类 + 到期自动提醒 ---------------- */
@@ -1322,6 +1429,18 @@ ipcMain.handle('sync:calendar:push', async (_e, ev) => {
 /** 即将到来的研究日程（研究助手注入上下文用） */
 ipcMain.handle('calendar:upcoming', (_e, days) => upcomingDeadlines(days));
 
+/* ---------------- ICS 订阅 / 导入 ---------------- */
+ipcMain.handle('calendar:ics:list', () => listIcsFeeds());
+ipcMain.handle('calendar:ics:add', async (_e, name, url) => {
+  const r = addIcsFeed(name, url);
+  if (!r.ok) return r;
+  await runIcsSync().catch(function (e) { return { ok: false, error: String(e && e.message || e) }; });
+  return { ok: true, feed: r.feed };
+});
+ipcMain.handle('calendar:ics:remove', (_e, id) => removeIcsFeed(id));
+ipcMain.handle('calendar:ics:run', () => runIcsSync());
+ipcMain.handle('calendar:ics:import', () => importIcsFile());
+
 /** 同步 Outlook 邮箱（Microsoft Graph Mail） */
 ipcMain.handle('sync:mail:run', () => runMailSync());
 
@@ -1919,6 +2038,9 @@ app.whenReady().then(() => {
   // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
   runCalendarSync().catch(() => {});
   setInterval(() => { runCalendarSync().catch(() => {}); }, 30 * 60 * 1000);
+  // ICS 订阅（Teams/Outlook 等发布的外部日历）：启动即拉取 + 每 30 分钟自动刷新
+  runIcsSync().catch(() => {});
+  setInterval(() => { runIcsSync().catch(() => {}); }, 30 * 60 * 1000);
   // 邮箱自动同步：Outlook 邮箱同样每 30 分钟拉取一次
   runMailSync().catch(() => {});
   setInterval(() => { runMailSync().catch(() => {}); }, 30 * 60 * 1000);

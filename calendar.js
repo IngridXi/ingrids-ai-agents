@@ -228,9 +228,10 @@
       lines.push('在秘书面板「日程」区点「同步日历（iCloud）」完成配置');
     }
     if (syncError) lines.push('<span class="warn">' + esc(syncError) + '</span>');
-    lines.push('<button id="calRefresh">刷新日程</button>');
+    lines.push('<span style="display:inline-flex;gap:10px"><button id="calRefresh">刷新日程</button><button id="calIcs">⤓ 订阅 / 导入日历</button></span>');
     $('calFoot').innerHTML = lines.join('<br>');
     var rb = $('calRefresh'); if (rb) rb.addEventListener('click', loadAll);
+    var ib = $('calIcs'); if (ib) ib.addEventListener('click', openIcsModal);
   }
 
   function fmtRelative(ts) {
@@ -404,6 +405,86 @@
     }
   }
   $('calAdd').addEventListener('click', openAddModal);
+
+  /* ---------- ICS 订阅 / 导入外部日历（自动同步，不靠手动） ---------- */
+  function openIcsModal() {
+    if (!document.getElementById('calIcsStyle')) {
+      var st = document.createElement('style');
+      st.id = 'calIcsStyle';
+      st.textContent = [
+        '.cal-modal .feed-list{margin-bottom:12px;max-height:150px;overflow:auto;}',
+        '.cal-modal .feed{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;padding:7px 9px;margin-bottom:6px;background:#fafafa;}',
+        '.cal-modal .feed .fn{flex:1;min-width:0;font-size:12.5px;font-weight:650;color:var(--ink);}',
+        '.cal-modal .feed .fu{font-size:10.5px;color:var(--ink-faint);word-break:break-all;font-weight:400;}',
+        '.cal-modal .feed button{border:none;background:none;color:#e5484d;cursor:pointer;font-size:13px;padding:2px 4px;}',
+        '.cal-modal .ics-actions{display:flex;gap:8px;margin-top:14px;border-top:1px solid var(--line);padding-top:12px;}',
+        '.cal-modal .ics-actions button{flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:12.5px;cursor:pointer;}',
+      ].join('\n');
+      document.head.appendChild(st);
+    }
+    modalMask.innerHTML =
+      '<div class="cal-modal">' +
+        '<h3>⤓ 订阅 / 导入外部日历</h3>' +
+        '<div class="sub">粘贴 Teams / Outlook 等发布的 <b>.ics 订阅链接</b>，应用会每 30 分钟自动拉取更新、到点自动提醒，<b>不用手动同步</b>；拿不到链接就导入一次性 .ics 文件兜底。</div>' +
+        '<div class="feed-list" id="icsFeedList"></div>' +
+        '<div class="kv"><label>名称</label><input id="icsName" placeholder="例如：学校 Teams 日历"></div>' +
+        '<div class="kv"><label>订阅链接（.ics）</label><input id="icsUrl" placeholder="https://…/calendar.ics"></div>' +
+        '<div class="foot" style="margin-top:0"><button id="icsAdd" class="primary">添加并同步</button></div>' +
+        '<div class="ics-actions">' +
+          '<button id="icsImportFile">📄 导入 .ics 文件（一次性）</button>' +
+          '<button id="icsClose">关闭</button>' +
+        '</div>' +
+      '</div>';
+    modalMask.style.display = 'flex';
+    $('icsClose').addEventListener('click', closeModal);
+    modalMask.addEventListener('click', function (e) { if (e.target === modalMask) closeModal(); });
+    $('icsAdd').addEventListener('click', addIcsFeed);
+    $('icsImportFile').addEventListener('click', importIcsFile);
+    loadIcsFeeds();
+    setTimeout(function () { var n = $('icsName'); if (n) n.focus(); }, 50);
+  }
+
+  function loadIcsFeeds() {
+    if (!IS_DESKTOP) { $('icsFeedList').innerHTML = '<div class="cal-empty">仅桌面版支持</div>'; return; }
+    window.ingrid.calendarIcsList().then(function (feeds) {
+      var box = $('icsFeedList');
+      if (!box) return;
+      feeds = feeds || [];
+      if (!feeds.length) { box.innerHTML = '<div class="cal-empty">还没有订阅，添加一个吧</div>'; return; }
+      box.innerHTML = feeds.map(function (f) {
+        return '<div class="feed"><div class="fn"><div>' + esc(f.name) + '</div><div class="fu">' + esc(f.url) + '</div></div><button data-id="' + esc(f.id) + '" title="删除订阅">✕</button></div>';
+      }).join('');
+      Array.prototype.forEach.call(box.querySelectorAll('button'), function (b) {
+        b.addEventListener('click', function () { removeIcsFeed(b.getAttribute('data-id')); });
+      });
+    }).catch(function () {});
+  }
+
+  function addIcsFeed() {
+    var name = ($('icsName').value || '').trim();
+    var url = ($('icsUrl').value || '').trim();
+    if (!url) { $('icsUrl').focus(); return; }
+    var btn = $('icsAdd'); btn.disabled = true; btn.textContent = '同步中…';
+    window.ingrid.calendarIcsAdd(name, url).then(function (r) {
+      btn.disabled = false; btn.textContent = '添加并同步';
+      if (r && r.ok) { $('icsName').value = ''; $('icsUrl').value = ''; loadIcsFeeds(); loadEvents(); }
+      else { alert('添加失败：' + (r && r.error ? r.error : '未知错误')); }
+    }).catch(function (e) { btn.disabled = false; btn.textContent = '添加并同步'; alert('添加失败：' + String(e && e.message || e)); });
+  }
+
+  function removeIcsFeed(id) {
+    if (!confirm('删除这个订阅？它同步进来的日程也会一并移除。')) return;
+    window.ingrid.calendarIcsRemove(id).then(function () { loadIcsFeeds(); loadEvents(); }).catch(function () {});
+  }
+
+  function importIcsFile() {
+    var btn = $('icsImportFile'); btn.disabled = true;
+    window.ingrid.calendarIcsImport().then(function (r) {
+      btn.disabled = false;
+      if (r && r.ok) { loadEvents(); alert('已导入 ' + r.count + ' 条日程'); }
+      else if (!(r && r.canceled)) { alert('导入失败：' + (r && r.error ? r.error : '未知错误')); }
+    }).catch(function (e) { btn.disabled = false; alert('导入失败：' + String(e && e.message || e)); });
+  }
 
   /* ---------- 收起 / 隐藏 / 拖拽 ---------- */
   $('calMin').addEventListener('click', function () {

@@ -100,6 +100,13 @@ contextBridge.exposeInMainWorld('ingrid', {
   calendarUpcoming: (days) => ipcRenderer.invoke('calendar:upcoming', days),
   onCalendarReminder: (cb) => ipcRenderer.on('calendar:reminder', (_e, d) => { if (cb) cb(d || []); }),
 
+  // ICS 订阅 / 导入外部日历（Teams/Outlook 等发布的 .ics）
+  calendarIcsList: () => ipcRenderer.invoke('calendar:ics:list'),
+  calendarIcsAdd: (name, url) => ipcRenderer.invoke('calendar:ics:add', name, url),
+  calendarIcsRemove: (id) => ipcRenderer.invoke('calendar:ics:remove', id),
+  calendarIcsRun: () => ipcRenderer.invoke('calendar:ics:run'),
+  calendarIcsImport: () => ipcRenderer.invoke('calendar:ics:import'),
+
   // Outlook 邮箱同步
   syncMailRun: () => ipcRenderer.invoke('sync:mail:run'),
   onMailSynced: (cb) => ipcRenderer.on('mail:synced', (_e, d) => { if (cb) cb(d || {}); }),
