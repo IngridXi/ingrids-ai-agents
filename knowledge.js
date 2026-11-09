@@ -208,7 +208,7 @@
           } else if (r.skippedCount > 0) {
             status.textContent = '完成：本次新处理 ' + r.processedCount + ' 篇，跳过已构建 ' + r.skippedCount + ' 篇；共 ' + r.allTermCount + ' 个术语' + rangeNote;
           } else {
-            status.textContent = '完成：' + r.allTermCount + ' 个术语 · 新增 ' + r.noteCount + ' 篇笔记' + rangeNote;
+            status.textContent = '完成：' + r.allTermCount + ' 个术语 · 重写 ' + r.noteCount + ' 篇笔记' + rangeNote;
           }
           result.style.display = 'block';
           var termsHtml = (r.terms || []).slice(0, 25).map(function (t) {
@@ -217,7 +217,7 @@
           }).join('');
           var writeNote = (r.processedCount === 0)
             ? '本次无新文献，未改动笔记。当前术语网共 ' + r.allTermCount + ' 个术语、' + (r.edges ? r.edges.length : 0) + ' 条关联。'
-            : '新增 ' + r.noteCount + ' 篇术语笔记（已存在的保留不覆盖，你的手动编辑不会被冲掉）+ 刷新总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。';
+            : '重写 ' + r.noteCount + ' 篇术语笔记（每次覆盖，保证每个术语的「相关术语」双链都是最新的）+ 刷新总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。';
           result.innerHTML = '<div style="margin-bottom:8px">' + writeNote + ' 点上方「打开 Obsidian 看图谱」→ 打开「术语总览」→ 切到图谱视图看网状图。</div>' + termsHtml;
         }).catch(function (e) {
           btn.disabled = false;
