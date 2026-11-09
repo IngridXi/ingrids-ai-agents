@@ -115,6 +115,9 @@
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook 邮箱</button></div></div>' +
+      '<div class="sec-sec"><label>知识库 · Notion</label>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('link') + ' 连接 Notion</button></div>' +
+        '<div class="sec-bout" id="secNotionOut" hidden></div></div>' +
       '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
         '<div class="sec-row"><input type="text" id="secUrl" placeholder="粘贴网址，如 https://arxiv.org/abs/..." style="flex:1">' +
         '<button class="sec-btn" id="secBrowse">打开</button></div>' +
@@ -377,14 +380,6 @@
         '<div class="f"><label>Client ID</label><input id="mClientId" placeholder="Application (client) ID"></div>' +
         '<div class="f"><label>Client Secret</label><input type="password" id="mClientSecret" placeholder="..."></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="mConnect">' + iconSvg('link') + ' 连接 Microsoft 365</button></div>' +
-        '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
-        '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('link') + ' Notion 知识库（token 接入）</div>' +
-        '<div class="sec-bhint">在 notion.so/my-integrations 创建集成，把 Internal Integration Token 粘贴到下面（形如 ntn_ 或 secret_ 开头）。token 加密存本机钥匙串。</div>' +
-        '<div class="f"><label>Notion Token</label><input type="password" id="notionToken" placeholder="ntn_... 或 secret_..."></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="notionSave">' + iconSvg('check') + ' 保存 token</button></div>' +
-        '<div class="f" style="margin-top:8px"><label>搜索页面 / 数据库</label><input id="notionQuery" placeholder="例如：文献综述"></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="notionSearch">' + iconSvg('search') + ' 搜索 Notion</button></div>' +
-        '<div class="sec-bout" id="notionResult" hidden></div>' +
         '</div>';
       modalMask.querySelector('#calCancel').addEventListener('click', closeModal);
       modalMask.querySelector('#calSave').addEventListener('click', function () {
@@ -446,32 +441,53 @@
       modalMask.querySelector('#gConnect').addEventListener('click', function () { startOAuth('google', 'Google', '#gClientId', '#gClientSecret', this); });
       modalMask.querySelector('#mConnect').addEventListener('click', function () { startOAuth('microsoft', 'Microsoft 365', '#mClientId', '#mClientSecret', this); });
 
-      // Notion token 保存
-      modalMask.querySelector('#notionSave').addEventListener('click', function () {
-        var t = modalMask.querySelector('#notionToken').value.trim();
-        if (!t) { alert('请先粘贴 Notion Token'); return; }
-        window.ingrid.notionConfigure(t).then(function () {
-          var box = modalMask.querySelector('#notionResult');
-          box.hidden = false; box.textContent = '✓ Notion token 已保存（加密存本机）。';
-        }).catch(function (e) { alert(String(e && e.message || e)); });
-      });
-      // Notion 搜索
-      modalMask.querySelector('#notionSearch').addEventListener('click', function () {
-        var q = modalMask.querySelector('#notionQuery').value.trim();
-        var box = modalMask.querySelector('#notionResult');
-        box.hidden = false; box.textContent = '搜索中…';
-        window.ingrid.notionSearch(q).then(function (r) {
-          if (!r || !r.ok) { box.textContent = (r && r.error) || '搜索失败'; return; }
-          if (!r.results || !r.results.length) { box.textContent = '没有找到匹配的页面。'; return; }
-          box.innerHTML = r.results.map(function (it) {
-            return '<div style="margin-bottom:6px">' + (it.object === 'database' ? '🗂️' : '📄') + ' <b>' + esc(it.title) + '</b>' +
-              '<div style="color:var(--ink-faint);font-size:10px">' + esc(it.id) + '</div></div>';
-          }).join('');
-        }).catch(function (e) { box.textContent = '搜索失败：' + (e && e.message || e); });
-      });
     });
   }
   document.getElementById('secSyncCal').addEventListener('click', openSyncModal);
+
+  /* Notion 知识库：独立入口（不再埋在「同步日历」弹窗里） */
+  function openNotionModal() {
+    if (!DESKTOP || !window.ingrid.notionConfigure) { alert('Notion 接入需要在桌面版使用'); return; }
+    modalMask.style.display = 'flex';
+    modalMask.innerHTML =
+      '<div class="sec-modal"><h3>' + iconSvg('link') + ' 连接 Notion 知识库</h3>' +
+      '<div class="sub">在 notion.so/my-integrations 创建集成，把 Internal Integration Token 粘贴到下面（形如 ntn_ 或 secret_ 开头）。token 加密存本机钥匙串，不上传。</div>' +
+      '<div class="f"><label>Notion Token</label><input type="password" id="notionToken" placeholder="ntn_... 或 secret_..."></div>' +
+      '<div class="sec-row"><button class="sec-btn" id="notionSave">' + iconSvg('check') + ' 保存 token</button></div>' +
+      '<div class="sec-bout" id="notionResult" hidden></div>' +
+      '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
+      '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('search') + ' 验证 / 搜索你的页面</div>' +
+      '<div class="sec-bhint">保存 token 后，还要在 Notion 里给要读的页面 / 数据库授权这个集成（页面右上角 ··· → Connections → 勾选），否则搜不到内容。</div>' +
+      '<div class="f"><label>搜索页面 / 数据库</label><input id="notionQuery" placeholder="例如：文献综述"></div>' +
+      '<div class="sec-row"><button class="sec-btn ghost" id="notionSearch">' + iconSvg('search') + ' 搜索 Notion</button></div>' +
+      '<div class="sec-bout" id="notionResult2" hidden></div>' +
+      '<div class="foot"><button id="notionClose">关闭</button></div>' +
+      '</div>';
+    modalMask.querySelector('#notionClose').addEventListener('click', closeModal);
+    modalMask.querySelector('#notionSave').addEventListener('click', function () {
+      var t = modalMask.querySelector('#notionToken').value.trim();
+      if (!t) { alert('请先粘贴 Notion Token'); return; }
+      window.ingrid.notionConfigure(t).then(function () {
+        var box = modalMask.querySelector('#notionResult');
+        box.hidden = false; box.textContent = '✓ Notion token 已保存（加密存本机）。';
+      }).catch(function (e) { alert(String(e && e.message || e)); });
+    });
+    modalMask.querySelector('#notionSearch').addEventListener('click', function () {
+      var q = modalMask.querySelector('#notionQuery').value.trim();
+      if (!q) { alert('请先输入要搜索的关键词'); return; }
+      var box = modalMask.querySelector('#notionResult2');
+      box.hidden = false; box.textContent = '搜索中…';
+      window.ingrid.notionSearch(q).then(function (r) {
+        if (!r || !r.ok) { box.textContent = (r && r.error) || '搜索失败'; return; }
+        if (!r.results || !r.results.length) { box.textContent = '没有找到匹配的页面（检查是否已给页面授权集成）。'; return; }
+        box.innerHTML = r.results.map(function (it) {
+          return '<div style="margin-bottom:6px">' + (it.object === 'database' ? '🗂️' : '📄') + ' <b>' + esc(it.title) + '</b>' +
+            '<div style="color:var(--ink-faint);font-size:10px">' + esc(it.id) + '</div></div>';
+        }).join('');
+      }).catch(function (e) { box.textContent = '搜索失败：' + (e && e.message || e); });
+    });
+  }
+  document.getElementById('secNotion').addEventListener('click', openNotionModal);
 
   /* 同步 Outlook 邮箱（Microsoft Graph Mail） */
   document.getElementById('secSyncMail').addEventListener('click', function () {
