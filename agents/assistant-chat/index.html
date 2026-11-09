@@ -246,6 +246,7 @@
   .img-preview .x:hover { color: var(--danger); }
   .user-img { margin-bottom: 8px; }
   .user-img img { max-width: 220px; max-height: 180px; border-radius: 10px; display: block; }
+  .msg.user .bubble .note-tag { display: inline-block; margin-right: 6px; padding: 1px 7px; font-size: 11px; font-weight: 600; color: #fff; background: var(--accent-2); border-radius: 6px; vertical-align: 1px; }
   .foot-note { text-align: center; font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
   .context-tag { font-size: 11px; color: var(--ink-faint); margin-top: 6px; text-align: center; min-height: 14px; }
 </style>
@@ -368,6 +369,8 @@
 
   var history = [];
   var streaming = false;
+  var pendingNotes = [];       // 生成中排队待发的「补充说明」（无需 /note 前缀）
+  var suppressUserBubble = false;  // 自动续发补充说明时，用户气泡已提前显示，跳过重复添加
   var writeAuthMode = 'per-item';  // 'per-item' 逐个审批 | 'session' 会话级批量授权
   var webEnabled = true;
   var pendingImage = null;   // { dataUrl, name }
@@ -1097,6 +1100,19 @@
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
   }
 
+  // 补充说明的包装格式：让模型知道这是附加约束/偏好，而非新任务
+  function noteWrap(s) {
+    return '【补充说明 · 仅作为附加约束/偏好，不是新任务，请纳入后续工作方式但不要复述它】\n' + s;
+  }
+
+  // 生成中发送文字：自动当作「补充说明」，排队等当前回复结束后自动续发（无需 /note 前缀）
+  function queueNote(text) {
+    input.value = ''; autoGrow();
+    var html = '<span class="note-tag">补充说明</span>' + esc(text);
+    addBubble('user', html);
+    pendingNotes.push(text);
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -1106,16 +1122,34 @@
   function send() {
     var text = input.value.trim();
     var img = pendingImage;
-    if ((!text && !img) || streaming) return;
+    if (!text && !img) return;
+    // 生成中发送：文字自动当作「补充说明」排队，当前回复结束后自动续发（无需 /note 前缀）
+    if (streaming) {
+      if (text) queueNote(text);
+      return;
+    }
     input.value = ''; autoGrow();
     pendingImage = null; renderImgPreview();
-    if (messages.querySelector('.welcome')) messages.innerHTML = '';
-    var userHtml = (img ? '<div class="user-img"><img src="' + img.dataUrl + '"></div>' : '') + esc(text || (img ? '（发送了一张图片）' : ''));
-    addBubble('user', userHtml);
 
-    // 1) 粘贴网址 → 抓取网页正文，基于网页回答（仅纯文本时）
-    var urlMatch = text.match(/https?:\/\/\S+/);
-    if (urlMatch && !img && IS_DESKTOP) {
+    // 识别「补充说明」前缀（/note、/n、/补充、/备注 或 【补充】、[note]）
+    var isNote = false;
+    var body = text;
+    var nm = text.match(/^\/(?:note|n|补充|备注)\s+([\s\S]*)$/i);
+    if (!nm) nm = text.match(/^(?:【补充】|\[note\]|\[补充\])\s*([\s\S]*)$/i);
+    if (nm && nm[1] && nm[1].trim()) { isNote = true; body = nm[1].trim(); }
+
+    if (messages.querySelector('.welcome')) messages.innerHTML = '';
+    // 用户气泡（补充说明加标签；自动续发时用户气泡已提前显示，跳过）
+    var userHtml = '';
+    if (img) userHtml += '<div class="user-img"><img src="' + img.dataUrl + '"></div>';
+    if (isNote) userHtml += '<span class="note-tag">补充说明</span>';
+    userHtml += esc(body || (img ? '（发送了一张图片）' : ''));
+    if (!suppressUserBubble) addBubble('user', userHtml);
+    suppressUserBubble = false;
+
+    // 1) 粘贴网址 → 抓取网页正文，基于网页回答（仅纯文本，且非补充说明）
+    var urlMatch = body.match(/https?:\/\/\S+/);
+    if (urlMatch && !img && !isNote && IS_DESKTOP) {
       var url = urlMatch[0];
       var instruction = text.replace(urlMatch[0], '').trim() || '请总结这个网页的主要内容';
       history.push({ role: 'user', content: text });
@@ -1139,7 +1173,7 @@
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
-      history.push({ role: 'user', content: text || (img ? '（图片）' : '') });
+      history.push({ role: 'user', content: isNote ? noteWrap(body) : (body || (img ? '（图片）' : '')) });
       if (finalText) history.push({ role: 'assistant', content: finalText });
       while (history.length > 24) history.shift();
       touchCurrentSession();
@@ -1152,9 +1186,16 @@
       streaming = false; sendBtn.disabled = false;
       setContextTag('');
       input.focus();
+      // 正常结束后若有排队的补充说明，自动当作 /note 续发，让约束立即生效
+      if (!err && pendingNotes.length) {
+        suppressUserBubble = true;
+        input.value = '/note ' + pendingNotes.shift();
+        setTimeout(send, 0);
+      }
     }
     function run(content) {
       var prompt = content || (img ? '请分析这张图片。' : '');
+      if (isNote) prompt = noteWrap(prompt);
       var userMsg = { role: 'user', content: prompt };
       if (img) userMsg.content = [
         { type: 'text', text: prompt },
@@ -1201,8 +1242,10 @@
       runToolTurn(reqMessages, 0);
     }
 
-    // 联网搜索：先搜再答
-    if (webEnabled && IS_DESKTOP) {
+    // 补充说明是约束/偏好，不走联网搜索，直接发给模型；其余按开关联网
+    if (isNote) {
+      run(body);
+    } else if (webEnabled && IS_DESKTOP) {
       setContextTag('🔍 正在联网搜索…');
       window.ingrid.webSearch({ query: text, n: 4 }).then(function (r) {
         if (r && r.ok && r.results && r.results.length) {

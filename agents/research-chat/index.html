@@ -458,8 +458,8 @@
       { id: 'qwen2.5vl:7b', label: 'qwen2.5vl:7b · 识图', desc: '本地视觉模型 · 看图 / OCR / 截图提问' },
     ],
     deepseek: [
-      { id: 'deepseek-flash', label: 'Flash · 快 / 便宜', desc: '日常聊天、文献综述、工具调用、RAG；速度快、最便宜（不支持图片）' },
-      { id: 'deepseek-v4-pro', label: 'V4-Pro · 深度推理', desc: '最难推理、长链路编程与数学难题；更强但更贵更慢' },
+      { id: 'deepseek-flash', label: 'Flash · 快 / 便宜', desc: '日常聊天、文献综述、工具调用、RAG；速度快、最便宜，原生支持识图' },
+      { id: 'deepseek-v4-pro', label: 'V4-Pro · 深度推理', desc: '最难推理、长链路编程与数学难题；更强但更贵更慢（纯文本，发图自动用 Flash 识图）' },
     ],
     gpt: [
       { id: 'gpt-4o-mini', label: 'gpt-4o-mini · 通用', desc: '通用对话 · 性价比高' },
@@ -468,6 +468,22 @@
       { id: 'qwen-plus', label: 'qwen-plus · 通用', desc: '通义千问 · 通用对话' },
     ],
   };
+
+  // 视觉能力：判断模型是否原生支持图片；纯文本推理模型发图时，自动用视觉模型识别图片转文字
+  var VISION_MODELS = {
+    'deepseek-flash': true,   // DeepSeek V4.1-Flash 原生多模态
+    'qwen2.5vl:7b': true,     // 本地视觉模型
+    'gpt-4o-mini': true,      // GPT-4o 系列支持视觉
+  };
+  function modelSupportsVision(engine, model) {
+    if (engine === 'ollama-vision') return true;   // 视觉专用引擎
+    return !!VISION_MODELS[model];
+  }
+  // 纯文本推理模型 → 视觉兜底模型（同引擎优先，本地 qwen2.5vl 兜底）
+  function visionModelFor(engine) {
+    if (engine === 'deepseek') return { engine: 'deepseek', model: 'deepseek-flash', label: 'DeepSeek Flash' };
+    return { engine: 'ollama-vision', model: 'qwen2.5vl:7b', label: '本地 qwen2.5vl:7b' };
+  }
 
   // 会话状态
   var history = [];      // [{role:'user'|'assistant', content}]
@@ -1445,6 +1461,22 @@
     pendingNotes.push(text);
   }
 
+  // 用视觉模型把图片转成详细文字描述（供纯文本推理模型使用，双模型协同）
+  function describeImage(imgDataUrl, vp) {
+    return new Promise(function (resolve, reject) {
+      if (!IS_DESKTOP || !window.ingrid) { reject(new Error('仅桌面应用支持')); return; }
+      var msgs = [{ role: 'user', content: [
+        { type: 'text', text: '请详细完整地描述这张图片的所有内容：逐字转录其中的文字、数字、表格、图表与公式，并说明布局与关键细节，供后续文字推理使用，不要遗漏、不要臆造。' },
+        { type: 'image_url', image_url: { url: imgDataUrl } },
+      ]}];
+      var out = '';
+      window.ingrid.chatStream({ engine: vp.engine, model: vp.model, messages: msgs }, {
+        onDelta: function (chunk) { if (chunk && chunk.text) out += chunk.text; },
+        onDone: function (d) { if (d && d.ok) resolve(out); else reject(new Error((d && d.error) || '视觉识别失败')); },
+      });
+    });
+  }
+
   function send() {
     var text = input.value.trim();
     var img = pendingImage;
@@ -1467,13 +1499,15 @@
     if (!nm) nm = text.match(/^(?:【补充】|\[note\]|\[补充\])\s*([\s\S]*)$/i);
     if (nm && nm[1] && nm[1].trim()) { isNote = true; body = nm[1].trim(); }
 
-    // 带图片时：自动切到支持图片的视觉引擎（DeepSeek / Qwen / 本地文本模型均不支持图片输入）
+    // 带图片时：当前模型原生支持视觉则直接带图；否则（纯文本推理模型，如 V4-Pro）
+    // 先用视觉模型识别图片转文字，文字推理仍用当前模型，无需手动切换
     var engine = engineSelect.value || 'ollama';
     var model = modelSelect.value || '';
     var imgEngineNote = '';
-    if (img && engine !== 'ollama-vision' && engine !== 'gpt') {
-      engine = 'ollama-vision'; model = defaultModelId('ollama-vision');
-      imgEngineNote = '<div class="engine-note">📷 当前引擎不支持图片，已自动切换到本地视觉模型（qwen2.5vl:7b）</div>';
+    var visionProxy = null;   // 需要「视觉识别→文字」代理时的视觉模型 {engine, model, label}
+    if (img && !modelSupportsVision(engine, model)) {
+      visionProxy = visionModelFor(engine);
+      imgEngineNote = '<div class="engine-note">📷 已用 ' + visionProxy.label + ' 识别图片内容，文字推理仍用当前模型</div>';
     }
 
     // 清掉欢迎态
@@ -1557,11 +1591,26 @@
       }
     }
 
+    // 带图片且当前模型不支持视觉时，先用视觉模型识别图片转文字，再交给当前推理模型
+    function runWithVision(content) {
+      if (!visionProxy) { run(content); return; }
+      statusText = '正在识别图片内容…';
+      renderStream();
+      describeImage(img.dataUrl, visionProxy).then(function (desc) {
+        var enriched = '【图片内容（由 ' + visionProxy.label + ' 识别，仅作事实依据）】\n' + desc + '\n\n【用户问题】\n' + (content || '请基于图片回答。');
+        statusText = '正在思考…';
+        run(enriched);
+      }).catch(function (e) {
+        if (stopRequested) { finish('', '已手动停止'); return; }
+        finish('', '图片识别失败：' + (e && e.message || e));
+      });
+    }
+
     function run(content) {
       var prompt = content || (img ? '请分析这张图片。' : '');
       if (isNote) prompt = noteWrap(prompt);
       var userMsg = { role: 'user', content: prompt };
-      if (img) {
+      if (img && !visionProxy) {
         userMsg.content = [
           { type: 'text', text: prompt },
           { type: 'image_url', image_url: { url: img.dataUrl } },
@@ -1633,8 +1682,8 @@
 
     // 上下文注入：本地知识库 RAG + 联网搜索（按开关组合）
     // 补充说明是约束/偏好，不走 RAG/联网，直接发给模型
-    if (isNote) { run(body); }
-    else { withContext(text, function (content) { run(content); }); }
+    if (isNote) { runWithVision(body); }
+    else { withContext(text, function (content) { runWithVision(content); }); }
   }
 
   /* ---------- 知识库上下文注入（审稿闭环用，只本地证据不联网） ---------- */
