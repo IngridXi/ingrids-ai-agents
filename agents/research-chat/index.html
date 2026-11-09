@@ -194,6 +194,7 @@
   .msg .bubble .status-line .dots i:nth-child(2) { animation-delay: .2s; }
   .msg .bubble .status-line .dots i:nth-child(3) { animation-delay: .4s; }
   .msg.user .bubble .engine-note { margin-top: 8px; padding: 6px 10px; font-size: 12px; line-height: 1.5; color: var(--accent-2); background: rgba(126,108,209,.10); border-radius: 8px; }
+  .msg.user .bubble .note-tag { display: inline-block; margin-right: 6px; padding: 1px 7px; font-size: 11px; font-weight: 600; color: #fff; background: var(--accent-2); border-radius: 6px; vertical-align: 1px; }
 
   /* 写操作审批卡片 */
   .approval-card {
@@ -232,6 +233,8 @@
   .welcome .big svg { width: 30px; height: 30px; }
   .welcome h2 { font-size: 17px; color: var(--ink); margin-bottom: 6px; }
   .welcome p { font-size: 13px; margin-bottom: 14px; }
+  .welcome .note-hint { font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+  .welcome .note-hint b { color: var(--accent-2); font-weight: 600; }
   .welcome .hints { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
   .welcome .hint {
     padding: 7px 12px; border-radius: 20px; border: 1px solid var(--line);
@@ -1412,6 +1415,7 @@
       '<div class="big">' + window.iconSvg('grad') + '</div>' +
       '<h2>研究助手 · 随时可问</h2>' +
       '<p>挂 Research 板块 17 个研究 skill，覆盖从想法到论文的全程</p>' +
+      '<p class="note-hint">用 <b>/note</b> 开头可发「补充说明」：它作为附加约束/偏好注入，不打断当前任务</p>' +
       '<div class="hints">' + hints.map(function (h) { return '<span class="hint">' + h + '</span>'; }).join('') + '</div>' +
       '</div>';
     messages.innerHTML = html;
@@ -1426,6 +1430,11 @@
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
   }
 
+  // 补充说明的包装格式：让模型知道这是附加约束/偏好，而非新任务
+  function noteWrap(s) {
+    return '【补充说明 · 仅作为附加约束/偏好，不是新任务，请纳入后续工作方式但不要复述它】\n' + s;
+  }
+
   function send() {
     var text = input.value.trim();
     var img = pendingImage;
@@ -1433,6 +1442,14 @@
     stopRequested = false;   // 新一轮，重置停止标志
     input.value = ''; autoGrow();
     pendingImage = null; renderImgPreview();
+
+    // 识别「补充说明」前缀（/note、/n、/补充、/备注 或 【补充】、[note]、[补充]）：
+    // 这类消息发给模型时会被标注为「附加约束/偏好」，不作为新任务、不打断当前工作
+    var isNote = false;
+    var body = text;
+    var nm = text.match(/^\/(?:note|n|补充|备注)\s+([\s\S]*)$/i);
+    if (!nm) nm = text.match(/^(?:【补充】|\[note\]|\[补充\])\s*([\s\S]*)$/i);
+    if (nm && nm[1] && nm[1].trim()) { isNote = true; body = nm[1].trim(); }
 
     // 带图片时：自动切到支持图片的视觉引擎（DeepSeek / Qwen / 本地文本模型均不支持图片输入）
     var engine = engineSelect.value || 'ollama';
@@ -1446,19 +1463,24 @@
     // 清掉欢迎态
     if (messages.querySelector('.welcome')) messages.innerHTML = '';
 
-    // 用户气泡（含图片缩略 + 引擎切换提示）
+    // 用户气泡（含图片缩略 + 引擎切换提示 + 补充说明标签）
     var userHtml = '';
     if (img) userHtml += '<div class="user-img"><img src="' + img.dataUrl + '"></div>';
-    userHtml += esc(text || (img ? '（发送了一张图片）' : ''));
+    if (isNote) userHtml += '<span class="note-tag">补充说明</span>';
+    userHtml += esc(body || (img ? '（发送了一张图片）' : ''));
     userHtml += imgEngineNote;
     addBubble('user', userHtml);
 
     // 审稿闭环模式：产出 → 审稿 → 返修（独立多气泡渲染）
     if (reviewMode && IS_DESKTOP) {
       streaming = true; setSendBtnState(true);
-      withKbContext(text, function (content) {
-        sendReviewLoop(content, engineSelect.value || 'ollama');
-      });
+      if (isNote) {
+        sendReviewLoop(noteWrap(body), engineSelect.value || 'ollama');
+      } else {
+        withKbContext(text, function (content) {
+          sendReviewLoop(content, engineSelect.value || 'ollama');
+        });
+      }
       return;
     }
 
@@ -1488,7 +1510,8 @@
     renderStream();
 
     function finish(finalText, err) {
-      history.push({ role: 'user', content: text || (img ? '（图片）' : '') });
+      var userContent = isNote ? noteWrap(body) : (body || (img ? '（图片）' : ''));
+      history.push({ role: 'user', content: userContent });
       if (finalText) history.push({ role: 'assistant', content: finalText });
       while (history.length > 24) history.shift();
       touchCurrentSession();
@@ -1510,6 +1533,7 @@
 
     function run(content) {
       var prompt = content || (img ? '请分析这张图片。' : '');
+      if (isNote) prompt = noteWrap(prompt);
       var userMsg = { role: 'user', content: prompt };
       if (img) {
         userMsg.content = [
@@ -1582,7 +1606,9 @@
     }
 
     // 上下文注入：本地知识库 RAG + 联网搜索（按开关组合）
-    withContext(text, function (content) { run(content); });
+    // 补充说明是约束/偏好，不走 RAG/联网，直接发给模型
+    if (isNote) { run(body); }
+    else { withContext(text, function (content) { run(content); }); }
   }
 
   /* ---------- 知识库上下文注入（审稿闭环用，只本地证据不联网） ---------- */
