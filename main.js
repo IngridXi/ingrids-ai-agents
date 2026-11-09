@@ -1630,6 +1630,38 @@ ipcMain.handle('kb:configure', (_e, patch) => {
   return kbEngine.status();
 });
 
+/* 打开知识库来源（Notion 网页 / Zotero / Obsidian 应用与本地目录） */
+ipcMain.handle('kb:open', async (_e, kind) => {
+  kind = String(kind || '');
+  try {
+    if (kind === 'notion') { await shell.openExternal('https://www.notion.so'); return { ok: true }; }
+    if (kind === 'zotero') {
+      if (!detectZoteroDir()) return { ok: false, error: '未检测到 Zotero 数据目录（~/Zotero）' };
+      try { await execFileP('open', ['-a', 'Zotero']); }
+      catch { const z = detectZoteroDir(); if (z) await shell.openPath(z); }
+      return { ok: true };
+    }
+    if (kind === 'zotero-folder') {
+      const z = detectZoteroDir();
+      if (!z) return { ok: false, error: '未检测到 Zotero 数据目录（~/Zotero）' };
+      await shell.openPath(z); return { ok: true };
+    }
+    if (kind === 'obsidian') {
+      const vaults = detectObsidianVaults();
+      if (!vaults.length) return { ok: false, error: '未检测到 Obsidian 库（请先安装 Obsidian 并创建 vault）' };
+      try { await execFileP('open', ['-a', 'Obsidian']); }
+      catch { await shell.openPath(vaults[0]); }
+      return { ok: true };
+    }
+    if (kind === 'obsidian-folder') {
+      const vaults = detectObsidianVaults();
+      if (!vaults.length) return { ok: false, error: '未检测到 Obsidian 库' };
+      await shell.openPath(vaults[0]); return { ok: true };
+    }
+    return { ok: false, error: '未知来源：' + kind };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+
 /* ---------------- 工具能力（文件 / 数据库 / 电脑操作） ----------------
  * 只读、安全白名单：list / search / read / db query。
  * 写 / 删除 / 移动本版不提供（不可逆操作，需独立审批流后再开放）。

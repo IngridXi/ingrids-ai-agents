@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),
   kbStatus: () => ipcRenderer.invoke('kb:status'),
   kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),
+  kbOpen: (kind) => ipcRenderer.invoke('kb:open', kind),
 
   // 浏览器自动化（安全白名单：打开 / 截图 / 提取文本）
   browserAutomate: (payload) => ipcRenderer.invoke('browser:automate', payload),
