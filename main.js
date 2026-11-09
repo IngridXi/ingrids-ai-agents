@@ -29,8 +29,29 @@ const SecretaryCore = globalThis.SecretaryCore;
 const NotionEngine = require('./notion-engine.js');
 const TermsEngine = require('./terms-engine.js');
 
-/* ---------------- 数据目录（local-first） ---------------- */
+/* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
+
+/* ---------------- 单实例锁：避免重复启动产生多个主窗口（Dock 出现多个相同图标） ---------------- */
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // 用户再次双击应用：聚焦已有主窗口，而不是再开一个新的
+    const wins = BrowserWindow.getAllWindows();
+    const win = wins[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      if (!win.isVisible()) win.show();
+      win.focus();
+    } else {
+      createMainWindow();
+    }
+  });
+}
+
+/* ---------------- 数据目录（local-first） ---------------- */
 
 function dataDir() {
   const dir = path.join(app.getPath('userData'), 'data');
@@ -2241,26 +2262,28 @@ ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));
 ipcMain.handle('tool:db:zotero:collection', (_e, p) => toolDbZoteroCollection(p));
 
 /* ---------------- 生命周期 ---------------- */
-app.whenReady().then(() => {
-  createMainWindow();
-  // 知识库：首次运行自动检测源 + 后台增量索引 + 文件监听自动更新
-  kbEngine.ensureConfig();
-  kbEngine.scan().catch(() => {});
-  startKbWatcher();
-  // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
-  runCalendarSync().catch(() => {});
-  setInterval(() => { runCalendarSync().catch(() => {}); }, 30 * 60 * 1000);
-  // ICS 订阅（Teams/Outlook 等发布的外部日历）：启动即拉取 + 每 30 分钟自动刷新
-  runIcsSync().catch(() => {});
-  setInterval(() => { runIcsSync().catch(() => {}); }, 30 * 60 * 1000);
-  // 邮箱自动同步：Outlook 邮箱同样每 30 分钟拉取一次
-  runMailSync().catch(() => {});
-  setInterval(() => { runMailSync().catch(() => {}); }, 30 * 60 * 1000);
-  // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
-  runReminderCheck();
-  setInterval(() => { runReminderCheck(); }, 60 * 1000);
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    createMainWindow();
+    // 知识库：首次运行自动检测源 + 后台增量索引 + 文件监听自动更新
+    kbEngine.ensureConfig();
+    kbEngine.scan().catch(() => {});
+    startKbWatcher();
+    // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
+    runCalendarSync().catch(() => {});
+    setInterval(() => { runCalendarSync().catch(() => {}); }, 30 * 60 * 1000);
+    // ICS 订阅（Teams/Outlook 等发布的外部日历）：启动即拉取 + 每 30 分钟自动刷新
+    runIcsSync().catch(() => {});
+    setInterval(() => { runIcsSync().catch(() => {}); }, 30 * 60 * 1000);
+    // 邮箱自动同步：Outlook 邮箱同样每 30 分钟拉取一次
+    runMailSync().catch(() => {});
+    setInterval(() => { runMailSync().catch(() => {}); }, 30 * 60 * 1000);
+    // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
+    runReminderCheck();
+    setInterval(() => { runReminderCheck(); }, 60 * 1000);
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    });
   });
-});
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+  app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+}
