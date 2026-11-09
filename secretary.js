@@ -113,7 +113,8 @@
         '<button class="sec-btn ghost" id="secFromShot">' + iconSvg('camera') + ' 从邮件截图添加</button></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历（iCloud）</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button></div></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
+        '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook 邮箱</button></div></div>' +
       '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
         '<div class="sec-row"><input type="text" id="secUrl" placeholder="粘贴网址，如 https://arxiv.org/abs/..." style="flex:1">' +
         '<button class="sec-btn" id="secBrowse">打开</button></div>' +
@@ -371,11 +372,19 @@
         '<div class="f"><label>Client Secret</label><input type="password" id="gClientSecret" placeholder="GOCSPX-..."></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="gConnect">' + iconSvg('link') + ' 连接 Google 日历</button></div>' +
         '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
-        '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('link') + ' Outlook 日历（OAuth 授权）</div>' +
-        '<div class="sec-bhint">在 portal.azure.com 注册应用（重定向 URI 填 <code>http://localhost:18888</code>），授予 Calendars.ReadWrite 委托权限。</div>' +
+        '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('link') + ' Microsoft 365 日历（Teams / Outlook，OAuth 授权）</div>' +
+        '<div class="sec-bhint">在 portal.azure.com 注册应用（重定向 URI 填 <code>http://localhost:18888</code>），授予 <b>Calendars.ReadWrite</b> 与 <b>Mail.Read</b> 委托权限。一次授权同时覆盖 Teams/Outlook 日历与 Outlook 邮箱。</div>' +
         '<div class="f"><label>Client ID</label><input id="mClientId" placeholder="Application (client) ID"></div>' +
         '<div class="f"><label>Client Secret</label><input type="password" id="mClientSecret" placeholder="..."></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="mConnect">' + iconSvg('link') + ' 连接 Outlook 日历</button></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="mConnect">' + iconSvg('link') + ' 连接 Microsoft 365</button></div>' +
+        '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
+        '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('link') + ' Notion 知识库（token 接入）</div>' +
+        '<div class="sec-bhint">在 notion.so/my-integrations 创建集成，把 Internal Integration Token 粘贴到下面（形如 ntn_ 或 secret_ 开头）。token 加密存本机钥匙串。</div>' +
+        '<div class="f"><label>Notion Token</label><input type="password" id="notionToken" placeholder="ntn_... 或 secret_..."></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="notionSave">' + iconSvg('check') + ' 保存 token</button></div>' +
+        '<div class="f" style="margin-top:8px"><label>搜索页面 / 数据库</label><input id="notionQuery" placeholder="例如：文献综述"></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="notionSearch">' + iconSvg('search') + ' 搜索 Notion</button></div>' +
+        '<div class="sec-bout" id="notionResult" hidden></div>' +
         '</div>';
       modalMask.querySelector('#calCancel').addEventListener('click', closeModal);
       modalMask.querySelector('#calSave').addEventListener('click', function () {
@@ -435,10 +444,54 @@
           .catch(function (e) { btn.disabled = false; btn.textContent = '连接 ' + label + ' 日历'; alert(String(e && e.message || e)); });
       }
       modalMask.querySelector('#gConnect').addEventListener('click', function () { startOAuth('google', 'Google', '#gClientId', '#gClientSecret', this); });
-      modalMask.querySelector('#mConnect').addEventListener('click', function () { startOAuth('microsoft', 'Outlook', '#mClientId', '#mClientSecret', this); });
+      modalMask.querySelector('#mConnect').addEventListener('click', function () { startOAuth('microsoft', 'Microsoft 365', '#mClientId', '#mClientSecret', this); });
+
+      // Notion token 保存
+      modalMask.querySelector('#notionSave').addEventListener('click', function () {
+        var t = modalMask.querySelector('#notionToken').value.trim();
+        if (!t) { alert('请先粘贴 Notion Token'); return; }
+        window.ingrid.notionConfigure(t).then(function () {
+          var box = modalMask.querySelector('#notionResult');
+          box.hidden = false; box.textContent = '✓ Notion token 已保存（加密存本机）。';
+        }).catch(function (e) { alert(String(e && e.message || e)); });
+      });
+      // Notion 搜索
+      modalMask.querySelector('#notionSearch').addEventListener('click', function () {
+        var q = modalMask.querySelector('#notionQuery').value.trim();
+        var box = modalMask.querySelector('#notionResult');
+        box.hidden = false; box.textContent = '搜索中…';
+        window.ingrid.notionSearch(q).then(function (r) {
+          if (!r || !r.ok) { box.textContent = (r && r.error) || '搜索失败'; return; }
+          if (!r.results || !r.results.length) { box.textContent = '没有找到匹配的页面。'; return; }
+          box.innerHTML = r.results.map(function (it) {
+            return '<div style="margin-bottom:6px">' + (it.object === 'database' ? '🗂️' : '📄') + ' <b>' + esc(it.title) + '</b>' +
+              '<div style="color:var(--ink-faint);font-size:10px">' + esc(it.id) + '</div></div>';
+          }).join('');
+        }).catch(function (e) { box.textContent = '搜索失败：' + (e && e.message || e); });
+      });
     });
   }
   document.getElementById('secSyncCal').addEventListener('click', openSyncModal);
+
+  /* 同步 Outlook 邮箱（Microsoft Graph Mail） */
+  document.getElementById('secSyncMail').addEventListener('click', function () {
+    if (!DESKTOP || !window.ingrid.syncMailRun) { alert('邮箱同步需要在桌面版使用'); return; }
+    var btn = this; btn.disabled = true; btn.textContent = '同步中…';
+    window.ingrid.syncMailRun().then(function (r) {
+      btn.disabled = false; btn.textContent = '⇅ 同步 Outlook 邮箱';
+      if (!r || r.skipped) { addChat('a', '尚未连接 Microsoft 365 账户，请先在「同步日历」里连接 Outlook。'); return; }
+      if (r.total > 0) {
+        try { var latest = window.ingrid.loadSecretarySync(); if (latest && Array.isArray(latest.emails)) { emails.emails = latest.emails; } } catch (e) {}
+        renderEmails();
+        addChat('a', '已同步 ' + r.total + ' 封 Outlook 邮件并自动分类分级。');
+      } else {
+        addChat('a', '同步完成，未发现新邮件。');
+      }
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '⇅ 同步 Outlook 邮箱';
+      addChat('a', '邮箱同步失败：' + (e && e.message || e));
+    });
+  });
 
   // OAuth 授权完成回调：刷新日程
   if (DESKTOP && window.ingrid.onOauthDone) {
@@ -453,6 +506,15 @@
       } else {
         addChat('a', '授权失败：' + (d && d.error ? d.error : '未知错误'));
       }
+    });
+  }
+
+  // 邮箱同步完成回调：刷新邮件列表
+  if (DESKTOP && window.ingrid.onMailSynced) {
+    window.ingrid.onMailSynced(function (d) {
+      try { var latest = window.ingrid.loadSecretarySync(); if (latest && Array.isArray(latest.emails)) { emails.emails = latest.emails; } } catch (e) {}
+      renderEmails();
+      if (d && d.total > 0) addChat('a', '已自动同步 ' + d.total + ' 封 Outlook 邮件。');
     });
   }
 

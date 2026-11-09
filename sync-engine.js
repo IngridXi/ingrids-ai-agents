@@ -279,7 +279,7 @@ const OAUTH_PROVIDERS = {
     label: 'Microsoft',
     authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
     tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-    scope: 'https://graph.microsoft.com/Calendars.ReadWrite offline_access',
+    scope: 'https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Mail.Read offline_access',
   },
 };
 
@@ -381,6 +381,37 @@ async function syncMicrosoftCalendar(accessToken, opts) {
   return { ok: true, events: events, calendars: [{ displayName: 'Outlook 日历', url: '' }] };
 }
 
+/* ---------------- Microsoft Graph 邮件（Outlook 邮箱） ---------------- */
+
+async function syncMicrosoftMail(accessToken, opts) {
+  const o = opts || {};
+  const top = Math.min(Number(o.top) || 50, 200);
+  const url = 'https://graph.microsoft.com/v1.0/me/messages?$select=id,from,subject,bodyPreview,receivedDateTime,isRead&$top=' +
+    top + '&$orderby=receivedDateTime%20desc';
+  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!resp.ok) {
+    const msg = 'Outlook 邮箱请求失败 HTTP ' + resp.status;
+    if (resp.status === 401) throw new Error('认证已过期：' + msg);
+    throw new Error(msg);
+  }
+  const j = await resp.json();
+  const emails = [];
+  for (const it of (j.value || [])) {
+    emails.push({
+      id: 'msmail-' + String(it.id || Date.now()),
+      from: (it.from && it.from.emailAddress && it.from.emailAddress.address) || '',
+      fromName: (it.from && it.from.emailAddress && it.from.emailAddress.name) || '',
+      subject: it.subject || '（无主题）',
+      body: (it.bodyPreview || '').slice(0, 500),
+      at: it.receivedDateTime || '',
+      read: !!it.isRead,
+      link: 'https://outlook.office.com/mail/',
+      source: 'Outlook 邮箱',
+    });
+  }
+  return { ok: true, emails: emails };
+}
+
 module.exports = {
   parseICalendar,
   parseCalDate,
@@ -394,4 +425,5 @@ module.exports = {
   refreshOAuthToken,
   syncGoogleCalendar,
   syncMicrosoftCalendar,
+  syncMicrosoftMail,
 };

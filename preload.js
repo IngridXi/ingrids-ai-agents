@@ -100,6 +100,16 @@ contextBridge.exposeInMainWorld('ingrid', {
   calendarUpcoming: (days) => ipcRenderer.invoke('calendar:upcoming', days),
   onCalendarReminder: (cb) => ipcRenderer.on('calendar:reminder', (_e, d) => { if (cb) cb(d || []); }),
 
+  // Outlook 邮箱同步
+  syncMailRun: () => ipcRenderer.invoke('sync:mail:run'),
+  onMailSynced: (cb) => ipcRenderer.on('mail:synced', (_e, d) => { if (cb) cb(d || {}); }),
+
+  // Notion 接入
+  notionConfigure: (token) => ipcRenderer.invoke('notion:configure', token),
+  notionStatus: () => ipcRenderer.invoke('notion:status'),
+  notionSearch: (query) => ipcRenderer.invoke('notion:search', query),
+  notionRead: (id) => ipcRenderer.invoke('notion:read', id),
+
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
   kbScan: () => ipcRenderer.invoke('kb:scan'),
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),

@@ -26,6 +26,7 @@ const { KbEngine, detectObsidianVaults, detectZoteroDir } = require('./kb-engine
 const syncEngine = require('./sync-engine.js');
 require('./secretary-core.js');
 const SecretaryCore = globalThis.SecretaryCore;
+const NotionEngine = require('./notion-engine.js');
 
 /* ---------------- 数据目录（local-first） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -532,6 +533,44 @@ function upcomingDeadlines(days) {
     })
     .filter(function (e) { var t = new Date(e.at).getTime(); return isFinite(t) && t <= horizon; })
     .sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+}
+
+/* ---------------- 邮箱同步：Outlook（Microsoft Graph） ---------------- */
+async function runMailSync() {
+  const accounts = decryptSyncAccounts().filter(function (a) { return a.type === 'microsoft'; });
+  if (!accounts.length) return { ok: true, skipped: true, total: 0, results: [] };
+  const results = [];
+  let allEmails = [];
+  for (const acct of accounts) {
+    let r;
+    try {
+      if (!acct.oauthRefreshToken || !acct.oauthClientId) {
+        r = { ok: false, emails: [], error: '该账户尚未完成 OAuth 授权' };
+      } else {
+        let tok = null;
+        try { tok = await syncEngine.refreshOAuthToken('microsoft', acct.oauthClientId, acct.oauthClientSecret, acct.oauthRefreshToken); } catch (e) { /* 报错在下面 */ }
+        if (!tok || !tok.access_token) r = { ok: false, emails: [], error: '刷新访问令牌失败（可能授权过期，请重新授权）' };
+        else r = await syncEngine.syncMicrosoftMail(tok.access_token, { top: 50 });
+      }
+    } catch (e) {
+      r = { ok: false, emails: [], error: String(e && e.message || e) };
+    }
+    results.push({ id: acct.id, name: acct.name, ok: r.ok, count: (r.emails || []).length, error: r.error || '' });
+    if (r.ok && r.emails) allEmails = allEmails.concat(r.emails);
+  }
+  // 合并进 secretary.json：移除旧的同步邮件（id 以 msmail- 开头），写入新邮件（自动分类），保留手动导入
+  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+  const manual = (Array.isArray(state.emails) ? state.emails : []).filter(function (m) { return !String(m.id).startsWith('msmail-'); });
+  const classified = allEmails.map(function (m) {
+    const c = (SecretaryCore && SecretaryCore.classifyEmail) ? SecretaryCore.classifyEmail(m) : { category: 'general', importance: 1, important: false };
+    return Object.assign({}, m, { category: c.category, importance: c.importance, important: c.important });
+  });
+  const merged = manual.concat(classified);
+  merged.sort(function (a, b) { return String(b.at || '').localeCompare(String(a.at || '')); });
+  writeJson('secretary.json', { events: state.events || [], emails: merged, thoughts: state.thoughts || [] });
+  const summary = { results: results, total: classified.length, syncedAt: Date.now() };
+  broadcast('mail:synced', summary);
+  return summary;
 }
 
 /* ---------------- 用量账本：按月 jsonl ---------------- */
@@ -1283,6 +1322,26 @@ ipcMain.handle('sync:calendar:push', async (_e, ev) => {
 /** 即将到来的研究日程（研究助手注入上下文用） */
 ipcMain.handle('calendar:upcoming', (_e, days) => upcomingDeadlines(days));
 
+/** 同步 Outlook 邮箱（Microsoft Graph Mail） */
+ipcMain.handle('sync:mail:run', () => runMailSync());
+
+/* ---------------- Notion 接入 ---------------- */
+function notionToken() { return decryptSettings(readSettingsRaw()).notionToken || ''; }
+ipcMain.handle('notion:configure', (_e, token) => { writeSettings({ notionToken: String(token || '') }); return true; });
+ipcMain.handle('notion:status', () => ({ configured: !!notionToken() }));
+ipcMain.handle('notion:search', async (_e, query) => {
+  const t = notionToken();
+  if (!t) return { ok: false, error: '尚未配置 Notion token（在秘书面板「Notion」里粘贴 Internal Integration Token）' };
+  try { return { ok: true, results: await NotionEngine.search(t, query) }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('notion:read', async (_e, id) => {
+  const t = notionToken();
+  if (!t) return { ok: false, error: '尚未配置 Notion token' };
+  try { return { ok: true, page: await NotionEngine.readPage(t, id) }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+
 /* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
 const OAUTH_PORT = 18888;
 const OAUTH_REDIRECT = 'http://localhost:' + OAUTH_PORT;
@@ -1860,6 +1919,9 @@ app.whenReady().then(() => {
   // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
   runCalendarSync().catch(() => {});
   setInterval(() => { runCalendarSync().catch(() => {}); }, 30 * 60 * 1000);
+  // 邮箱自动同步：Outlook 邮箱同样每 30 分钟拉取一次
+  runMailSync().catch(() => {});
+  setInterval(() => { runMailSync().catch(() => {}); }, 30 * 60 * 1000);
   // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
   runReminderCheck();
   setInterval(() => { runReminderCheck(); }, 60 * 1000);
