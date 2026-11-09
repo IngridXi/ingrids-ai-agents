@@ -268,13 +268,15 @@
       tools.push('db_obsidian_move：归档/移动 Obsidian 笔记，参数 {"from":"原路径","to":"新路径"}');
       tools.push('db_obsidian_report：Obsidian 库整理报告（无标签/无 frontmatter 的笔记、目录统计）');
       tools.push('db_zotero_report：Zotero 文献库整理报告（无标签条目、最近添加）');
+      tools.push('db_zotero_tag：给 Zotero 文献打标签，参数 {"itemKey":"文献条目key","tags":["标签1","标签2"]}（itemKey 从 db_zotero_report / db_query 结果拿）');
+      tools.push('db_zotero_collection：把文献归档到集合（文件夹），参数 {"itemKeys":["key1","key2"],"collectionName":"集合名"}（集合不存在会自动新建）');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
       '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。\n' +
-      '注意：所有「写」类操作（fs_write / fs_append / fs_edit / fs_move / fs_delete）会先弹给用户确认，用户批准后才真正执行；只允许操作用户主目录内的普通文件，系统目录与隐藏目录受保护。';
+      '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   function executeTool(call, caps) {
     var n = call.name;
@@ -304,6 +306,13 @@
         return window.ingrid.toolDbObsidianMove(call.args);
       });
     }
+    if (caps.db && (n === 'db_zotero_tag' || n === 'db_zotero_collection')) {
+      return requestWriteApproval(n, call.args).then(function (ok) {
+        if (!ok) return { ok: false, error: '已由用户拒绝，未执行' };
+        if (n === 'db_zotero_tag') return window.ingrid.toolDbZoteroTag(call.args);
+        return window.ingrid.toolDbZoteroCollection(call.args);
+      });
+    }
     return Promise.resolve({ ok: false, error: '工具不可用或未开启：' + n });
   }
   function describeWrite(kind, args) {
@@ -316,6 +325,8 @@
     if (kind === 'db_obsidian_write') return { icon: '📝', title: '写入 Obsidian 整理笔记', body: String((args && args.title) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') + '\n\n' + String((args && args.content) || '').slice(0, 200) };
     if (kind === 'db_obsidian_tag') return { icon: '🏷️', title: '给 Obsidian 笔记打标签', body: String((args && args.path) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') };
     if (kind === 'db_obsidian_move') return { icon: '📦', title: '归档 Obsidian 笔记', body: String((args && args.from) || '') + '  →  ' + String((args && args.to) || ''), extra: '' };
+    if (kind === 'db_zotero_tag') return { icon: '🏷️', title: '给 Zotero 文献打标签', body: String((args && args.itemKey) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') + '\n\n首次执行会弹 Zotero 授权框，请点「始终允许」' };
+    if (kind === 'db_zotero_collection') return { icon: '📁', title: '归档到 Zotero 集合', body: ((args && args.itemKeys) || []).length + ' 篇 → 「' + String((args && args.collectionName) || (args && args.collectionKey) || '') + '」', extra: '首次执行会弹 Zotero 授权框，请点「始终允许」' };
     return { icon: '❓', title: kind, body: '', extra: '' };
   }
   function requestWriteApproval(kind, args) {
@@ -357,6 +368,8 @@
       else if (call.name === 'db_obsidian_move') body = '已归档：' + res.from + ' → ' + res.to;
       else if (call.name === 'db_obsidian_report') body = 'Obsidian 库共 ' + res.total + ' 篇笔记：' + res.withFm + ' 篇有 frontmatter、' + res.withoutFm + ' 篇无；' + res.withTags + ' 篇有标签、' + res.withoutTags.length + ' 篇无标签。无标签笔记：' + (res.withoutTags.slice(0, 20).join('、') || '无');
       else if (call.name === 'db_zotero_report') body = 'Zotero 共 ' + res.total + ' 篇文献：' + res.withTags + ' 篇有标签、' + res.withoutTags + ' 篇无标签。';
+      else if (call.name === 'db_zotero_tag') body = '已给「' + (res.title || res.itemKey) + '」打标签：' + (res.tags || []).join('、');
+      else if (call.name === 'db_zotero_collection') body = '已归档 ' + res.moved + ' 篇文献到集合「' + (res.collectionName || '') + '」' + (res.failed && res.failed.length ? '（失败 ' + res.failed.length + ' 篇）' : '');
       else if (call.name === 'db_query') body = JSON.stringify(res.hits, null, 2);
       else if (call.name === 'computer') body = res.summary;
       else body = JSON.stringify(res);

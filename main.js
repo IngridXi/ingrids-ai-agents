@@ -1634,11 +1634,135 @@ async function toolDbZoteroReport() {
   };
 }
 
+/* ---------------- Zotero 本地 API（写入：改标签 / 归档） ---------------- */
+// Zotero 10+ 本地 API（127.0.0.1:23119）：读无需鉴权；写需先 POST /local/authorize
+// 触发 Zotero 弹框，用户选「始终允许(Always Allow)」后拿到持久 key（存 userData，按 server-id 分区）。
+const ZOTERO_LOCAL_BASE = 'http://127.0.0.1:23119/api';
+
+function zoteroKeyPath() { return path.join(dataDir(), 'zotero-local-key.json'); }
+function zoteroReadKeyFile() { try { return JSON.parse(fs.readFileSync(zoteroKeyPath(), 'utf8')); } catch { return {}; } }
+function zoteroWriteKeyFile(obj) { try { fs.writeFileSync(zoteroKeyPath(), JSON.stringify(obj, null, 2), { mode: 0o600 }); } catch {} }
+
+function zoteroRequest(method, apiPath, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (opts.serverId) headers['Zotero-Server-ID'] = opts.serverId;
+    if (opts.key) headers['Zotero-API-Key'] = opts.key;
+    if (opts.version !== undefined && opts.version !== null) headers['If-Unmodified-Since-Version'] = String(opts.version);
+    const bodyStr = opts.body !== undefined ? JSON.stringify(opts.body) : null;
+    if (bodyStr !== null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    const req = http.request({
+      hostname: '127.0.0.1', port: 23119, path: '/api' + apiPath,
+      method: method, headers: headers, timeout: opts.timeout || 15000,
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => done({ status: res.statusCode, headers: res.headers, text: data }));
+    });
+    req.on('timeout', () => { req.destroy(); done({ status: 0, headers: {}, text: '请求超时' }); });
+    req.on('error', (e) => done({ status: 0, headers: {}, text: String((e && e.message) || e) }));
+    if (bodyStr !== null) req.write(bodyStr);
+    req.end();
+  });
+}
+
+async function zoteroServerId() {
+  const f = zoteroReadKeyFile();
+  if (f.serverId) return f.serverId;
+  const r = await zoteroRequest('GET', '/');
+  const id = r.headers && r.headers['zotero-server-id'];
+  if (id) { zoteroWriteKeyFile(Object.assign({}, f, { serverId: id })); return id; }
+  return 'tCLKRQVq4NWD'; // 兜底（本机已探测到的实例 ID）
+}
+
+async function zoteroEnsureKey(serverId) {
+  const f = zoteroReadKeyFile();
+  if (f.serverId === serverId && f.key && f.remember !== false) return { key: f.key };
+  // 触发 Zotero 弹框（等待用户在 Zotero 里点「始终允许」，最长 3 分钟）
+  const r = await zoteroRequest('POST', '/local/authorize', { serverId: serverId, body: { appName: "Ingrid's AI Agents" }, timeout: 180000 });
+  if (r.status === 403) return { error: '用户已在 Zotero 弹框中拒绝授权' };
+  if (r.status === 429) return { error: '授权请求过于频繁（每分钟最多 5 次），请稍后再试' };
+  if (r.status !== 200) return { error: '授权失败（HTTP ' + r.status + '），请确认 Zotero 正在运行且已开启本地 API' };
+  let j; try { j = JSON.parse(r.text); } catch { return { error: '授权响应解析失败' }; }
+  if (!j.key) return { error: '未获得授权 key' };
+  zoteroWriteKeyFile({ serverId: serverId, key: j.key, remember: !!j.remember });
+  return { key: j.key };
+}
+
+async function toolDbZoteroTag(payload) {
+  const itemKey = String((payload && payload.itemKey) || '').trim();
+  const tags = ((payload && payload.tags) || []).map((t) => String(t).trim()).filter(Boolean);
+  if (!itemKey) return { ok: false, error: '缺少 itemKey（文献条目 key）' };
+  if (!tags.length) return { ok: false, error: '缺少 tags（要打的标签）' };
+  const serverId = await zoteroServerId();
+  const auth = await zoteroEnsureKey(serverId);
+  if (auth.error) return { ok: false, error: auth.error };
+  const cur = await zoteroRequest('GET', '/users/0/items/' + itemKey, { serverId: serverId });
+  if (cur.status !== 200) return { ok: false, error: '读取文献失败（HTTP ' + cur.status + '），itemKey 可能不对：' + itemKey };
+  let item; try { item = JSON.parse(cur.text); } catch { return { ok: false, error: '文献数据解析失败' }; }
+  const existing = ((item.data && item.data.tags) || []).map((t) => t.tag);
+  const merged = Array.from(new Set(existing.concat(tags)));
+  const r = await zoteroRequest('PATCH', '/users/0/items/' + itemKey, {
+    serverId: serverId, key: auth.key,
+    version: (item && item.version) || (item.data && item.data.version),
+    body: { tags: merged.map((t) => ({ tag: t })) },
+  });
+  if (r.status === 401) { zoteroWriteKeyFile({ serverId: serverId }); return { ok: false, error: '授权 key 失效，请重试（会重新弹 Zotero 授权框）' }; }
+  if (r.status !== 200 && r.status !== 204) return { ok: false, error: '写入失败（HTTP ' + r.status + '）：' + String(r.text || '').slice(0, 200) };
+  return { ok: true, itemKey: itemKey, title: (item.data && item.data.title) || '', tags: merged, added: tags };
+}
+
+async function toolDbZoteroCollection(payload) {
+  const itemKeys = Array.isArray(payload && payload.itemKeys) ? payload.itemKeys
+    : ((payload && payload.itemKey) ? [payload.itemKey] : []);
+  const collectionKey = String((payload && payload.collectionKey) || '').trim();
+  const collectionName = String((payload && payload.collectionName) || '').trim();
+  if (!itemKeys.length) return { ok: false, error: '缺少 itemKey(s)（要归档的文献）' };
+  if (!collectionKey && !collectionName) return { ok: false, error: '缺少 collectionName 或 collectionKey（归档目标集合）' };
+  const serverId = await zoteroServerId();
+  const auth = await zoteroEnsureKey(serverId);
+  if (auth.error) return { ok: false, error: auth.error };
+  let targetKey = collectionKey;
+  if (!targetKey) {
+    const list = await zoteroRequest('GET', '/users/0/collections?limit=100', { serverId: serverId });
+    const libVer = list.headers && list.headers['last-modified-version'];
+    let found = null;
+    if (list.status === 200) {
+      try { found = JSON.parse(list.text).find((c) => c.data && c.data.name === collectionName); } catch {}
+    }
+    if (found) targetKey = found.key;
+    else {
+      const c = await zoteroRequest('POST', '/users/0/collections', { serverId: serverId, key: auth.key, version: libVer, body: [{ name: collectionName, parentCollection: false }] });
+      if (c.status !== 200) return { ok: false, error: '创建集合失败（HTTP ' + c.status + '）：' + String(c.text || '').slice(0, 120) };
+      try { targetKey = JSON.parse(c.text).successful['0'].key; } catch { return { ok: false, error: '解析集合创建结果失败' }; }
+    }
+  }
+  let moved = 0; const failed = [];
+  for (const ik of itemKeys) {
+    const cur = await zoteroRequest('GET', '/users/0/items/' + ik, { serverId: serverId });
+    if (cur.status !== 200) { failed.push(ik); continue; }
+    let item; try { item = JSON.parse(cur.text); } catch { failed.push(ik); continue; }
+    const cols = Array.from(new Set(((item.data && item.data.collections) || []).concat([targetKey])));
+    const r = await zoteroRequest('PATCH', '/users/0/items/' + ik, {
+      serverId: serverId, key: auth.key,
+      version: (item && item.version) || (item.data && item.data.version),
+      body: { collections: cols },
+    });
+    if (r.status === 200 || r.status === 204) moved++; else failed.push(ik);
+  }
+  return { ok: true, collectionKey: targetKey, collectionName: collectionName || targetKey, moved: moved, failed: failed };
+}
+
 ipcMain.handle('tool:db:obsidian:write', (_e, p) => toolDbObsidianWrite(p));
 ipcMain.handle('tool:db:obsidian:tag', (_e, p) => toolDbObsidianTag(p));
 ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
 ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
+ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));
+ipcMain.handle('tool:db:zotero:collection', (_e, p) => toolDbZoteroCollection(p));
 
 /* ---------------- 生命周期 ---------------- */
 app.whenReady().then(() => {

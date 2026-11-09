@@ -132,6 +132,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbObsidianMove: (payload) => ipcRenderer.invoke('tool:db:obsidian:move', payload),
   toolDbObsidianReport: () => ipcRenderer.invoke('tool:db:obsidian:report'),
   toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
+  toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),
+  toolDbZoteroCollection: (payload) => ipcRenderer.invoke('tool:db:zotero:collection', payload),
 
   // 聊天记忆持久化（按 Agent 名隔离）
   chatHistoryLoad: (name) => ipcRenderer.invoke('chat:history:load', name),
