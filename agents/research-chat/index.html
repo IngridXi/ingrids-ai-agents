@@ -30,7 +30,7 @@
   .layout { display: flex; flex: 1; min-height: 0; width: 100%; }
   .sidebar {
     flex: none; width: 264px; background: #f1eff6; border-right: 1px solid var(--line);
-    display: flex; flex-direction: column; min-height: 0;
+    display: flex; flex-direction: column; min-height: 0; position: relative;
   }
   .sidebar .sb-head { padding: 12px 12px 8px; }
   #newChatBtn {
@@ -66,6 +66,17 @@
   }
   .session:hover .s-del { display: block; }
   .session .s-del:hover { color: var(--danger); background: #fbe7e7; }
+  .session .s-rename { flex: 1; min-width: 0; font-size: 13px; padding: 2px 4px; border: 1px solid var(--accent); border-radius: 5px; outline: none; background: #fff; color: var(--ink); }
+  .search-empty { padding: 14px 12px; font-size: 12.5px; color: var(--ink-faint); text-align: center; }
+  #searchModeBtn {
+    flex: none; padding: 0 8px; height: 26px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--card); color: var(--ink-soft); cursor: pointer; font-size: 12px; line-height: 1;
+  }
+  #searchModeBtn:hover { border-color: var(--accent); color: var(--accent); }
+  #searchModeBtn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+  .sb-search-2 { padding: 0 12px 8px; display: flex; gap: 6px; align-items: center; }
+  .sb-search-2 #searchCount { flex: 1; text-align: left; }
+  .resize-handle { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 10; }
   .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
   /* 会话内检索高亮 */
@@ -281,12 +292,16 @@
   <aside class="sidebar">
     <div class="sb-head"><button id="newChatBtn">＋ 新对话</button></div>
     <div class="sb-search">
-      <input id="searchInput" type="text" placeholder="搜索本会话消息">
+      <input id="searchInput" type="text" placeholder="搜索消息">
+      <button id="searchModeBtn" title="本会话 / 全局搜索切换">本会话</button>
+    </div>
+    <div class="sb-search sb-search-2">
       <span id="searchCount"></span>
       <button id="searchPrev" title="上一条">↑</button>
       <button id="searchNext" title="下一条">↓</button>
     </div>
     <div id="sessionList"></div>
+    <div class="resize-handle"></div>
   </aside>
   <div class="main-col">
 <header>
@@ -442,10 +457,16 @@
   var activeId = null;
   var searchMatches = []; // 命中消息的 DOM 节点
   var searchIndex = -1;
+  var searchMode = 'session'; // 'session' | 'all'
+  var currentQuery = '';
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function currentSession() {
     for (var i = 0; i < sessions.length; i++) if (sessions[i].id === activeId) return sessions[i];
+    return null;
+  }
+  function sessionById(id) {
+    for (var i = 0; i < sessions.length; i++) if (sessions[i].id === id) return sessions[i];
     return null;
   }
   function serializeSession(s) {
@@ -485,6 +506,7 @@
     sorted.forEach(function (s) {
       var row = document.createElement('div');
       row.className = 'session' + (s.id === activeId ? ' active' : '');
+      row.title = '单击切换 · 双击重命名';
       row.innerHTML = '<div class="s-title"></div><div class="s-time"></div><button class="s-del" title="删除会话">✕</button>';
       row.querySelector('.s-title').textContent = s.title || '新对话';
       row.querySelector('.s-time').textContent = relTime(s.updatedAt || s.createdAt || Date.now());
@@ -492,12 +514,37 @@
         if (e.target && e.target.classList && e.target.classList.contains('s-del')) return;
         switchSession(s.id);
       });
+      row.addEventListener('dblclick', function (e) {
+        if (e.target && e.target.classList && e.target.classList.contains('s-del')) return;
+        startRename(s.id, row);
+      });
       row.querySelector('.s-del').addEventListener('click', function (e) {
         e.stopPropagation();
         if (confirm('删除这个对话？')) deleteSession(s.id);
       });
       box.appendChild(row);
     });
+  }
+  function startRename(id, row) {
+    var s = sessionById(id);
+    if (!s) return;
+    var titleEl = row.querySelector('.s-title');
+    var inp = document.createElement('input');
+    inp.className = 's-rename';
+    inp.value = s.title || '';
+    inp.maxLength = 40;
+    titleEl.replaceWith(inp);
+    inp.focus(); inp.select();
+    var finish = function (save) {
+      if (save && s) { var v = inp.value.trim(); if (v) s.title = v; }
+      persistSessions();
+      renderSessionList();
+    };
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { finish(false); }
+    });
+    inp.addEventListener('blur', function () { finish(true); });
   }
   function renderActiveSession() {
     messages.innerHTML = '';
@@ -599,10 +646,11 @@
     m.scrollIntoView({ behavior: 'smooth', block: 'center' });
     updateSearchUi();
   }
-  function doSearch(q) {
-    clearSearch();
-    var query = String(q || '').trim();
-    if (!query) { updateSearchUi(); return; }
+  function updateModeBtn() {
+    var btn = el('searchModeBtn');
+    if (btn) { btn.textContent = searchMode === 'all' ? '全局' : '本会话'; btn.classList.toggle('on', searchMode === 'all'); }
+  }
+  function runSessionSearch(query) {
     var lower = query.toLowerCase();
     Array.prototype.forEach.call(messages.querySelectorAll('.msg'), function (msg) {
       var bubble = msg.querySelector('.bubble');
@@ -610,8 +658,55 @@
       searchMatches.push(msg);
       highlightText(bubble, lower);
     });
-    if (searchMatches.length) { searchIndex = 0; jumpSearch(0); }
+    if (searchMatches.length) jumpSearch(0);
     updateSearchUi();
+  }
+  function renderGlobalResults(query) {
+    var lower = query.toLowerCase();
+    var box = el('sessionList');
+    if (!box) return;
+    var results = [];
+    sessions.forEach(function (s) {
+      var cnt = 0;
+      s.messages.forEach(function (m) {
+        if (m.content && String(m.content).toLowerCase().indexOf(lower) >= 0) cnt++;
+      });
+      var titleHit = (s.title || '').toLowerCase().indexOf(lower) >= 0;
+      if (cnt > 0 || titleHit) results.push({ s: s, cnt: cnt, titleHit: titleHit });
+    });
+    results.sort(function (a, b) { return (b.s.updatedAt || 0) - (a.s.updatedAt || 0); });
+    box.innerHTML = '';
+    if (!results.length) {
+      var empty = document.createElement('div');
+      empty.className = 'search-empty';
+      empty.textContent = '没有匹配的会话';
+      box.appendChild(empty);
+    }
+    results.forEach(function (r) {
+      var s = r.s;
+      var row = document.createElement('div');
+      row.className = 'session' + (s.id === activeId ? ' active' : '') + ' search-result';
+      row.innerHTML = '<div class="s-title"></div><div class="s-time"></div>';
+      row.querySelector('.s-title').textContent = (r.titleHit ? '★ ' : '') + (s.title || '新对话');
+      row.querySelector('.s-time').textContent = r.cnt + ' 条命中';
+      row.addEventListener('click', function () {
+        searchMode = 'session'; updateModeBtn();
+        if (s.id !== activeId) { switchSession(s.id); }
+        else { clearSearch(); renderSessionList(); renderActiveSession(); }
+        runSessionSearch(query);
+        input.focus();
+      });
+      box.appendChild(row);
+    });
+    var c = el('searchCount');
+    if (c) c.textContent = results.length ? results.length + ' 个会话' : '';
+  }
+  function doSearch(q) {
+    var query = String(q || '').trim();
+    currentQuery = query;
+    if (!query) { clearSearch(); renderSessionList(); updateSearchUi(); return; }
+    if (searchMode === 'all') { clearSearch(); renderGlobalResults(query); }
+    else { clearSearch(); runSessionSearch(query); }
   }
   function highlightText(root, lowerQ) {
     var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), tn, nodes = [];
@@ -634,6 +729,35 @@
       }
       if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
       tn.parentNode.replaceChild(frag, tn);
+    });
+  }
+
+  /* ---------- 侧栏拖拽调宽 ---------- */
+  var sidebarWidth = 264;
+  try { var _sw = parseInt(localStorage.getItem('sbWidth'), 10); if (_sw >= 180 && _sw <= 480) sidebarWidth = _sw; } catch (e) {}
+  function applySidebarWidth() {
+    var sb = document.querySelector('.sidebar');
+    if (sb) sb.style.width = sidebarWidth + 'px';
+  }
+  function initSidebarResize() {
+    var sb = document.querySelector('.sidebar');
+    var handle = document.querySelector('.sidebar .resize-handle');
+    if (!sb || !handle) return;
+    handle.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      var startX = e.clientX, startW = sb.offsetWidth;
+      function move(ev) {
+        var w = Math.min(480, Math.max(180, startW + (ev.clientX - startX)));
+        sb.style.width = w + 'px';
+      }
+      function up() {
+        sidebarWidth = sb.offsetWidth;
+        try { localStorage.setItem('sbWidth', String(sidebarWidth)); } catch (err) {}
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
     });
   }
 
@@ -1297,6 +1421,11 @@
   });
   el('searchPrev').addEventListener('click', function () { jumpSearch(searchIndex - 1); });
   el('searchNext').addEventListener('click', function () { jumpSearch(searchIndex + 1); });
+  el('searchModeBtn').addEventListener('click', function () {
+    searchMode = searchMode === 'all' ? 'session' : 'all';
+    updateModeBtn();
+    doSearch(currentQuery);
+  });
 
   // 批量授权开关
   el('batchAuthBtn').addEventListener('click', function () {
@@ -1340,6 +1469,9 @@
   loadEngines();
   loadSessions();
   loadKbStatus();
+  applySidebarWidth();
+  initSidebarResize();
+  updateModeBtn();
   input.focus();
 })();
 </script>
