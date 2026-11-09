@@ -92,7 +92,7 @@ def screenshot():
         subprocess.run(["rm", "-rf", tmp], capture_output=True)
 
 
-def ask_vision(img_b64, task, step, history_text):
+def ask_vision(img_b64, task, step, history_text, retry_hint=None):
     """调 Ollama qwen2.5vl，返回模型文本"""
     prompt = (
         "你是一个电脑操作助手，正在替用户操作 macOS 电脑。\n"
@@ -118,6 +118,8 @@ def ask_vision(img_b64, task, step, history_text):
         "- 坐标用整数\n"
     ).format(task=task, w=LOGICAL_W, h=LOGICAL_H, step=step,
              hist=history_text or "（无）")
+    if retry_hint:
+        prompt += "\n\n【重要 · 重试】" + retry_hint
 
     payload = {
         "model": MODEL,
@@ -130,7 +132,7 @@ def ask_vision(img_b64, task, step, history_text):
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return (data.get("message") or {}).get("content") or ""
 
@@ -244,38 +246,68 @@ def main():
 
     task = args.task.strip()
     history = []
+    # 连续失败重试上限：视觉模型偶发输出坏格式 / 截图偶发失败 / 超时，
+    # 不应让整个任务「做一步就中断」；连续失败达到上限才停。
+    MAX_CONSECUTIVE_FAILURES = 3
+    step = 0
+    failures = 0
+    retry_hint = None
     try:
-        for step in range(args.max_steps):
-            img_b64 = screenshot()
-            resp = ask_vision(img_b64, task, step,
-                              "；".join(history[-6:]))
-            parsed = parse_action(resp)
-            if not parsed:
-                emit({"type": "error",
-                      "message": "模型返回无法解析，原始：" + resp[:200]})
-                return
-            thought = str(parsed.get("thought", ""))
-            action = parsed.get("action") or {}
-            ok, desc = execute(action, args.dry_run)
+        while step < args.max_steps:
+            try:
+                img_b64 = screenshot()
+                resp = ask_vision(img_b64, task, step,
+                                  "；".join(history[-6:]), retry_hint)
+                parsed = parse_action(resp)
+                if not parsed:
+                    # 输出坏格式：重试该步（带纠正提示），不中断整个任务
+                    failures += 1
+                    retry_hint = ("上次输出无法解析，请只输出一个 JSON 对象，"
+                                  "不要任何多余文字、不要用代码块包裹。")
+                    if failures >= MAX_CONSECUTIVE_FAILURES:
+                        emit({"type": "error",
+                              "message": "连续多次无法解析模型输出，已停止。原始：" + resp[:200]})
+                        return
+                    emit({"type": "step", "step": step,
+                          "thought": "（模型输出异常，自动重试第 %d 次）" % failures,
+                          "action": {"type": "wait"}, "desc": "重试"})
+                    time.sleep(0.8)
+                    continue
+                failures = 0
+                retry_hint = None
+                thought = str(parsed.get("thought", ""))
+                action = parsed.get("action") or {}
+                ok, desc = execute(action, args.dry_run)
 
-            emit({
-                "type": "step",
-                "step": step,
-                "thought": thought,
-                "action": action,
-                "desc": desc,
-                "img": "data:image/png;base64," + img_b64,
-            })
-            history.append("%d. %s → %s" % (step, thought, desc))
+                emit({
+                    "type": "step",
+                    "step": step,
+                    "thought": thought,
+                    "action": action,
+                    "desc": desc,
+                    "img": "data:image/png;base64," + img_b64,
+                })
+                history.append("%d. %s → %s" % (step, thought, desc))
 
-            if action.get("type") == "done":
-                emit({"type": "done", "summary": thought,
-                      "steps": step + 1})
-                return
-            time.sleep(0.5)
+                if action.get("type") == "done":
+                    emit({"type": "done", "summary": thought,
+                          "steps": step + 1})
+                    return
+                step += 1
+                time.sleep(0.5)
+            except Exception as e:
+                # 单步异常（截图偶发失败 / 网络 / 超时）：重试该步，不中断
+                failures += 1
+                if failures >= MAX_CONSECUTIVE_FAILURES:
+                    emit({"type": "error", "message": str(e)})
+                    return
+                emit({"type": "step", "step": step,
+                      "thought": "（本步出错，自动重试第 %d 次：%s）" % (failures, str(e)[:80]),
+                      "action": {"type": "wait"}, "desc": "重试"})
+                time.sleep(0.8)
         emit({"type": "done",
               "summary": "达到最大步数 %d，任务未明确结束" % args.max_steps,
-              "steps": args.max_steps})
+              "steps": step})
     except Exception as e:
         emit({"type": "error", "message": str(e)})
 

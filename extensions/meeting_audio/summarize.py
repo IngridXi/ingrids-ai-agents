@@ -75,7 +75,7 @@ def _chat_openai(engine: str, messages: list[dict], num_predict: int = 2048, tem
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key},
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
 
