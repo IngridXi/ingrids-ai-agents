@@ -51,6 +51,8 @@
     '.cal-grid .day:hover{background:var(--accent-soft);}',
     '.cal-grid .day.other{color:var(--ink-faint);}',
     '.cal-grid .day.other .dots i{opacity:.4;}',
+    '.cal-grid .day.has{background:var(--accent-soft);}',
+    '.cal-grid .day.has:hover{background:var(--accent-soft);filter:brightness(.96);}',
     '.cal-grid .day.sel{background:var(--accent);color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.18);}',
     '.cal-grid .day.today:not(.sel){box-shadow:inset 0 0 0 2px var(--accent);}',
     '.cal-grid .day.today:not(.sel) .num{color:var(--accent);font-weight:800;}',
@@ -78,6 +80,7 @@
     '.cal-modal .cat-opt.on{border-color:var(--accent);color:var(--accent);font-weight:700;background:var(--accent-soft);}',
     '.cal-empty{color:var(--ink-faint);font-size:11.5px;text-align:center;padding:12px 0;}',
     '.cal-foot{font-size:10.5px;color:var(--ink-faint);line-height:1.6;border-top:1px solid var(--line);padding-top:9px;}',
+    '.cal-foot .tz{color:var(--ink-soft);font-weight:650;letter-spacing:.2px;}',
     '.cal-foot .ok{color:#1d9e75;font-weight:600;}',
     '.cal-foot .warn{color:#b7791f;font-weight:600;}',
     '.cal-foot button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:10.5px;padding:0;text-decoration:underline;}',
@@ -187,7 +190,7 @@
     if (!list.length) return { colors: [], count: 0 };
     var colors = [];
     list.forEach(function (e) {
-      var c = catOf(e.category).color;
+      var c = catOfEffective(e).color;
       if (colors.indexOf(c) < 0 && colors.length < 3) colors.push(c);
     });
     return { colors: colors, count: list.length };
@@ -231,18 +234,20 @@
       return;
     }
     $('calEvents').innerHTML = list.map(function (e) {
-      var c = catOf(e.category);
+      var c = catOfEffective(e);
       var src = e.source ? '<span class="src">' + esc(e.source) + '</span>' : '';
       var loc = e.location ? '<div class="meta">📍 ' + esc(e.location) + '</div>' : '';
       var cat = '<span class="cat" style="color:' + c.color + ';background:' + c.color + '1a">' + c.emoji + ' ' + esc(c.label) + '</span>';
-      var due = isDue(e) ? '<div class="due-tag">⏰ 即将到期 · ' + reminderLabel(e.reminderMin) + '</div>' : '';
-      return '<div class="cal-ev' + (isDue(e) ? ' due' : '') + '"><div class="time">' + fmtTime(e.at, e.allDay) + '</div>' +
+      var due = dueLabel(e);
+      var isDueDeadline = isDue(e) && isDeadlineCat(c);
+      return '<div class="cal-ev' + (isDueDeadline ? ' due' : '') + '"><div class="time">' + fmtTime(e.at, e.allDay) + '</div>' +
         '<div class="body"><div class="t">' + esc(e.title) + '</div>' + cat + loc + src + due + '</div></div>';
     }).join('');
   }
 
   function renderFoot() {
     var lines = [];
+    lines.push('<span class="tz">🕐 ' + esc(tzLabel()) + '</span>');
     if (accounts.length) {
       lines.push('<span class="ok">✓ 已连接 ' + accounts.length + ' 个日历账户</span>：' + accounts.map(function (a) { return esc(a.name); }).join('、'));
       if (lastSyncAt) lines.push('上次同步 ' + fmtRelative(lastSyncAt));
@@ -263,6 +268,17 @@
     if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
     if (s < 86400) return Math.floor(s / 3600) + ' 小时前';
     return Math.floor(s / 86400) + ' 天前';
+  }
+
+  // 当前本地时区名 + UTC 偏移（跟随系统时区自动变化）
+  function tzLabel() {
+    var tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+    var offMin = -new Date().getTimezoneOffset();
+    var sign = offMin >= 0 ? '+' : '-';
+    var abs = Math.abs(offMin);
+    var gmt = 'GMT' + sign + Math.floor(abs / 60) + (abs % 60 ? ':' + pad(abs % 60) : '');
+    return tz ? (tz + ' · ' + gmt) : gmt;
   }
 
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -287,15 +303,33 @@
     for (var i = 0; i < RESEARCH_CATEGORIES.length; i++) if (RESEARCH_CATEGORIES[i].id === c) return RESEARCH_CATEGORIES[i];
     return RESEARCH_CATEGORIES[RESEARCH_CATEGORIES.length - 1];
   }
+  // 取事件分类：优先用已存的 category；为空或「其他」时按标题/来源自动识别（旧数据立即上色）
+  function catOfEffective(e) {
+    var cat = e.category;
+    if ((!cat || cat === 'other') && window.SecretaryCore && window.SecretaryCore.classifyEvent) {
+      var auto = window.SecretaryCore.classifyEvent(e.title, e.source);
+      if (auto && auto !== 'other') cat = auto;
+    }
+    return catOf(cat);
+  }
+  function isDeadlineCat(c) { return c.id === 'submission' || c.id === 'review' || c.id === 'grant'; }
   function reminderLabel(min) {
     for (var i = 0; i < REMINDER_OPTIONS.length; i++) if (REMINDER_OPTIONS[i].min === Number(min)) return REMINDER_OPTIONS[i].label;
-    return min ? (min + ' 分钟前') : '到点提醒';
+    return min ? ('提前 ' + min + ' 分钟') : '到点提醒';
   }
   function isDue(e) {
     if (e.done || !e.at) return false;
     var d = new Date(e.at).getTime();
     var now = Date.now();
-    return isFinite(d) && d >= now && d - now <= 3 * 86400000;   // 3 天内即将到期
+    return isFinite(d) && d >= now && d - now <= 3 * 86400000;   // 3 天内即将到来
+  }
+  // 到期/临近标签：只有真正的 deadline（投稿/审稿/基金）才标「即将到期」，会议等不标
+  function dueLabel(e) {
+    if (!isDue(e)) return '';
+    var c = catOfEffective(e);
+    if (!isDeadlineCat(c)) return '';
+    var lead = reminderLabel(e.reminderMin);
+    return '<div class="due-tag">⏰ 即将到期' + (lead && lead !== '到点提醒' ? ' · ' + lead : '') + '</div>';
   }
 
   /* ---------- 选日 / 换月 ---------- */

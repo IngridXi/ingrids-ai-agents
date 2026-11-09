@@ -267,6 +267,28 @@
     return RESEARCH_CATEGORIES[RESEARCH_CATEGORIES.length - 1];
   }
 
+  /* ---------- 事件自动分类：按标题/来源关键词识别活动类型 ---------- */
+  // 顺序即优先级：同命中数时，排在前面的分类胜出
+  var EVENT_CATEGORY_RULES = [
+    { cat: 'submission', words: ['deadline', 'submission', 'submit', 'camera-ready', 'camera ready', 'paper due', 'due date', 'abstract', 'ddl', '投稿', '截止', '交稿', '截稿', '提交'] },
+    { cat: 'meeting',    words: ['meeting', 'seminar', 'conference', 'workshop', 'standup', 'sync', '1:1', '1-1', 'lab meeting', 'group meeting', 'colloquium', 'talk', 'presentation', '组会', '会议', '研讨会', '例会', '碰头', '讨论'] },
+    { cat: 'advisor',    words: ['supervisor', 'advisor', 'supervision', 'tutorial', 'viva', 'defense', 'thesis', 'dissertation', '导师', '答辩', '开题'] },
+    { cat: 'review',     words: ['review', 'rebuttal', 'referee', 'revision', 'revise', '审稿', '返修', '修改意见'] },
+    { cat: 'grant',      words: ['grant', 'funding', 'fellowship', 'scholarship', 'proposal', '基金', '经费', '奖学金', '项目申请'] },
+  ];
+
+  /** 按标题/来源关键词自动识别活动类型 → 研究分类 id（匹配不到返回 'other'） */
+  function classifyEvent(title, source) {
+    var low = (String(title || '') + ' ' + String(source || '')).toLowerCase();
+    var best = 'other', hit = 0;
+    EVENT_CATEGORY_RULES.forEach(function (r) {
+      var n = 0;
+      r.words.forEach(function (w) { if (w && low.indexOf(w.toLowerCase()) >= 0) n++; });
+      if (n > hit) { hit = n; best = r.cat; }
+    });
+    return best;
+  }
+
   /* ---------- 导出 ---------- */
   global.SecretaryCore = {
     EventStore: EventStore,
@@ -280,5 +302,7 @@
     CATEGORY_RULES: CATEGORY_RULES,
     RESEARCH_CATEGORIES: RESEARCH_CATEGORIES,
     categoryOf: categoryOf,
+    EVENT_CATEGORY_RULES: EVENT_CATEGORY_RULES,
+    classifyEvent: classifyEvent,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

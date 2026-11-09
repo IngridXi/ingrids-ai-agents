@@ -37,21 +37,63 @@ function unescape(s) {
     .replace(/\\\\/g, '\\');
 }
 
+/** 某时区名是否可被 Intl 识别（IANA 名如 Europe/London 可；Windows 名如 "GMT Standard Time" 不可） */
+function isValidTimeZone(tz) {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch (e) { return false; }
+}
+
+/** 返回某时区在 utcMs 时刻相对 UTC 的偏移（毫秒，东正西负）；无效时区返回 null */
+function tzOffsetMs(tz, utcMs) {
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+    const parts = dtf.formatToParts(new Date(utcMs));
+    const get = function (t) { for (let i = 0; i < parts.length; i++) if (parts[i].type === t) return +parts[i].value; return 0; };
+    const asUTC = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'));
+    return asUTC - utcMs;
+  } catch (e) { return null; }
+}
+
+/** 把某时区的「墙上时钟」(y/mo/d h:mi:se) 转成 UTC 绝对时刻（毫秒），自动处理夏令时 */
+function wallToUtc(tz, y, mo, d, h, mi, se) {
+  const wall = Date.UTC(y, mo, d, h, mi, se);   // 先当 UTC 当作基准
+  let guess = wall;
+  for (let i = 0; i < 3; i++) {
+    const off = tzOffsetMs(tz, guess);
+    if (off == null) return wall;               // 无效时区 → 回退按 UTC（上层会再兜底）
+    const next = wall - off;
+    if (next === guess) break;
+    guess = next;
+  }
+  return guess;
+}
+
 /**
- * 解析 iCal 日期值 → ISO 字符串
- * 支持：UTC（…Z）、本地浮动（带 TZID 或无 Z）、全天（VALUE=DATE）
+ * 解析 iCal 日期行 → ISO 字符串（UTC 绝对时刻）
+ * 兼容两种输入：
+ *   · 完整属性行：DTSTART;TZID=Europe/London:20261112T140000（推荐，能取到 TZID）
+ *   · 纯值：20261112T140000Z
+ * 支持：UTC（…Z）、带 TZID 的 IANA 时区、本地浮动（无 TZID 无 Z）、全天（VALUE=DATE）
  */
 function parseCalDate(raw) {
   if (!raw) return '';
-  let value = String(raw);
+  let s = String(raw).replace(/^\s+/, '');
   let isDate = false;
-  if (value.indexOf(';') >= 0) {
-    const parts = value.split(';');
-    const params = parts.slice(0, -1).join(';');
-    value = parts[parts.length - 1];
-    if (/VALUE=DATE/i.test(params)) isDate = true;
+  let tzid = '';
+  // 去掉属性名前缀（DTSTART / DTEND；纯数字值不受影响）
+  s = s.replace(/^[A-Za-z-]+/, '');
+  // 用最后一个冒号切分「参数:值」
+  let value = s;
+  const ci = s.lastIndexOf(':');
+  if (ci >= 0) {
+    const paramPart = s.slice(0, ci);
+    value = s.slice(ci + 1);
+    if (/VALUE=DATE/i.test(paramPart)) isDate = true;
+    const tm = paramPart.match(/TZID=([^;:]+)/i);
+    if (tm) tzid = tm[1].trim().replace(/^"|"$/g, '');
   }
-  value = value.replace(/^:/, '');
   const m = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?(Z?)/);
   if (!m) return '';
   const y = +m[1], mo = +m[2] - 1, d = +m[3];
@@ -60,7 +102,11 @@ function parseCalDate(raw) {
   }
   const h = +m[4], mi = +m[5], se = +m[6], isUtc = m[7] === 'Z';
   if (isUtc) return new Date(Date.UTC(y, mo, d, h, mi, se)).toISOString();
-  return new Date(y, mo, d, h, mi, se).toISOString();  // 本地浮动（TZID 按本机时区）
+  // 带明确 IANA 时区 → 按该时区墙上时钟换算 UTC，跨时区/夏令时都正确
+  if (tzid && !/^(UTC|GMT|ETC\/UTC|ETC\/GMT|Z)$/i.test(tzid) && isValidTimeZone(tzid)) {
+    return new Date(wallToUtc(tzid, y, mo, d, h, mi, se)).toISOString();
+  }
+  return new Date(y, mo, d, h, mi, se).toISOString();  // 无时区/不可识别 → 本地浮动
 }
 
 /** 解析整段 ICS 文本 → 事件数组（含全天/多事件） */
@@ -73,10 +119,11 @@ function parseICalendar(ics) {
   while ((m = re.exec(s)) !== null) {
     const b = m[1];
     const title = unescape(prop(b, 'SUMMARY'));
-    const at = parseCalDate(prop(b, 'DTSTART'));
+    const dtStartRaw = ((b.match(/(^|\r?\n)DTSTART[^\r\n]*/) || ['', ''])[0] || '').trim();
+    const dtEndRaw = ((b.match(/(^|\r?\n)DTEND[^\r\n]*/) || ['', ''])[0] || '').trim();
+    const at = parseCalDate(dtStartRaw);
     if (!title && !at) continue;
-    const end = parseCalDate(prop(b, 'DTEND'));
-    const dtStartRaw = ((b.match(/(^|\r?\n)DTSTART[^\r\n]*/) || ['', ''])[0] || '');
+    const end = parseCalDate(dtEndRaw);
     out.push({
       uid: prop(b, 'UID'),
       title: title || '（无标题）',

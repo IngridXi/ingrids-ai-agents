@@ -466,6 +466,7 @@ async function runCalendarSync() {
       id: e.id, title: e.title, at: e.at, end: e.end || '',
       location: e.location || '', source: e.source || '', note: e.note || '',
       reminderMin: e.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
+      category: SecretaryCore.classifyEvent(e.title, e.source),
     };
   });
   const merged = manual.concat(synced);
@@ -581,7 +582,8 @@ async function runIcsSync() {
       location: ev.location || '', source: ev._feedName || 'ICS 订阅', note: ev.description || '',
       reminderMin: ev.allDay ? 0 : 30,
       reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
-      createdAt: old ? old.createdAt : Date.now(), category: 'other',
+      createdAt: old ? old.createdAt : Date.now(),
+      category: SecretaryCore.classifyEvent(ev.title, ev._feedName),
     });
   });
   const merged = others.concat(synced);
@@ -607,7 +609,8 @@ async function importIcsFile() {
       list.push({
         id: 'icsimp-' + stamp + '-' + i, title: ev.title, at: ev.at, end: ev.end || '',
         location: ev.location || '', source: '导入 · ' + path.basename(r.filePaths[0]), note: ev.description || '',
-        reminderMin: ev.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(), category: 'other',
+        reminderMin: ev.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
+        category: SecretaryCore.classifyEvent(ev.title),
       });
     });
     list.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
