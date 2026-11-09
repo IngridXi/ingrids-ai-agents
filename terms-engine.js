@@ -69,9 +69,9 @@ function normCategory(c) {
   return '概念';
 }
 
-/* ---------------- 共现边（topTerms 之间共享文献即相连） ---------------- */
-function buildEdges(termMap, topTerms) {
-  const names = topTerms.map(function (t) { return t.term; });
+/* ---------------- 共现边（所有术语之间共享文献即相连，保证网状图完整无孤点） ---------------- */
+function buildEdges(termMap, termList) {
+  const names = termList.map(function (t) { return t.term; });
   const edges = [];
   for (let i = 0; i < names.length; i++) {
     for (let j = i + 1; j < names.length; j++) {
@@ -223,7 +223,9 @@ async function buildTermsGraph(opts) {
   }).sort(function (a, b) { return b.freq - a.freq; });
 
   const topTerms = terms.slice(0, topK);
-  const edges = buildEdges(termMap, topTerms);
+  // 共现边在所有术语之间计算（而非仅 topK 内），保证每个术语笔记都有「相关术语」双链，
+  // Obsidian 网状图不再出现孤点；topK 只影响总览图里「列出」多少个术语。
+  const edges = buildEdges(termMap, terms);
 
   // 4) 构建新状态（已处理文献标记 + 术语全量），供 main.js 持久化
   const newDocs = {};
