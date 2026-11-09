@@ -117,10 +117,15 @@ contextBridge.exposeInMainWorld('ingrid', {
   computerStop: () => ipcRenderer.invoke('computer:stop'),
   onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
 
-  // 工具能力（文件 / 数据库，只读安全白名单）
+  // 工具能力（文件 / 数据库；读安全白名单，写需审批）
   toolFsList: (payload) => ipcRenderer.invoke('tool:fs:list', payload),
   toolFsSearch: (payload) => ipcRenderer.invoke('tool:fs:search', payload),
   toolFsRead: (payload) => ipcRenderer.invoke('tool:fs:read', payload),
+  toolFsWrite: (payload) => ipcRenderer.invoke('tool:fs:write', payload),
+  toolFsAppend: (payload) => ipcRenderer.invoke('tool:fs:append', payload),
+  toolFsEdit: (payload) => ipcRenderer.invoke('tool:fs:edit', payload),
+  toolFsMove: (payload) => ipcRenderer.invoke('tool:fs:move', payload),
+  toolFsDelete: (payload) => ipcRenderer.invoke('tool:fs:delete', payload),
   toolDbQuery: (payload) => ipcRenderer.invoke('tool:db:query', payload),
 
   // 聊天记忆持久化（按 Agent 名隔离）

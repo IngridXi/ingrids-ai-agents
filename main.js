@@ -1384,9 +1384,99 @@ function toolFsRead(payload) {
   } catch (e) { return { ok: false, error: '读取失败：' + String(e && e.message || e) }; }
 }
 
+/* ---------------- 写工具（需审批；安全边界：仅主目录、拒系统/隐藏/Library，覆盖前备份，删除走废纸篓） ---------------- */
+function isSafeWritePath(p) {
+  const abs = path.resolve(String(p || ''));
+  const home = app.getPath('home');
+  if (!abs.startsWith(home + path.sep)) return false;                 // 只允许主目录内
+  const rel = path.relative(home, abs);
+  const first = rel.split(path.sep)[0];
+  if (first === 'Library' || first.startsWith('.')) return false;    // 拒 Library 与隐藏目录
+  return true;
+}
+function backupFile(p) {
+  try {
+    if (fs.existsSync(p)) {
+      const bak = p + '.cu-bak-' + Date.now();
+      fs.copyFileSync(p, bak);
+      return bak;
+    }
+  } catch {}
+  return null;
+}
+function toolFsWrite(payload) {
+  const target = path.resolve(String((payload && payload.path) || ''));
+  const content = String((payload && payload.content) == null ? '' : payload.content);
+  if (!target) return { ok: false, error: '路径为空' };
+  if (!isSafeWritePath(target)) return { ok: false, error: '拒绝写入该位置（仅允许主目录内的普通文件/目录，系统目录、Library、隐藏目录受保护）' };
+  try {
+    const bak = backupFile(target);
+    fs.writeFileSync(target, content, 'utf8');
+    return { ok: true, path: target, wrote: content.length, backup: bak };
+  } catch (e) { return { ok: false, error: '写入失败：' + String(e && e.message || e) }; }
+}
+function toolFsAppend(payload) {
+  const target = path.resolve(String((payload && payload.path) || ''));
+  const content = String((payload && payload.content) == null ? '' : payload.content);
+  if (!target) return { ok: false, error: '路径为空' };
+  if (!isSafeWritePath(target)) return { ok: false, error: '拒绝写入该位置（仅允许主目录内的普通文件/目录）' };
+  try {
+    fs.appendFileSync(target, content, 'utf8');
+    return { ok: true, path: target, appended: content.length };
+  } catch (e) { return { ok: false, error: '追加失败：' + String(e && e.message || e) }; }
+}
+function toolFsEdit(payload) {
+  const target = path.resolve(String((payload && payload.path) || ''));
+  const oldStr = String((payload && payload.old) == null ? '' : payload.old);
+  const newStr = String((payload && payload.new) == null ? '' : payload.new);
+  if (!target) return { ok: false, error: '路径为空' };
+  if (!isSafeWritePath(target)) return { ok: false, error: '拒绝修改该位置（仅允许主目录内的普通文件/目录）' };
+  if (!oldStr) return { ok: false, error: '要替换的原文（old）不能为空' };
+  try {
+    if (!fs.existsSync(target)) return { ok: false, error: '文件不存在：' + target };
+    const orig = fs.readFileSync(target, 'utf8');
+    let cnt = orig.split(oldStr).length - 1;
+    if (cnt === 0) return { ok: false, error: '未找到要替换的内容，已取消（请确认原文精确一致）' };
+    if (cnt > 1) return { ok: false, error: '要替换的内容出现 ' + cnt + ' 次，请给出更长的唯一上下文' };
+    const bak = backupFile(target);
+    fs.writeFileSync(target, orig.replace(oldStr, newStr), 'utf8');
+    return { ok: true, path: target, replaced: 1, backup: bak };
+  } catch (e) { return { ok: false, error: '修改失败：' + String(e && e.message || e) }; }
+}
+function toolFsMove(payload) {
+  const from = path.resolve(String((payload && payload.from) || ''));
+  const to = path.resolve(String((payload && payload.to) || ''));
+  if (!from || !to) return { ok: false, error: '来源或目标为空' };
+  if (!isSafeWritePath(from) || !isSafeWritePath(to)) return { ok: false, error: '拒绝移动（来源或目标超出主目录安全范围）' };
+  try {
+    if (!fs.existsSync(from)) return { ok: false, error: '来源不存在：' + from };
+    fs.renameSync(from, to);
+    return { ok: true, from: from, to: to };
+  } catch (e) { return { ok: false, error: '移动失败：' + String(e && e.message || e) }; }
+}
+async function toolFsDelete(payload) {
+  const target = path.resolve(String((payload && payload.path) || ''));
+  if (!target) return { ok: false, error: '路径为空' };
+  if (!isSafeWritePath(target)) return { ok: false, error: '拒绝删除（仅允许主目录内的普通文件/目录）' };
+  try {
+    if (!fs.existsSync(target)) return { ok: false, error: '文件不存在：' + target };
+    // 删除到废纸篓：直接 rename 到 ~/.Trash（macOS 废纸篓真实位置，无需额外权限，可从废纸篓恢复）
+    const trash = path.join(app.getPath('home'), '.Trash');
+    let dest = path.join(trash, path.basename(target));
+    if (fs.existsSync(dest)) dest = path.join(trash, path.basename(target) + '.cu-' + Date.now());
+    fs.renameSync(target, dest);
+    return { ok: true, path: target, trashed: true, trashPath: dest };
+  } catch (e) { return { ok: false, error: '删除失败：' + String(e && e.message || e) }; }
+}
+
 ipcMain.handle('tool:fs:list', (_e, p) => toolFsList(p));
 ipcMain.handle('tool:fs:search', (_e, p) => toolFsSearch(p));
 ipcMain.handle('tool:fs:read', (_e, p) => toolFsRead(p));
+ipcMain.handle('tool:fs:write', (_e, p) => toolFsWrite(p));
+ipcMain.handle('tool:fs:append', (_e, p) => toolFsAppend(p));
+ipcMain.handle('tool:fs:edit', (_e, p) => toolFsEdit(p));
+ipcMain.handle('tool:fs:move', (_e, p) => toolFsMove(p));
+ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
 ipcMain.handle('tool:db:query', (_e, p) => {
   const q = String((p && p.query) || '').trim();
   const k = Math.min(Math.max(parseInt((p && p.k), 10) || 5, 1), 10);

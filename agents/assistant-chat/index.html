@@ -73,6 +73,28 @@
   }
   .msg .bubble .think summary { cursor: pointer; font-weight: 600; color: var(--accent-2); user-select: none; margin-bottom: 4px; }
 
+  /* 写操作审批卡片 */
+  .approval-card {
+    max-width: 640px; margin: 8px 0 8px 48px; padding: 12px 14px;
+    background: #fffdf6; border: 1px solid #f0d9a8; border-left: 3px solid #e0a63c;
+    border-radius: 12px; font-size: 13px; line-height: 1.55;
+  }
+  .approval-card .ap-head { display: flex; align-items: center; gap: 8px; font-weight: 600; color: #8a5a12; margin-bottom: 6px; }
+  .approval-card .ap-icon { font-size: 16px; }
+  .approval-card .ap-body { color: var(--ink); font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; margin-bottom: 6px; }
+  .approval-card .ap-extra { color: var(--ink-soft); background: #fbf6ea; border-radius: 8px; padding: 8px 10px; font-size: 12px; word-break: break-all; max-height: 120px; overflow: auto; margin-bottom: 8px; white-space: pre-wrap; }
+  .approval-card .ap-actions { display: flex; gap: 8px; }
+  .approval-card .ap-actions button {
+    flex: 1; padding: 8px 0; border-radius: 9px; border: 1px solid var(--line);
+    cursor: pointer; font-size: 13px; font-weight: 600; background: var(--card);
+  }
+  .approval-card .ap-yes { border-color: #3f9d5a !important; color: #2c7a41; }
+  .approval-card .ap-yes:hover { background: #eaf7ee; }
+  .approval-card .ap-no { border-color: #e0a2a2 !important; color: #b3261e; }
+  .approval-card .ap-no:hover { background: #fdf2f2; }
+  .approval-card.decided { opacity: 0.6; }
+  .approval-card.decided button { cursor: default; pointer-events: none; }
+
   .welcome { text-align: center; color: var(--ink-soft); padding: 40px 16px 20px; }
   .welcome .big { width: 60px; height: 60px; border-radius: 18px; background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; display: grid; place-items: center; margin: 0 auto 14px; }
   .welcome .big svg { width: 30px; height: 30px; }
@@ -233,13 +255,19 @@
       tools.push('fs_list：列出某目录下的文件与子目录，参数 {"dir":"/绝对路径"}（省略则列主目录）');
       tools.push('fs_search：按文件名搜索，参数 {"query":"关键词","root":"可选起始目录"}');
       tools.push('fs_read：读取文本文件内容，参数 {"path":"/绝对路径"}');
+      tools.push('fs_write：写入/覆盖文件，参数 {"path":"/绝对路径","content":"完整内容"}（覆盖前自动备份原文件）');
+      tools.push('fs_append：向文件末尾追加内容，参数 {"path":"/绝对路径","content":"内容"}');
+      tools.push('fs_edit：替换文件中的一段文字，参数 {"path":"/绝对路径","old":"原文","new":"新文"}（原文须唯一）');
+      tools.push('fs_move：移动/重命名，参数 {"from":"/原路径","to":"/新路径"}');
+      tools.push('fs_delete：删除到废纸篓（非物理删除），参数 {"path":"/绝对路径"}');
     }
     if (caps.db) tools.push('db_query：查询本地知识库 / 文献库（Zotero、Obsidian 等），参数 {"query":"关键词"}');
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
     if (!tools.length) return '';
-    return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
+    return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
-      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。';
+      '\n\n收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。\n' +
+      '注意：所有「写」类操作（fs_write / fs_append / fs_edit / fs_move / fs_delete）会先弹给用户确认，用户批准后才真正执行；只允许操作用户主目录内的普通文件，系统目录与隐藏目录受保护。';
   }
   function executeTool(call, caps) {
     var n = call.name;
@@ -248,7 +276,49 @@
     if (n === 'fs_read' && caps.fs) return window.ingrid.toolFsRead(call.args);
     if (n === 'db_query' && caps.db) return window.ingrid.toolDbQuery(call.args);
     if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
+    // 写类操作：先请求用户审批，批准后执行
+    if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
+      return requestWriteApproval(n, call.args).then(function (ok) {
+        if (!ok) return { ok: false, error: '已由用户拒绝，未执行' };
+        if (n === 'fs_write') return window.ingrid.toolFsWrite(call.args);
+        if (n === 'fs_append') return window.ingrid.toolFsAppend(call.args);
+        if (n === 'fs_edit') return window.ingrid.toolFsEdit(call.args);
+        if (n === 'fs_move') return window.ingrid.toolFsMove(call.args);
+        return window.ingrid.toolFsDelete(call.args);
+      });
+    }
     return Promise.resolve({ ok: false, error: '工具不可用或未开启：' + n });
+  }
+  function describeWrite(kind, args) {
+    var p = String((args && args.path) || '');
+    if (kind === 'fs_write') return { icon: '🖊️', title: '写入文件（覆盖）', body: p, extra: String((args && args.content) || '').slice(0, 300) };
+    if (kind === 'fs_append') return { icon: '➕', title: '追加内容到文件', body: p, extra: String((args && args.content) || '').slice(0, 300) };
+    if (kind === 'fs_edit') return { icon: '🔧', title: '修改文件内容', body: p, extra: '「' + String((args && args.old) || '').slice(0, 100) + '」→「' + String((args && args.new) || '').slice(0, 100) + '」' };
+    if (kind === 'fs_move') return { icon: '📦', title: '移动 / 重命名', body: String((args && args.from) || '') + '  →  ' + String((args && args.to) || ''), extra: '' };
+    if (kind === 'fs_delete') return { icon: '🗑️', title: '删除到废纸篓', body: p, extra: '' };
+    return { icon: '❓', title: kind, body: '', extra: '' };
+  }
+  function requestWriteApproval(kind, args) {
+    return new Promise(function (resolve) {
+      var d = describeWrite(kind, args);
+      var card = document.createElement('div');
+      card.className = 'approval-card';
+      card.innerHTML =
+        '<div class="ap-head"><span class="ap-icon">' + d.icon + '</span><span class="ap-title">' + esc(d.title) + '（待你确认）</span></div>' +
+        '<div class="ap-body">' + esc(d.body) + '</div>' +
+        (d.extra ? '<div class="ap-extra">' + esc(d.extra) + '</div>' : '') +
+        '<div class="ap-actions"><button class="ap-yes">✅ 批准执行</button><button class="ap-no">✖ 拒绝</button></div>';
+      messages.appendChild(card);
+      messages.scrollTop = messages.scrollHeight;
+      function decide(ok) {
+        card.classList.add('decided');
+        var btns = card.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+        resolve(ok);
+      }
+      card.querySelector('.ap-yes').addEventListener('click', function () { decide(true); });
+      card.querySelector('.ap-no').addEventListener('click', function () { decide(false); });
+    });
   }
   function formatToolResult(call, res) {
     var body;
@@ -257,6 +327,11 @@
         res.entries.map(function (e) { return (e.dir ? '[目录] ' : '       ') + e.name + (e.size ? '  (' + e.size + ' B)' : ''); }).join('\n');
       else if (call.name === 'fs_search') body = '找到 ' + res.count + ' 个文件：\n' + (res.results || []).join('\n');
       else if (call.name === 'fs_read') body = res.content;
+      else if (call.name === 'fs_write') body = '已写入 ' + res.path + '（' + res.wrote + ' 字符）' + (res.backup ? '，原文件已备份到 ' + res.backup : '');
+      else if (call.name === 'fs_append') body = '已追加 ' + res.appended + ' 字符到 ' + res.path;
+      else if (call.name === 'fs_edit') body = '已替换 1 处：' + res.path + (res.backup ? '，原文件已备份到 ' + res.backup : '');
+      else if (call.name === 'fs_move') body = '已移动：' + res.from + ' → ' + res.to;
+      else if (call.name === 'fs_delete') body = '已删除到废纸篓：' + res.path;
       else if (call.name === 'db_query') body = JSON.stringify(res.hits, null, 2);
       else if (call.name === 'computer') body = res.summary;
       else body = JSON.stringify(res);
