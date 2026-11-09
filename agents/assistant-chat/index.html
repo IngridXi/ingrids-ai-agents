@@ -63,7 +63,41 @@
     font-size: 14px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
   }
   .msg.user .bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; margin-right: 10px; }
-  .msg.assistant .bubble { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; margin-left: 10px; }
+  .msg.assistant .bubble { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; margin-left: 10px; white-space: normal; }
+
+  /* Markdown 富文本样式（assistant 气泡内） */
+  .msg.assistant .bubble p { margin: 0 0 8px; }
+  .msg.assistant .bubble p:last-child { margin-bottom: 0; }
+  .msg.assistant .bubble h1, .msg.assistant .bubble h2, .msg.assistant .bubble h3, .msg.assistant .bubble h4 {
+    margin: 12px 0 6px; font-weight: 700; line-height: 1.35; color: var(--ink);
+  }
+  .msg.assistant .bubble h1 { font-size: 18px; }
+  .msg.assistant .bubble h2 { font-size: 16px; }
+  .msg.assistant .bubble h3 { font-size: 15px; }
+  .msg.assistant .bubble h4 { font-size: 14px; }
+  .msg.assistant .bubble ul, .msg.assistant .bubble ol { margin: 6px 0; padding-left: 22px; }
+  .msg.assistant .bubble li { margin: 3px 0; }
+  .msg.assistant .bubble code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+    background: var(--accent-soft); color: var(--accent-2); padding: 1px 5px; border-radius: 5px;
+  }
+  .msg.assistant .bubble pre {
+    background: #2b2733; color: #e8e6ef; padding: 12px 14px; border-radius: 10px;
+    overflow-x: auto; margin: 10px 0; line-height: 1.5;
+  }
+  .msg.assistant .bubble pre code { background: transparent; color: inherit; padding: 0; font-size: 12.5px; }
+  .msg.assistant .bubble blockquote {
+    border-left: 3px solid var(--accent); padding: 4px 12px; margin: 8px 0;
+    color: var(--ink-soft); background: var(--accent-soft); border-radius: 0 8px 8px 0;
+  }
+  .msg.assistant .bubble table { border-collapse: collapse; margin: 10px 0; font-size: 13px; display: block; overflow-x: auto; }
+  .msg.assistant .bubble th, .msg.assistant .bubble td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+  .msg.assistant .bubble th { background: var(--accent-soft); font-weight: 600; }
+  .msg.assistant .bubble hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+  .msg.assistant .bubble a { color: var(--accent-2); text-decoration: underline; }
+  .msg.assistant .bubble .mermaid { margin: 10px 0; text-align: center; overflow-x: auto; }
+  .msg.assistant .bubble .mermaid svg { max-width: 100%; height: auto; }
+  .msg.assistant .bubble .mmd-err { color: var(--danger); font-size: 12px; }
   .msg .bubble.err { border-color: #f3c2c0; background: #fdf2f2; color: #b3261e; }
   .msg .bubble .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; margin-left: 1px; border-radius: 2px; animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -174,11 +208,59 @@
 </footer>
 <input type="file" id="imgFile" accept="image/*" hidden>
 
+<script src="../../vendor/marked.min.js"></script>
+<script src="../../vendor/mermaid.min.js"></script>
 <script src="../../icons.js"></script>
 <script>
 (function () {
   'use strict';
   var IS_DESKTOP = !!(window.ingrid && window.ingrid.isDesktop);
+
+  /* ---------- Markdown 渲染 + Mermaid 图表（ChatGPT 式富文本） ---------- */
+  if (typeof marked !== 'undefined') {
+    marked.setOptions({ gfm: true, breaks: true });
+  }
+  if (typeof mermaid !== 'undefined') {
+    try { mermaid.initialize({ startOnLoad: false, theme: 'base', securityLevel: 'loose' }); } catch (e) {}
+  }
+  var __mmdSeq = 0;
+  var __mmdMap = {};
+  function mdToHtml(text) {
+    var s = String(text == null ? '' : text);
+    var blocks = [];
+    s = s.replace(/```mermaid\s*\n([\s\S]*?)```/g, function (m, code) {
+      var id = 'mmd' + (++__mmdSeq);
+      __mmdMap[id] = code.trim();
+      blocks.push(id);
+      return '<!--' + id + '-->';
+    });
+    var html;
+    try { html = marked.parse(s); }
+    catch (e) { html = esc(s); }
+    blocks.forEach(function (id) {
+      html = html.replace('<!--' + id + '-->', '<div class="mermaid" data-mmd="' + id + '"></div>');
+    });
+    return html;
+  }
+  function renderMermaidIn(container) {
+    if (!container || typeof mermaid === 'undefined') return;
+    var nodes = container.querySelectorAll('.mermaid[data-mmd]');
+    for (var i = 0; i < nodes.length; i++) {
+      (function (node) {
+        var id = node.getAttribute('data-mmd');
+        var src = __mmdMap[id];
+        if (!src || node.getAttribute('data-rendered')) return;
+        node.setAttribute('data-rendered', '1');
+        var uniq = 'mmd-g-' + id + '-' + Math.random().toString(36).slice(2, 8);
+        mermaid.render(uniq, src).then(function (res) {
+          node.innerHTML = res.svg;
+          node.classList.add('rendered');
+        }).catch(function (err) {
+          node.innerHTML = '<pre class="mmd-err">图表渲染失败：' + esc(String((err && err.message) || err)) + '</pre>';
+        });
+      })(nodes[i]);
+    }
+  }
 
   var SOUL_FALLBACK = '你是通用助手（Assistant），Ingrid 的日常主力之一。擅长：日常问答、信息检索与总结、内容创作、文档整理。回答清晰、结构化、直接有用；能给出可执行的建议。需要时可把内容整理成 Word/PPT/Excel 大纲。不确定时如实说明，不编造事实。';
   var soul = SOUL_FALLBACK;
@@ -243,7 +325,10 @@
       if (!Array.isArray(list) || !list.length) return;
       history = list;
       if (messages.querySelector('.welcome')) messages.innerHTML = '';
-      list.forEach(function (m) { addBubble(m.role, esc(m.content)); });
+      list.forEach(function (m) {
+        var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content));
+        if (m.role === 'assistant') renderMermaidIn(b);
+      });
       messages.scrollTop = messages.scrollHeight;
     }).catch(function () {});
   }
@@ -439,6 +524,7 @@
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
       s += '\n\n【批量授权模式】用户已开启批量授权：你可以在一次回复里连续输出多个写操作工具（一次多个 <tool>），系统会全部自动执行，无需等待逐个确认。';
     }
+    s += '\n\n【输出格式】用 Markdown 排版：标题用 # / ##，重点加粗，善用列表、表格、引用；需要展示关系、流程或数据对比时，用 ```mermaid 代码块输出图表（flowchart 流程图、sequenceDiagram 时序图、pie 饼图、xychart-beta 柱状/折线图），不要用纯文字描述本可图示的内容。';
     return s;
   }
 
@@ -613,7 +699,7 @@
 
     function renderStream() {
       var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
-      bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + (live ? esc(live) : '') + '<span class="cursor"></span>';
+      bubble.innerHTML = thinkHtml + (acc ? mdToHtml(acc) : '') + (live ? mdToHtml(live) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
@@ -622,8 +708,9 @@
       if (history.length > 24) history = history.slice(-24);
       persistHistory();
       var thinkHtml = thinking ? '<details class="think"' + (finalText && !err ? '' : ' open') + '><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
-      bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>' : esc(finalText || '（无回复）'));
+      bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
+      else renderMermaidIn(bubble);
       streaming = false; sendBtn.disabled = false;
       setContextTag('');
       input.focus();
@@ -717,13 +804,14 @@
 
     function render() {
       var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
-      bubble.innerHTML = thinkHtml + (acc ? esc(acc) : '') + '<span class="cursor"></span>';
+      bubble.innerHTML = thinkHtml + (acc ? mdToHtml(acc) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
       var thinkHtml = thinking ? '<details class="think"><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
-      bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc('⚠️ ' + err) + '</span>' : esc(finalText || '（无回复）'));
+      bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc('⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
+      else renderMermaidIn(bubble);
       streaming = false; sendBtn.disabled = false;
       setContextTag('');
       input.focus();
