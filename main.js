@@ -1029,6 +1029,8 @@ ipcMain.handle('agent:run', async (_e, payload) => {
 /* ---------------- IPC：研究助手聊天（流式） ---------------- */
 // 渲染进程 invoke('chat:start', {engine, messages}) 后，主进程把结果以
 // 'chat:delta'（逐块正文）和 'chat:done'（结束/错误）事件推回，Key 不经过渲染层。
+let activeChatAbort = null;   // 当前流式请求的 AbortController，供「停止生成」使用
+ipcMain.on('chat:stop', () => { if (activeChatAbort) { try { activeChatAbort.abort(); } catch { /* 忽略 */ } } });
 ipcMain.handle('chat:start', (e, payload) => {
   const p = payload || {};
   const engine = String(p.engine || 'ollama');
@@ -1047,22 +1049,24 @@ ipcMain.handle('chat:start', (e, payload) => {
 
   (async () => {
     const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
+    let ctrl = null;
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (key) headers.Authorization = 'Bearer ' + key;
-      // 空闲超时：只要持续有数据流入就不中断，仅当 90 秒无任何数据才 abort；总时长上限 10 分钟兜底。
-      // 这样复杂任务（多轮工具调用 + 深度推理）不再被固定超时打断。
-      const STALL_MS = 120000, MAX_MS = 900000;
-      const ctrl = new AbortController();
+      // 空闲超时：只要持续有数据流入就不中断，仅当 120 秒无任何数据才 abort。
+      // 不设总时长上限——长时间任务（深度推理 / 超长输出 / 多轮研究）可持续工作，
+      // 只有真正卡死（连续无数据）才会中断。
+      const STALL_MS = 120000;
+      ctrl = new AbortController();
+      activeChatAbort = ctrl;   // 供「停止生成」按钮 abort
       let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
-      const maxTimer = setTimeout(() => ctrl.abort(), MAX_MS);
       const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
       const resp = await fetch(cfg.url, {
         method: 'POST', headers, signal: ctrl.signal,
         body: JSON.stringify({ model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 }),
       });
       if (!resp.ok) {
-        clearTimeout(stallTimer); clearTimeout(maxTimer);
+        clearTimeout(stallTimer);
         let msg = 'HTTP ' + resp.status;
         try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
         send('chat:done', { ok: false, error: msg });
@@ -1096,10 +1100,12 @@ ipcMain.handle('chat:start', (e, payload) => {
           } catch { /* 忽略坏块 */ }
         }
       }
-      clearTimeout(stallTimer); clearTimeout(maxTimer);
+      clearTimeout(stallTimer);
       send('chat:done', { ok: true, truncated: truncated });
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err) });
+    } finally {
+      if (activeChatAbort === ctrl) activeChatAbort = null;
     }
   })();
   return true;
@@ -1123,11 +1129,11 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   if (key) headers.Authorization = 'Bearer ' + key;
   const o = opts || {};
   const model = String(o.model || cfg.model);   // 允许调用方覆盖模型
-  // 空闲超时：有数据持续流入就不中断，90 秒无数据才 abort；总时长上限 10 分钟兜底
-  const STALL_MS = 120000, MAX_MS = 900000;
+  // 空闲超时：有数据持续流入就不中断，120 秒无数据才 abort；不设总时长上限，长时间任务可持续工作
+  const STALL_MS = 120000;
   const ctrl = new AbortController();
+  activeChatAbort = ctrl;   // 注册，供「停止生成」abort（审稿闭环同样生效）
   let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
-  const maxTimer = setTimeout(() => ctrl.abort(), MAX_MS);
   const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
   const resp = await fetch(cfg.url, {
     method: 'POST', headers, signal: ctrl.signal,
@@ -1138,7 +1144,7 @@ async function completeChatStream(engine, messages, onChunk, opts) {
     }),
   });
   if (!resp.ok) {
-    clearTimeout(stallTimer); clearTimeout(maxTimer);
+    clearTimeout(stallTimer);
     let msg = 'HTTP ' + resp.status;
     try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
     throw new Error(msg);
@@ -1170,7 +1176,8 @@ async function completeChatStream(engine, messages, onChunk, opts) {
       } catch { /* 忽略坏块 */ }
     }
   }
-  clearTimeout(stallTimer); clearTimeout(maxTimer);
+  clearTimeout(stallTimer);
+  if (activeChatAbort === ctrl) activeChatAbort = null;
   return { text: text, thinking: thinking, truncated: truncated };
 }
 

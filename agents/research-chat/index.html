@@ -257,6 +257,8 @@
   }
   #sendBtn:hover { background: var(--accent-2); }
   #sendBtn:disabled { background: #c9c4e0; cursor: not-allowed; }
+  #sendBtn.stop { background: var(--danger, #d64545); }
+  #sendBtn.stop:hover { background: #c03636; }
   #sendBtn svg { width: 20px; height: 20px; }
   .tool-btn {
     flex: none; width: 40px; height: 44px; border: 1px solid var(--line); border-radius: 14px;
@@ -467,6 +469,7 @@
   // 会话状态
   var history = [];      // [{role:'user'|'assistant', content}]
   var streaming = false;
+  var stopRequested = false;   // 用户点了「停止生成」
   var writeAuthMode = 'per-item';  // 'per-item' 逐个审批 | 'session' 会话级批量授权
 
   /* ---------- 记忆持久化 + 工具能力（能力化：每个 Agent 都能挂文件/数据库/电脑操作） ---------- */
@@ -1117,6 +1120,22 @@
     el('imgBtn').innerHTML = window.iconSvg('camera');
     el('micBtn').innerHTML = window.iconSvg('mic');
   }
+  // 发送按钮二态：空闲=发送 / 生成中=停止（长时间任务可随时手动打断）
+  function setSendBtnState(busy) {
+    if (busy) {
+      sendBtn.innerHTML = window.iconSvg('stop');
+      sendBtn.title = '停止生成';
+      sendBtn.classList.add('stop');
+    } else {
+      sendBtn.innerHTML = window.iconSvg('send');
+      sendBtn.title = '发送';
+      sendBtn.classList.remove('stop');
+    }
+  }
+  function stopGeneration() {
+    stopRequested = true;
+    if (IS_DESKTOP && window.ingrid.stopChat) window.ingrid.stopChat();
+  }
   function avatarHtml(role) {
     if (role === 'user') return '<div class="avatar">' + window.iconSvg('user') + '</div>';
     return '<div class="avatar">' + window.iconSvg('grad') + '</div>';
@@ -1411,6 +1430,7 @@
     var text = input.value.trim();
     var img = pendingImage;
     if ((!text && !img) || streaming) return;
+    stopRequested = false;   // 新一轮，重置停止标志
     input.value = ''; autoGrow();
     pendingImage = null; renderImgPreview();
 
@@ -1435,7 +1455,7 @@
 
     // 审稿闭环模式：产出 → 审稿 → 返修（独立多气泡渲染）
     if (reviewMode && IS_DESKTOP) {
-      streaming = true; sendBtn.disabled = true;
+      streaming = true; setSendBtnState(true);
       withKbContext(text, function (content) {
         sendReviewLoop(content, engineSelect.value || 'ollama');
       });
@@ -1448,7 +1468,7 @@
     var thinking = '';
     var live = '';
     var statusText = '正在思考…';   // 当前状态提示（首字延迟 / 工具调用往返）
-    streaming = true; sendBtn.disabled = true;
+    streaming = true; setSendBtnState(true);
 
     // engine / model 已在上面确定（含图片自动切换逻辑）
 
@@ -1484,7 +1504,7 @@
       bubble.classList.remove('err');
       if (err) bubble.classList.add('err');
       if (!err) renderMermaidIn(bubble);
-      streaming = false; sendBtn.disabled = false;
+      streaming = false; setSendBtnState(false);
       input.focus();
     }
 
@@ -1517,6 +1537,7 @@
           },
           onDone: function (d) {
             var rawRound = live;
+            if (stopRequested) { finish(acc + stripToolMarkers(rawRound), '已手动停止'); return; }
             if (d && !d.ok) { finish(acc + stripToolMarkers(rawRound), d && d.error); return; }
             var calls = extractToolCalls(rawRound);
             if (calls.length && round < MAX_TOOL_ROUNDS) {
@@ -1671,12 +1692,23 @@
         }
       },
       onDelta: function (txt, think) {
+        if (stopRequested) return;
         if (txt) curText += txt;
         if (think) curThink += think;
         render();
       },
       onDone: function (d) {
         close();
+        if (stopRequested) {
+          var s2 = document.createElement('div');
+          s2.className = 'loop-status';
+          s2.textContent = '⚙ 已手动停止';
+          messages.appendChild(s2);
+          messages.scrollTop = messages.scrollHeight;
+          streaming = false; setSendBtnState(false);
+          input.focus();
+          return;
+        }
         history.push({ role: 'user', content: text });
         if (d && d.finalText) history.push({ role: 'assistant', content: d.finalText });
         while (history.length > 24) history.shift();
@@ -1693,7 +1725,7 @@
         }
         messages.appendChild(status);
         messages.scrollTop = messages.scrollHeight;
-        streaming = false; sendBtn.disabled = false;
+        streaming = false; setSendBtnState(false);
         input.focus();
       },
     });
@@ -1704,7 +1736,9 @@
   }
 
   /* ---------- 事件 ---------- */
-  sendBtn.addEventListener('click', send);
+  sendBtn.addEventListener('click', function () {
+    if (streaming) { stopGeneration(); } else { send(); }
+  });
   bindImageInputs();
   el('micBtn').addEventListener('click', toggleVoice);
   input.addEventListener('keydown', function (e) {
