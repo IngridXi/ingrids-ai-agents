@@ -756,18 +756,20 @@ function openModal(a) {
       </div>
       <div class="engine-status" id="m-engine-status">检测可用性…</div></section>`;
 
+  // 工具能力勾选：由 CAPABILITIES 定义表驱动（对齐 t3code 的声明式能力），新增能力无需改这段 HTML
   const capsEditHtml = a.href ? `<section>
       <h3>工具能力</h3>
       <p class="desc" style="margin-bottom:10px">让这个 Agent 能直接操作本机文件与资料库（读 / 写 / 查 / 搜索；写与删除会逐条弹窗审批）。</p>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
-        <input type="checkbox" id="m-fs" ${(a.tools || []).indexOf('fs') >= 0 ? 'checked' : ''}> 📁 文件工具（列目录 · 搜索 · 读 / 写 / 改 / 移动，写操作需审批）
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
-        <input type="checkbox" id="m-db" ${(a.tools || []).indexOf('db') >= 0 ? 'checked' : ''}> 🗄️ 数据库工具（查知识库 / 文献）
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-        <input type="checkbox" id="m-computer" ${(a.computer === 'on' || a.computer === true) ? 'checked' : ''}> 🖱️ 电脑操作（截图 + 鼠标键盘，需系统授权）
-      </label></section>` : '';
+      ${core.CAPABILITY_ORDER.map(id => {
+        const cap = core.CAPABILITIES[id];
+        if (!cap || !cap.ui) return '';
+        const on = (a.caps && a.caps[id]) ? true
+          : (id === 'computer' ? (a.computer === 'on' || a.computer === true)
+            : ((a.tools || []).indexOf(id) >= 0));
+        return `<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
+          <input type="checkbox" id="m-cap-${id}" ${on ? 'checked' : ''}> ${cap.emoji} ${cap.label}（${cap.desc}）
+        </label>`;
+      }).join('')}</section>` : '';
 
   modal.innerHTML = `
     <header>
@@ -786,17 +788,24 @@ function openModal(a) {
     closeModal();
     renderAgents();
   });
-  // 工具能力开关（能力化）：文件 / 数据库 / 电脑操作，随点随存
+  // 工具能力开关（声明式能力）：随点随存，双写 caps（新版权威）+ tools/computer（旧版兼容）
   if (a.href) {
     const saveCaps = () => {
-      const tools = [];
-      if (document.getElementById('m-fs').checked) tools.push('fs');
-      if (document.getElementById('m-db').checked) tools.push('db');
-      registry.update(a.id, { tools: tools, computer: document.getElementById('m-computer').checked ? 'on' : 'off' });
+      const caps = {}, tools = [];
+      let computer = 'off';
+      core.CAPABILITY_ORDER.forEach(id => {
+        const cap = core.CAPABILITIES[id];
+        const el = document.getElementById('m-cap-' + id);
+        if (!cap || !cap.ui || !el) return;
+        caps[id] = el.checked;
+        if (el.checked) { if (id === 'computer') computer = 'on'; else tools.push(id); }
+      });
+      registry.update(a.id, { caps: caps, tools: tools, computer: computer });
     };
-    document.getElementById('m-fs').addEventListener('change', saveCaps);
-    document.getElementById('m-db').addEventListener('change', saveCaps);
-    document.getElementById('m-computer').addEventListener('change', saveCaps);
+    core.CAPABILITY_ORDER.forEach(id => {
+      const el = document.getElementById('m-cap-' + id);
+      if (el) el.addEventListener('change', saveCaps);
+    });
   }
   // 引擎可用性实时提示（切换下拉框时重新检测）
   const refreshEngineStatus = () => {

@@ -107,6 +107,17 @@
       }
     : null;
 
+  /* ---------- Provider 抽象：把执行器包成可插拔 adapter（对齐 t3code） ---------- */
+  // 现在所有引擎走同一条 runAgent 通道（fallback）；未来可按 engine 注册专用 adapter
+  // （如 funasr 走语音、claude-code 走 CLI），新增后端不改编排层。
+  var providers = new C.ProviderRegistry();
+  if (executor) {
+    providers.setFallback({
+      kind: '*', label: 'runAgent（IPC 通道）',
+      run: function (agent, task, ctx) { return executor(agent, task, ctx); },
+    });
+  }
+
   /* ---------- 按需读技能正文（桌面走主进程只读通道） ---------- */
   function readBodies(ids) {
     return Promise.all(ids.map(function (id) {
@@ -149,6 +160,7 @@
 
   var orch = new C.AgentOrchestrator({
     registry: registry, router: router, ledger: ledger, executor: executor,
+    providers: providers,
     onEvent: log, onApproval: askApproval,
   });
   window.__orchestrator = orch;

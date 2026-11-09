@@ -58,9 +58,10 @@
     memory: {},
     skills: [],
     routines: [],
-    tools: [],
+    tools: [],            // 兼容旧字段：工具能力（'fs'/'db'/'web'...），v9 起建议改走 caps
     approvalMode: 'ask',  // 'ask' 每次确认 | 'full' 全自动 | 'custom'
-    computer: 'off',
+    computer: 'off',      // 兼容旧字段：'on' 开启电脑操作
+    caps: {},             // v9：声明式能力（对齐 t3code provider 思想），见 resolveCapabilities
     visibility: 'private',
     role: 'worker',       // v2：'orchestrator' 才有资格指挥其他 Agent
     canControl: false,    // v2：显式授权也能指挥
@@ -323,6 +324,104 @@
     try { this.storage.clear(); } catch (e) {}
   };
 
+  /* ---------- 5.5 能力系统 + Provider 抽象（对齐 t3code 的 provider 思想） ---------- */
+  /**
+   * 设计目标（借鉴 pingdotgg/t3code 的 provider 抽象）：
+   *   1. 能力声明式：agent 的「工具能力」不再散落在 tools 数组 + computer 字符串，
+   *      而是归一成一个标准能力对象，UI / 编排层 / 聊天页三处共用同一份定义。
+   *   2. provider 可插拔：把「agent 怎么执行一轮」抽象成 ProviderAdapter，
+   *      按 driver kind（engine id）注册，新增执行后端不改编排层。
+   *   3. 编排层只读 capabilities 决策（要不要审批 / 要不要降级），不读具体引擎名。
+   */
+
+  // 能力定义表（单一真相源）。danger：'high' 高危 | 'write' 有写副作用 | falsy 只读。
+  var CAPABILITIES = {
+    fs:        { id: 'fs',        label: '文件工具',   emoji: '📁', danger: 'write', ui: true,  desc: '列目录 · 搜索 · 读 / 写 / 改 / 移动（写操作需审批）' },
+    db:        { id: 'db',        label: '数据库',     emoji: '🗄️', danger: 'write', ui: true,  desc: '知识库 / 文献（Zotero · Obsidian，写操作需审批）' },
+    web:       { id: 'web',       label: '联网',       emoji: '🌐', danger: false,   ui: false, desc: '联网搜索 / 抓取网页（待接入）' },
+    computer:  { id: 'computer',  label: '电脑操作',   emoji: '🖱️', danger: 'high',  ui: true,  desc: '截图 + 鼠标键盘（需系统授权）' },
+    voice:     { id: 'voice',     label: '语音',       emoji: '🎙️', danger: false,   ui: false, desc: '语音转写 / 合成（待接入）' },
+    docs:      { id: 'docs',      label: '文档导出',   emoji: '📄', danger: false,   ui: false, desc: 'Word / PPT / Excel 导出（待接入）' },
+    fork:      { id: 'fork',      label: '会话分叉',   emoji: '⑂',  danger: false,   ui: false, desc: '从当前会话分叉新会话（不支持则回退便携上下文交接）' },
+    rollback:  { id: 'rollback',  label: '回滚',       emoji: '↩️', danger: 'write', ui: false, desc: '回滚工作区 / 会话到检查点' },
+    steering:  { id: 'steering',  label: '中途改向',   emoji: '🧭', danger: false,   ui: false, desc: '生成途中介入修改方向' },
+    subagents: { id: 'subagents', label: '子代理',     emoji: '👥', danger: false,   ui: false, desc: '派生子代理并行干活' },
+  };
+  var CAPABILITY_ORDER = Object.keys(CAPABILITIES);
+
+  /**
+   * 把 agent 归一成标准能力对象。
+   * 优先级：agent.caps（新版结构化）→ agent.tools 数组 + agent.computer 字符串（旧版兼容）。
+   * 返回 { fs:bool, db:bool, web:bool, computer:bool, ... }，键齐全、缺省 false。
+   */
+  function resolveCapabilities(agent) {
+    var out = {};
+    CAPABILITY_ORDER.forEach(function (id) { out[id] = false; });
+    if (!agent) return out;
+
+    if (agent.caps && typeof agent.caps === 'object') {
+      CAPABILITY_ORDER.forEach(function (id) { if (agent.caps[id] != null) out[id] = !!agent.caps[id]; });
+    }
+    var tools = Array.isArray(agent.tools) ? agent.tools : [];
+    CAPABILITY_ORDER.forEach(function (id) { if (tools.indexOf(id) >= 0) out[id] = true; });
+    if (agent.computer === 'on' || agent.computer === true) out.computer = true;
+    return out;
+  }
+
+  // 已开启能力 id 列表（按 CAPABILITY_ORDER 排序）
+  function capabilityList(agent) {
+    var caps = resolveCapabilities(agent);
+    return CAPABILITY_ORDER.filter(function (id) { return caps[id]; });
+  }
+
+  // 危险等级：'high'（电脑操作）> 'write'（有写副作用）> 'none'
+  function dangerLevel(caps) {
+    var level = 'none';
+    CAPABILITY_ORDER.forEach(function (id) {
+      if (!caps || !caps[id]) return;
+      var d = CAPABILITIES[id] && CAPABILITIES[id].danger;
+      if (d === 'high') level = 'high';
+      else if (d === 'write' && level !== 'high') level = 'write';
+    });
+    return level;
+  }
+
+  /**
+   * ProviderAdapter（duck-typing 约定，无需继承）：
+   *   {
+   *     kind: 'claude-code',        // driver kind（对应 ENGINES 的 key）
+   *     label: 'Claude Code',
+   *     capabilities: function(agent) => caps,   // 可选：声明该 agent 真实能力（缺省读 agent 自身）
+   *     run: function(agent, task, ctx, hooks) => Promise<result>,  // 执行一轮
+   *     stream: function(agent, task, ctx, hooks) => {...},         // 可选：流式
+   *     interrupt: function(sessionId) => void,                     // 可选：中断
+   *   }
+   * result: { text, tokensIn, tokensOut, cost, costSource, status, error, limited, dryRun, caps }
+   */
+  function ProviderRegistry() {
+    this._adapters = {};   // kind -> adapter
+    this._fallback = null;
+  }
+  ProviderRegistry.prototype.register = function (adapter) {
+    if (!adapter || !adapter.kind) throw new Error('ProviderAdapter 需要 kind');
+    this._adapters[adapter.kind] = adapter;
+    return this;
+  };
+  ProviderRegistry.prototype.setFallback = function (adapter) { this._fallback = adapter; return this; };
+  ProviderRegistry.prototype.get = function (kind) { return this._adapters[kind] || this._fallback || null; };
+  ProviderRegistry.prototype.adapterFor = function (agent) { return this.get(agent && agent.engine); };
+  ProviderRegistry.prototype.kinds = function () { return Object.keys(this._adapters); };
+  // 声明式能力：agent 自身 + adapter 声明合并（adapter 可覆盖/补充，但不能凭空造出定义表之外的键）
+  ProviderRegistry.prototype.capabilitiesOf = function (agent) {
+    var caps = resolveCapabilities(agent);
+    var a = this.adapterFor(agent);
+    if (a && typeof a.capabilities === 'function') {
+      var extra = a.capabilities(agent) || {};
+      Object.keys(extra).forEach(function (k) { if (caps.hasOwnProperty(k)) caps[k] = !!extra[k]; });
+    }
+    return caps;
+  };
+
   /* ---------- 6. AgentOrchestrator：一个 Agent 指挥其他 Agent ---------- */
   /**
    * opts:
@@ -359,6 +458,7 @@
     this.router = o.router || new ModelRouter();
     this.ledger = o.ledger || new UsageLedger();
     this.executor = o.executor || defaultExecutor;
+    this.providers = o.providers || null;   // ProviderRegistry（可选；有则优先走 adapter.run）
     this.onEvent = o.onEvent || function () {};
     this.onApproval = o.onApproval || function () { return Promise.resolve(true); };
     this.canControl = o.canControl || defaultCanControl;
@@ -386,11 +486,18 @@
         error: '本月预算 $' + budget.budget.toFixed(2) + ' 已用尽', cost: 0 });
     }
 
+    // v9：声明式能力 —— 决定「是否审批」，并写进上下文与结果（编排层只读能力，不读引擎名）
+    var caps = this.providers ? this.providers.capabilitiesOf(target) : resolveCapabilities(target);
+    var danger = dangerLevel(caps);
+
     return Promise.resolve()
       .then(function () {
-        if (target.approvalMode === 'ask' && opts.autoApprove !== true) {
-          self.emit('approval', { commander: commander.name, target: target.name, task: task });
-          return self.onApproval({ commander: commander, target: target, task: task });
+        // 审批：ask 模式必问；高危能力（电脑操作）即使 full 模式也问一次；autoApprove 跳过所有
+        var needApproval = opts.autoApprove !== true &&
+          (target.approvalMode === 'ask' || danger === 'high');
+        if (needApproval) {
+          self.emit('approval', { commander: commander.name, target: target.name, task: task, caps: caps, danger: danger });
+          return self.onApproval({ commander: commander, target: target, task: task, caps: caps, danger: danger });
         }
         return true;
       })
@@ -414,10 +521,17 @@
         var ctx = { engine: pick.engine, meta: pick.meta, reason: pick.reason,
           switched: pick.switched, from: pick.from, commander: commander.name,
           dryRun: !!opts.dryRun, skills: opts.skillIds || [], skillTokens: opts.skillTokens || 0,
+          caps: caps, danger: danger,
           soul: (target.soul || '') + (skillContext ? '\n\n' + skillContext : '') };
 
+        // v9：执行优先走 ProviderAdapter.run，回退到注入的 executor
+        var adapter = self.providers ? self.providers.adapterFor(target) : null;
+        var runFn = (adapter && typeof adapter.run === 'function')
+          ? function (agent, task, c) { return adapter.run(agent, task, c, { signal: null }); }
+          : self.executor;
+
         function call(engineId, attempt) {
-          return Promise.resolve(self.executor(target, task, Object.assign({}, ctx, { engine: engineId })))
+          return Promise.resolve(runFn(target, task, Object.assign({}, ctx, { engine: engineId })))
             .then(function (res) {
               res = res || {};
               // 撞到限额 → 标记该引擎，自动切到降级链下一个
@@ -460,6 +574,7 @@
             switchedFrom: res.switchedFrom || (pick.switched ? pick.from : ''),
             dryRun: saved.dryRun, error: saved.error,
             skills: saved.skills || [], skillTokens: saved.skillTokens || 0,
+            caps: caps, danger: danger,
           };
           self.emit(out.status === 'ok' ? 'finished' : 'failed', out);
           return out;
@@ -552,6 +667,13 @@
     ModelRouter: ModelRouter,
     UsageLedger: UsageLedger,
     AgentOrchestrator: AgentOrchestrator,
+    // v9：能力系统 + Provider 抽象
+    CAPABILITIES: CAPABILITIES,
+    CAPABILITY_ORDER: CAPABILITY_ORDER,
+    resolveCapabilities: resolveCapabilities,
+    capabilityList: capabilityList,
+    dangerLevel: dangerLevel,
+    ProviderRegistry: ProviderRegistry,
     estimateCost: estimateCost,
     detectLimit: function (t) { return LIMIT_PATTERNS.test(String(t || '')); },
     createAgent: function (overrides) { return Object.assign({}, DEFAULT_AGENT, overrides); },

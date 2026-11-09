@@ -364,6 +364,7 @@
 
 <script src="../../vendor/marked.min.js"></script>
 <script src="../../vendor/mermaid.min.js"></script>
+<script src="../../agents-core.js"></script>
 <script src="../../icons.js"></script>
 <script>
 (function () {
@@ -445,10 +446,17 @@
       var agents = IS_DESKTOP ? window.ingrid.loadAgentsSync() : [];
       for (var i = 0; i < agents.length; i++) {
         if (agents[i].name === AGENT_NAME) {
-          var t = agents[i].tools || [];
-          caps.fs = t.indexOf('fs') >= 0;
-          caps.db = t.indexOf('db') >= 0;
-          caps.computer = agents[i].computer === 'on' || agents[i].computer === true;
+          // v9：复用 agents-core.js 的声明式能力归一化（caps + tools + computer 一处定义）
+          var C = window.AgentsCore;
+          if (C && C.resolveCapabilities) {
+            var full = C.resolveCapabilities(agents[i]);
+            caps.fs = !!full.fs; caps.db = !!full.db; caps.computer = !!full.computer;
+          } else {
+            var t = agents[i].tools || [];
+            caps.fs = t.indexOf('fs') >= 0;
+            caps.db = t.indexOf('db') >= 0;
+            caps.computer = agents[i].computer === 'on' || agents[i].computer === true;
+          }
           break;
         }
       }
