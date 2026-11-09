@@ -1666,6 +1666,14 @@ ipcMain.handle('kb:open', async (_e, kind) => {
 /* 术语图谱：从 Zotero 提取术语 → 写 Obsidian 术语库 → 返回图数据 */
 ipcMain.handle('kb:terms:build', async (e, opts) => {
   opts = opts || {};
+  const send = function (data) { if (!e.sender.isDestroyed()) e.sender.send('kb:terms:progress', data); };
+
+  // 自动启动本地 Ollama（无需用户手动打开）
+  const ollamaReady = await ensureOllama(function (msg) { send({ phase: 'ollama', msg: msg }); });
+  if (!ollamaReady) {
+    return { ok: false, error: '本地 Ollama 未能启动。请确认已安装 Ollama（https://ollama.com），或手动运行 `ollama serve` 后重试。' };
+  }
+
   let items = [];
   try {
     const stdout = await execFileP('python3', [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
@@ -1675,7 +1683,14 @@ ipcMain.handle('kb:terms:build', async (e, opts) => {
 
   items = items.slice().sort(function (a, b) { return String(b.dateAdded || '').localeCompare(String(a.dateAdded || '')); });
 
-  const send = function (data) { if (!e.sender.isDestroyed()) e.sender.send('kb:terms:progress', data); };
+  // 参数归一化：文献数填了正整数就按填的来；没填/非法则默认处理全部（最多 200）
+  const totalItems = items.length;
+  let maxItems = parseInt(opts.maxItems, 10);
+  if (!(maxItems > 0)) maxItems = Math.min(totalItems, 200);
+  maxItems = Math.min(maxItems, totalItems);
+  let topK = parseInt(opts.topK, 10);
+  if (!(topK > 0)) topK = 80;
+
   const llm = function (messages) {
     return completeChatStream('ollama', messages, null, { temperature: 0.2, maxTokens: 6000 })
       .then(function (r) { return r.text; });
@@ -1689,14 +1704,18 @@ ipcMain.handle('kb:terms:build', async (e, opts) => {
     llm: llm,
     vaultPath: vaultPath(),
     batchSize: 10,
-    maxItems: parseInt(opts.maxItems, 10) || 200,
-    topK: parseInt(opts.topK, 10) || 80,
+    maxItems: maxItems,
+    topK: topK,
     prevState: prevState,
     onProgress: function (phase, done, total) { send({ phase: phase, done: done, total: total }); },
   });
 
   if (result && result.ok && result.state) {
     try { writeJson('terms-state.json', result.state); } catch (e2) { /* 状态写失败不影响返回 */ }
+  }
+  if (result && typeof result === 'object') {
+    result.totalItems = totalItems;
+    result.maxItems = maxItems;
   }
   return result;
 });
@@ -1712,6 +1731,43 @@ function execFileP(cmd, args) {
       resolve(err ? '' : String(stdout || ''));
     });
   });
+}
+
+/* ---------------- Ollama 本地服务：检测 + 自动启动 ----------------
+ * 术语图谱等本地大模型任务依赖 Ollama（127.0.0.1:11434）。
+ * 未运行时自动拉起（优先 open -a Ollama，兜底 CLI `ollama serve`），
+ * 然后轮询等待就绪，无需用户手动打开。
+ */
+function isPortOpen(port) {
+  return new Promise(function (resolve) {
+    const sock = net.connect({ host: '127.0.0.1', port: port, timeout: 800 });
+    sock.on('connect', function () { sock.destroy(); resolve(true); });
+    sock.on('error', function () { sock.destroy(); resolve(false); });
+    sock.on('timeout', function () { sock.destroy(); resolve(false); });
+  });
+}
+function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+async function ensureOllama(onStatus) {
+  const report = onStatus || function () {};
+  if (await isPortOpen(11434)) return true;
+
+  report('未检测到 Ollama，正在自动启动…');
+  // 1) 优先启动 Ollama 桌面应用（open -a 会拉起 ollama serve）
+  try { await execFileP('open', ['-a', 'Ollama']); } catch (e) { /* 忽略 */ }
+  // 2) 兜底：CLI 方式后台起 ollama serve（若装了 CLI 但没有 App）
+  try {
+    const which = await execFileP('which', ['ollama']);
+    const bin = String(which || '').trim();
+    if (bin) spawn(bin, ['serve'], { detached: true, stdio: 'ignore' }).unref();
+  } catch (e) { /* 忽略 */ }
+
+  // 3) 轮询等待就绪（最多 90 秒，覆盖模型首次加载）
+  for (let i = 0; i < 90; i++) {
+    await sleepMs(1000);
+    if (await isPortOpen(11434)) return true;
+  }
+  return false;
 }
 
 function toolFsList(payload) {
