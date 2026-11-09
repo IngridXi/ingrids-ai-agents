@@ -233,7 +233,7 @@ async function buildTermsGraph(opts) {
   });
   const newState = { v: 1, docs: newDocs, terms: newTermsState };
 
-  // 5) 写 Obsidian（仅在有新增文献时才重写笔记；全跳过则不重写，避免无谓覆盖）
+  // 5) 写 Obsidian（仅在有新增文献时写入；术语笔记「只新增不覆盖」，总览始终刷新）
   let noteCount = 0;
   let overviewPath = '';
   if (vaultPath && todo.length) {
@@ -241,12 +241,14 @@ async function buildTermsGraph(opts) {
       const dir = path.join(vaultPath, '术语库');
       fs.mkdirSync(dir, { recursive: true });
       for (const t of terms) {
+        const noteFile = path.join(dir, safeName(t.term) + '.md');
+        if (fs.existsSync(noteFile)) continue;   // 只新增不覆盖：已存在的术语笔记保留用户手动编辑
         const related = edges
           .filter(function (e) { return e.a === t.term || e.b === t.term; })
           .map(function (e) { return e.a === t.term ? e.b : e.a; });
         const uniqRel = Array.from(new Set(related)).slice(0, 12);
         const content = renderTermNote(t.term, { zh: t.zh, category: t.category, titles: t.titles }, uniqRel);
-        fs.writeFileSync(path.join(dir, safeName(t.term) + '.md'), content, 'utf8');
+        fs.writeFileSync(noteFile, content, 'utf8');
         noteCount++;
       }
       overviewPath = path.join(dir, '术语总览.md');
