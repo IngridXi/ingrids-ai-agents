@@ -71,6 +71,7 @@
   #searchModeBtn {
     flex: none; padding: 0 8px; height: 26px; border: 1px solid var(--line); border-radius: 7px;
     background: var(--card); color: var(--ink-soft); cursor: pointer; font-size: 12px; line-height: 1;
+    white-space: nowrap; flex-shrink: 0;
   }
   #searchModeBtn:hover { border-color: var(--accent); color: var(--accent); }
   #searchModeBtn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
@@ -183,6 +184,11 @@
     border-radius: 8px; padding: 8px 11px; margin-bottom: 9px; line-height: 1.55;
   }
   .msg .bubble .think summary { cursor: pointer; font-weight: 600; color: var(--accent-2); user-select: none; margin-bottom: 4px; }
+  .msg .bubble .status-line { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
+  .msg .bubble .status-line .dots { display: inline-flex; gap: 3px; }
+  .msg .bubble .status-line .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; animation: blink 1.2s infinite; }
+  .msg .bubble .status-line .dots i:nth-child(2) { animation-delay: .2s; }
+  .msg .bubble .status-line .dots i:nth-child(3) { animation-delay: .4s; }
 
   /* 写操作审批卡片 */
   .approval-card {
@@ -515,6 +521,42 @@
       }
     }
   }
+  // 对话结束后异步用引擎生成一个简短中文标题（≤12字），比截取原文更符合「总结题目」的预期
+  var __autoTitleBusy = {};
+  function autoTitle(session) {
+    if (!IS_DESKTOP || !session) return;
+    if (__autoTitleBusy[session.id]) return;
+    var q = '';
+    for (var i = 0; i < session.messages.length; i++) {
+      var m = session.messages[i];
+      if (m.role === 'user' && m.content) {
+        q = String(m.content).replace(/\s+/g, ' ').trim().slice(0, 200);
+        break;
+      }
+    }
+    if (!q) return;
+    __autoTitleBusy[session.id] = true;
+    var engine = engineSelect.value || 'ollama';
+    var acc = '';
+    window.ingrid.chatStream({
+      engine: engine,
+      messages: [
+        { role: 'system', content: '你是会话标题生成器。根据用户的问题，生成一个不超过 12 个字的简洁中文标题，概括主题。只输出标题本身，不要引号、书名号、标点、序号、解释或任何前后缀。' },
+        { role: 'user', content: q },
+      ],
+    }, {
+      onDelta: function (chunk) { if (chunk && chunk.text) acc += chunk.text; },
+      onDone: function (d) {
+        __autoTitleBusy[session.id] = false;
+        if (!d || !d.ok) return;   // 失败则保留截取标题
+        var t = acc.replace(/["'""''【】《》#*\-—\n]/g, '').trim().slice(0, 20);
+        if (!t) return;
+        session.title = t;
+        persistSessions();
+        renderSessionList();
+      },
+    });
+  }
   function relTime(ts) {
     var d = Date.now() - (ts || 0);
     if (d < 60000) return '刚刚';
@@ -800,14 +842,51 @@
     });
   }
 
+  // 清理模型输出里残留的标记：旧 <tool> 格式 + DeepSeek DSML 格式 + 特殊控制 token
   function stripToolMarkers(t) {
-    return String(t || '').replace(/<\s*tool\s+name="[^"]*"\s*>[\s\S]*?<\s*\/\s*tool\s*>/g, '');
+    var s = String(t == null ? '' : t);
+    // 1) 旧格式 <tool name="...">...</tool>
+    s = s.replace(/<\s*tool\s+name="[^"]*"\s*>[\s\S]*?<\s*\/\s*tool\s*>/g, '');
+    // 2) DeepSeek DSML 工具调用整块（tool_calls / invoke / parameter 的闭合对）
+    s = s.replace(/<\|DSML\|tool_calls\s*>[\s\S]*?<\/\|DSML\|tool_calls\s*>/g, '');
+    s = s.replace(/<\|DSML\|invoke\s+name="[^"]*"\s*>[\s\S]*?<\/\|DSML\|invoke\s*>/g, '');
+    s = s.replace(/<\|DSML\|parameter\s+name="[^"]*"\s+string="(?:true|false)"\s*>[\s\S]*?<\/\|DSML\|parameter\s*>/g, '');
+    // 3) 残留的 DSML 标签 / 特殊控制 token（<|begin_of_sentence|> <|User|> <|Assistant|> <|end_of_sentence|> 等）
+    s = s.replace(/<\/?\|DSML\|[^>]*>/g, '');
+    s = s.replace(/<\/?\|[A-Za-z0-9_\u2581 ]{1,24}\|>/g, '');
+    // 4) 裸符号残留（|DSML| / <parameter> / 断裂的 <| |>
+    s = s.replace(/\|DSML\|/g, '');
+    s = s.replace(/<\/?parameter[^>]*>/g, '');
+    s = s.replace(/<\|[^>]*\|>/g, '');
+    // 5) 断裂的 DSML 标签残片（流式截断导致，如 <| | DSML | | parameter>）
+    s = s.replace(/<\|[^>]*?(?:DSML|invoke|parameter|tool_calls)[^>]*>/g, '');
+    s = s.replace(/\|[^|]{0,3}DSML[^>]*>/g, '');
+    return s;
   }
   function extractToolCalls(t) {
-    var out = [], re = /<\s*tool\s+name="([^"]+)"\s*>([\s\S]*?)<\s*\/\s*tool\s*>/g, m;
-    while ((m = re.exec(String(t || ''))) !== null) {
+    var s = String(t || '');
+    var out = [];
+    // 1) 旧格式 <tool name="...">...</tool>
+    var re1 = /<\s*tool\s+name="([^"]+)"\s*>([\s\S]*?)<\s*\/\s*tool\s*>/g, m;
+    while ((m = re1.exec(s)) !== null) {
+      var args1 = {};
+      try { args1 = JSON.parse(m[2].trim()); } catch (e) { args1 = { raw: m[2].trim() }; }
+      out.push({ name: m[1].trim(), args: args1 });
+    }
+    // 2) DeepSeek DSML 格式
+    var re2 = /<\|DSML\|invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|DSML\|invoke\s*>/g;
+    while ((m = re2.exec(s)) !== null) {
       var args = {};
-      try { args = JSON.parse(m[2].trim()); } catch (e) { args = { raw: m[2].trim() }; }
+      var body = m[2];
+      var pre = /<\|DSML\|parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>([\s\S]*?)<\/\|DSML\|parameter\s*>/g, pm;
+      while ((pm = pre.exec(body)) !== null) {
+        var pname = pm[1].trim();
+        var isStr = pm[2] === 'true';
+        var raw = pm[3].trim();
+        if (isStr) args[pname] = raw;
+        else { try { args[pname] = JSON.parse(raw); } catch (e) { args[pname] = raw; } }
+      }
+      if (!Object.keys(args).length && body.trim()) { try { args = JSON.parse(body.trim()); } catch (e) { args = { raw: body.trim() }; } }
       out.push({ name: m[1].trim(), args: args });
     }
     return out;
@@ -1275,25 +1354,34 @@
     var acc = '';
     var thinking = '';
     var live = '';
+    var statusText = '正在思考…';   // 当前状态提示（首字延迟 / 工具调用往返）
     streaming = true; sendBtn.disabled = true;
 
     // 带图片时：本地文本模型自动切到视觉模型
     var engine = engineSelect.value || 'ollama';
     if (img && engine === 'ollama') engine = 'ollama-vision';
 
+    function statusHtml(txt) {
+      return '<div class="status-line">' + esc(txt) + '<span class="dots"><i></i><i></i><i></i></span></div>';
+    }
     function renderStream() {
       var thinkHtml = thinking
         ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>'
         : '';
-      bubble.innerHTML = thinkHtml + (acc ? mdToHtml(acc) : '') + (live ? mdToHtml(live) : '') + '<span class="cursor"></span>';
+      // 还没出正文时，给用户一个明确的「在干什么」提示
+      var status = (!acc && !live) ? statusHtml(statusText) : '';
+      bubble.innerHTML = thinkHtml + status + (acc ? mdToHtml(acc) : '') + (live ? mdToHtml(live) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
+    // 首字延迟期间先显示状态（用户点发送后立刻有反馈）
+    renderStream();
 
     function finish(finalText, err) {
       history.push({ role: 'user', content: text || (img ? '（图片）' : '') });
       if (finalText) history.push({ role: 'assistant', content: finalText });
       while (history.length > 24) history.shift();
       touchCurrentSession();
+      autoTitle(currentSession());
       persistSessions();
       renderSessionList();
       var thinkHtml = thinking
@@ -1343,11 +1431,14 @@
             if (calls.length && round < MAX_TOOL_ROUNDS) {
               acc += stripToolMarkers(rawRound);
               live = '';
+              statusText = '正在使用工具 ' + calls.map(function (c) { return c.name; }).join('、') + '…';
+              renderStream();
               var caps = agentCapabilities();
               Promise.all(calls.map(function (c) {
                 return executeTool(c, caps).then(function (r) { return formatToolResult(c, r); });
               })).then(function (results) {
                 acc += '\n\n[已使用工具 ' + calls.map(function (c) { return c.name; }).join('、') + ']\n\n';
+                statusText = '正在思考…';
                 renderStream();
                 var next = msgs.concat([{ role: 'assistant', content: rawRound }])
                   .concat([{ role: 'user', content: results.join('\n\n') }]);
