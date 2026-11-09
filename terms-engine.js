@@ -90,7 +90,7 @@ function buildEdges(termMap, topTerms) {
 function renderTermNote(term, info, relatedTerms) {
   const rel = relatedTerms.map(function (r) { return '- [[' + r + ']]'; }).join('\n');
   const refs = (info.titles || []).map(function (t) { return '- ' + t; }).join('\n');
-  const tags = ['术语', info.category];
+  const tags = ['术语库', '术语', info.category];
   return '---\ntype: term\nterm: ' + JSON.stringify(term) + '\ncategory: ' + info.category +
     '\ntags:\n  - ' + tags.join('\n  - ') + '\nsource: Zotero\n---\n\n' +
     '# ' + term + '\n\n' +
@@ -235,10 +235,10 @@ async function buildTermsGraph(opts) {
   });
   const newState = { v: 1, docs: newDocs, terms: newTermsState };
 
-  // 5) 写 Obsidian（仅在有新增文献时写入；每次重写全部术语笔记，保证「相关术语」双链始终最新）
+  // 5) 写 Obsidian（只要给出库路径就重写全部术语笔记，保证「相关术语」双链与 #术语库 标签始终最新）
   let noteCount = 0;
   let overviewPath = '';
-  if (vaultPath && todo.length) {
+  if (vaultPath) {
     try {
       const dir = path.join(vaultPath, '术语库');
       fs.mkdirSync(dir, { recursive: true });

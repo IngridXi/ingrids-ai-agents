@@ -204,7 +204,7 @@
           if (!r || !r.ok) { status.textContent = '失败：' + ((r && r.error) || '未知错误'); return; }
           var rangeNote = (r.totalItems != null) ? '（本次范围 ' + r.maxItems + ' / 共 ' + r.totalItems + ' 篇）' : '';
           if (r.processedCount === 0 && r.skippedCount > 0) {
-            status.textContent = '已完成：全部 ' + r.skippedCount + ' 篇文献都已构建过，本次跳过（无新文献）。' + rangeNote;
+            status.textContent = '已完成：本次无新文献（' + r.skippedCount + ' 篇已构建），已重写 ' + r.noteCount + ' 篇术语笔记补标签。' + rangeNote;
           } else if (r.skippedCount > 0) {
             status.textContent = '完成：本次新处理 ' + r.processedCount + ' 篇，跳过已构建 ' + r.skippedCount + ' 篇；共 ' + r.allTermCount + ' 个术语' + rangeNote;
           } else {
@@ -215,9 +215,7 @@
             return '<div class="it"><span class="src">' + esc(t.category) + '</span> · <b>' + esc(t.term) + '</b>' +
               (t.zh ? '<div style="color:#5e596e;margin-top:2px">' + esc(t.zh) + '</div>' : '') + '</div>';
           }).join('');
-          var writeNote = (r.processedCount === 0)
-            ? '本次无新文献，未改动笔记。当前术语网共 ' + r.allTermCount + ' 个术语、' + (r.edges ? r.edges.length : 0) + ' 条关联。'
-            : '重写 ' + r.noteCount + ' 篇术语笔记（每次覆盖，保证每个术语的「相关术语」双链都是最新的）+ 刷新总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。';
+          var writeNote = '重写 ' + r.noteCount + ' 篇术语笔记（每次覆盖，保证「相关术语」双链与 #术语库 标签都是最新的）+ 刷新总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。';
           result.innerHTML = '<div style="margin-bottom:8px">' + writeNote + ' 点上方「打开 Obsidian 看图谱」→ 打开「术语总览」→ 切到图谱视图看网状图。</div>' + termsHtml;
         }).catch(function (e) {
           btn.disabled = false;
