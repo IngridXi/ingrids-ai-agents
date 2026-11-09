@@ -154,7 +154,7 @@
       '<div id="kbSources"><div class="kb-hint">检测中…</div></div>' +
       '<div class="kb-src" style="border-color:#6c5ce7">' +
         '<div class="top"><div class="ic">🕸️</div><div><div class="nm">术语图谱</div></div><span class="st miss">Zotero → Obsidian</span></div>' +
-        '<div class="meta">从 Zotero 文献自动提取术语（理论 / 概念 / 商业词汇），按共现关系连线，写入 Obsidian「术语库/」，用图谱视图看网状图。</div>' +
+        '<div class="meta">从 Zotero 文献自动提取术语（理论 / 概念 / 商业词汇），按共现关系连线，写入 Obsidian「术语库/」。图谱里只想看术语、不想看到「文献综述/概念笔记」等其他笔记时，在 Obsidian 图谱视图过滤框输入 <b>path:术语库</b> 即可。</div>' +
         '<div class="cfgrow" style="margin-top:11px">' +
           '<label style="flex:1;display:flex;flex-direction:column;font-size:11px;color:#a29baf;gap:4px">文献数<input id="kbTermsMax" type="number" min="10" max="1000" step="10" value="200" style="width:100%;padding:8px 10px;border:1px solid #eae8f0;border-radius:8px;font-size:13px;color:#221f33"></label>' +
           '<label style="flex:1;display:flex;flex-direction:column;font-size:11px;color:#a29baf;gap:4px">术语数<input id="kbTermsTopK" type="number" min="10" max="300" step="10" value="80" style="width:100%;padding:8px 10px;border:1px solid #eae8f0;border-radius:8px;font-size:13px;color:#221f33"></label>' +

@@ -125,6 +125,8 @@ function renderOverview(terms, edges, meta) {
   return '# 术语总览\n\n' +
     '> 由 Ingrid\'s AI Agents 从 Zotero 自动提取，共 ' + (meta.total || terms.length) + ' 个术语。' +
     '每个术语是一个笔记，用双链互相关联；在 Obsidian 打开「图谱视图（Graph View）」即可看到网状图。\n\n' +
+    '> **只想看术语网状图？** 在 Obsidian 图谱视图左上角的过滤框输入 `path:术语库`，' +
+    '就能只显示术语笔记、隐藏掉「文献综述 / 概念笔记」等其他笔记。\n\n' +
     '## 按类别\n\n' + catMd + '\n\n' +
     '## 关系图\n\n```mermaid\n' + mermaidGraph(terms, edges) + '\n```\n';
 }
