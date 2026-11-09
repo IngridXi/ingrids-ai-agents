@@ -508,6 +508,13 @@ function removeIcsFeed(id) {
   return listIcsFeeds();
 }
 
+/** 简单字符串 hash（djb2）→ 短 hex，用于构造稳定的 ICS 事件 id */
+function hashStr(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) | 0; }
+  return (h >>> 0).toString(36);
+}
+
 /** 拉取所有 ICS 订阅并合并进秘书日程（只读；每 30 分钟自动调用） */
 async function runIcsSync() {
   const feeds = listIcsFeeds();
@@ -529,6 +536,31 @@ async function runIcsSync() {
     }
     results.push({ id: feed.id, name: feed.name, ok: r.ok, count: r.count, error: r.error || '' });
   }
+  // 展开重复事件：母事件 + RRULE 实例；跳过已取消（Canceled）的实例
+  const canceledKeys = new Set();
+  allEvents.forEach(function (ev) {
+    const st = String(ev.status || '').toUpperCase();
+    const t = String(ev.title || '').trim();
+    if (st === 'CANCELLED' || /^cancell?ed\b/i.test(t)) {
+      canceledKeys.add((ev.uid || '') + '|' + String(ev.at || ''));
+    }
+  });
+  const expanded = [];
+  allEvents.forEach(function (ev) {
+    const key = (ev.uid || '') + '|' + String(ev.at || '');
+    if (!canceledKeys.has(key)) expanded.push(ev);
+    if (ev.rrule) {
+      const dur = ev.end ? (new Date(ev.end).getTime() - new Date(ev.at).getTime()) : 0;
+      const instances = syncEngine.expandRrule(ev.at, ev.rrule, 365);
+      instances.forEach(function (inst) {
+        const atIso = inst.toISOString();
+        if (canceledKeys.has((ev.uid || '') + '|' + atIso)) return; // 被取消的实例跳过
+        const endIso = dur > 0 ? new Date(inst.getTime() + dur).toISOString() : '';
+        expanded.push(Object.assign({}, ev, { at: atIso, end: endIso }));
+      });
+    }
+  });
+
   // 合并：移除旧的 ics- 订阅事件，写入新事件；保留 cal-/手动/导入事件；继承 reminded/done 防重复提醒
   const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
   const oldIcs = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return String(e.id).startsWith('ics-'); });
@@ -536,9 +568,13 @@ async function runIcsSync() {
   oldIcs.forEach(function (e) { oldMap[e.id] = e; });
   const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-'); });
   const synced = [];
-  allEvents.forEach(function (ev, i) {
-    var uid = ev.uid ? String(ev.uid).replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 40) : ('n' + i);
-    var id = 'ics-' + ev._feedId + '-' + uid;
+  const seenIds = new Set();
+  expanded.forEach(function (ev, i) {
+    var uidKey = ev.uid ? hashStr(String(ev.uid)) : ('n' + i);
+    var atKey = String(ev.at || '').replace(/[^0-9]/g, '');
+    var id = 'ics-' + ev._feedId + '-' + uidKey + '-' + atKey;
+    if (seenIds.has(id)) return;  // 同 uid 同时刻的去重（重复系列的「例外实例」与展开实例重叠）
+    seenIds.add(id);
     var old = oldMap[id];
     synced.push({
       id: id, title: ev.title, at: ev.at, end: ev.end || '',

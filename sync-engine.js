@@ -85,7 +85,89 @@ function parseICalendar(ics) {
       location: unescape(prop(b, 'LOCATION')),
       description: unescape(prop(b, 'DESCRIPTION')),
       allDay: /VALUE=DATE/i.test(dtStartRaw),
+      rrule: prop(b, 'RRULE'),
+      status: prop(b, 'STATUS'),
+      recurrenceId: prop(b, 'RECURRENCE-ID'),
     });
+  }
+  return out;
+}
+
+/* ---------------- RRULE 重复事件展开 ---------------- */
+
+/** 解析 RRULE 里的 UNTIL 值 → Date（支持 20271109T100000Z / 20271109T100000） */
+function parseIcsUntil(s) {
+  const m = String(s || '').match(/^(\d{4})(\d{2})(\d{2})T?(\d{2})?(\d{2})?(\d{2})?(Z?)/);
+  if (!m) return null;
+  const y = +m[1], mo = +m[2] - 1, d = +m[3], h = +(m[4] || 0), mi = +(m[5] || 0), se = +(m[6] || 0);
+  return m[7] === 'Z' ? new Date(Date.UTC(y, mo, d, h, mi, se)) : new Date(y, mo, d, h, mi, se);
+}
+
+/** 返回某日期所在周的周一 00:00（本地时区） */
+function startOfWeek(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (x.getDay() + 6) % 7; // 周一=0
+  return new Date(x.getTime() - dow * 86400000);
+}
+
+/**
+ * 展开 RRULE 重复事件 → 未来若干天内的实例时间点（不含 DTSTART 本身）
+ * 支持 FREQ=DAILY/WEEKLY/MONTHLY/YEARLY，INTERVAL、BYDAY、UNTIL、COUNT
+ */
+function expandRrule(dtstart, rrule, lookaheadDays) {
+  const out = [];
+  if (!dtstart || !rrule) return out;
+  const p = {};
+  String(rrule).split(';').forEach(function (part) {
+    const i = part.indexOf('=');
+    if (i < 0) return;
+    p[part.slice(0, i).trim().toUpperCase()] = part.slice(i + 1).trim();
+  });
+  const freq = (p.FREQ || '').toUpperCase();
+  const interval = parseInt(p.INTERVAL, 10) || 1;
+  const byday = p.BYDAY ? String(p.BYDAY).split(',').map(function (d) { return d.trim().toUpperCase(); }) : null;
+  const count = p.COUNT ? parseInt(p.COUNT, 10) : 0;
+  const until = p.UNTIL ? parseIcsUntil(p.UNTIL) : null;
+
+  const start = new Date(dtstart);
+  if (isNaN(start.getTime())) return out;
+  const horizon = Math.min(Date.now() + (Number(lookaheadDays) || 365) * 86400000, until ? until.getTime() : Infinity);
+
+  const DOW = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+  const bydayNums = byday ? byday.map(function (d) { return DOW[d]; }) : null;
+  let guard = 0, produced = 0;
+
+  if (freq === 'DAILY') {
+    let d = new Date(start.getTime() + interval * 86400000);
+    while (guard++ < 5000 && d.getTime() <= horizon && (!count || produced < count)) {
+      out.push(new Date(d)); produced++;
+      d = new Date(d.getTime() + interval * 86400000);
+    }
+  } else if (freq === 'WEEKLY') {
+    const firstWeekStart = startOfWeek(start);
+    const firstWeekNum = Math.round(firstWeekStart.getTime() / (7 * 86400000));
+    let day = new Date(start);
+    while (guard++ < 5000) {
+      day = new Date(day.getTime() + 86400000);
+      if (day.getTime() > horizon) break;
+      if (count && produced >= count) break;
+      const weekDiff = Math.round((startOfWeek(day).getTime() - firstWeekStart.getTime()) / (7 * 86400000));
+      if (weekDiff % interval !== 0) continue;
+      if (bydayNums && bydayNums.indexOf(day.getDay()) < 0) continue;
+      out.push(new Date(day)); produced++;
+    }
+  } else if (freq === 'MONTHLY') {
+    let m = new Date(start.getFullYear(), start.getMonth() + interval, start.getDate());
+    while (guard++ < 5000 && m.getTime() <= horizon && (!count || produced < count)) {
+      out.push(new Date(m)); produced++;
+      m = new Date(m.getFullYear(), m.getMonth() + interval, m.getDate());
+    }
+  } else if (freq === 'YEARLY') {
+    let y = new Date(start.getFullYear() + interval, start.getMonth(), start.getDate());
+    while (guard++ < 5000 && y.getTime() <= horizon && (!count || produced < count)) {
+      out.push(new Date(y)); produced++;
+      y = new Date(y.getFullYear() + interval, y.getMonth(), y.getDate());
+    }
   }
   return out;
 }
@@ -414,6 +496,7 @@ async function syncMicrosoftMail(accessToken, opts) {
 
 module.exports = {
   parseICalendar,
+  expandRrule,
   parseCalDate,
   syncCalendarAccount,
   eventToICS,
