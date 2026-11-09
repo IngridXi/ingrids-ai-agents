@@ -60,6 +60,16 @@
   document.body.appendChild(mask);
   var modal = mask.querySelector('#kbModal');
 
+  /* 术语图谱进度（全局只注册一次，避免重复构建累积监听） */
+  var termsStatusEl = null;
+  if (DESKTOP && window.ingrid.onKbTermsProgress) {
+    window.ingrid.onKbTermsProgress(function (p) {
+      if (termsStatusEl && p && p.phase === 'extract') {
+        termsStatusEl.textContent = '正在提取术语… 已处理 ' + p.done + ' / ' + p.total + ' 篇文献';
+      }
+    });
+  }
+
   /* ---------- 打开来源（应用 / 网页 / 本地目录） ---------- */
   function openSource(kind) {
     if (!DESKTOP) { alert('请在桌面版使用'); return; }
@@ -139,6 +149,16 @@
       '<div class="kb-search"><input id="kbQuery" placeholder="跨库搜索：文献 / 笔记 / Notion 页面…"><button id="kbSearchBtn">' + iconSvg('search') + '搜索</button></div>' +
       '<div id="kbRes" class="kb-res" style="display:none"></div>' +
       '<div id="kbSources"><div class="kb-hint">检测中…</div></div>' +
+      '<div class="kb-src" style="border-color:#6c5ce7">' +
+        '<div class="top"><div class="ic">🕸️</div><div><div class="nm">术语图谱</div></div><span class="st miss">Zotero → Obsidian</span></div>' +
+        '<div class="meta">从 Zotero 文献自动提取术语（理论 / 概念 / 商业词汇），按共现关系连线，写入 Obsidian「术语库/」，用图谱视图看网状图。</div>' +
+        '<div class="acts">' +
+          '<button id="kbTermsBuild" class="primary">' + iconSvg('sparkles') + '构建术语网</button>' +
+          '<button data-kind="obsidian">' + iconSvg('link') + '打开 Obsidian 看图谱</button>' +
+        '</div>' +
+        '<div id="kbTermsStatus" class="meta" style="margin-top:9px"></div>' +
+        '<div id="kbTermsResult" class="kb-res" style="display:none;margin-top:9px;margin-bottom:0"></div>' +
+      '</div>' +
       '<div class="kb-hint">本机优先：Zotero 与 Obsidian 内容在本机建立索引；Notion 走官方 API。「打开」会用系统默认方式启动对应应用或目录。</div>';
 
     modal.querySelector('#kbClose').addEventListener('click', close);
@@ -149,6 +169,45 @@
     modal.querySelector('#kbQuery').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { var q = this.value.trim(); if (q) doSearch(q); }
     });
+
+    // 术语图谱区的「打开」按钮（此时 kbSources 尚未填充，只有术语网区带 data-kind）
+    modal.querySelectorAll('[data-kind]').forEach(function (b) {
+      b.addEventListener('click', function () { openSource(b.getAttribute('data-kind')); });
+    });
+
+    // 术语图谱构建
+    var termsBuild = modal.querySelector('#kbTermsBuild');
+    if (termsBuild) {
+      termsBuild.addEventListener('click', function () {
+        if (!DESKTOP || !window.ingrid.kbTermsBuild) { alert('术语图谱需在桌面版使用（并运行本地 Ollama）'); return; }
+        var status = modal.querySelector('#kbTermsStatus');
+        var result = modal.querySelector('#kbTermsResult');
+        var btn = this;
+        btn.disabled = true;
+        btn.textContent = '构建中…（需本地 Ollama）';
+        termsStatusEl = status;
+        status.textContent = '准备中…（可能需 1–2 分钟）';
+        window.ingrid.kbTermsBuild({ maxItems: 40, topK: 40 }).then(function (r) {
+          btn.disabled = false;
+          btn.textContent = '构建术语网';
+          termsStatusEl = null;
+          if (!r || !r.ok) { status.textContent = '失败：' + ((r && r.error) || '未知错误'); return; }
+          status.textContent = '完成：' + r.allTermCount + ' 个术语 · 生成 ' + r.noteCount + ' 篇笔记';
+          result.style.display = 'block';
+          var termsHtml = (r.terms || []).slice(0, 25).map(function (t) {
+            return '<div class="it"><span class="src">' + esc(t.category) + '</span> · <b>' + esc(t.term) + '</b>' +
+              (t.zh ? '<div style="color:#5e596e;margin-top:2px">' + esc(t.zh) + '</div>' : '') + '</div>';
+          }).join('');
+          result.innerHTML = '<div style="margin-bottom:8px">已写入 Obsidian「术语库/」：' + r.allTermCount +
+            ' 个术语笔记 + 总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。点上方「打开 Obsidian 看图谱」→ 打开「术语总览」→ 切到图谱视图看网状图。</div>' + termsHtml;
+        }).catch(function (e) {
+          btn.disabled = false;
+          btn.textContent = '构建术语网';
+          termsStatusEl = null;
+          status.textContent = '失败：' + String(e && e.message || e);
+        });
+      });
+    }
 
     if (!DESKTOP) {
       modal.querySelector('#kbSources').innerHTML = '<div class="kb-hint">浏览器预览模式，知识库接入请在桌面版使用。</div>';

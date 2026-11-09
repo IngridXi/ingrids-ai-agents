@@ -27,6 +27,7 @@ const syncEngine = require('./sync-engine.js');
 require('./secretary-core.js');
 const SecretaryCore = globalThis.SecretaryCore;
 const NotionEngine = require('./notion-engine.js');
+const TermsEngine = require('./terms-engine.js');
 
 /* ---------------- 数据目录（local-first） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -1662,6 +1663,35 @@ ipcMain.handle('kb:open', async (_e, kind) => {
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
 
+/* 术语图谱：从 Zotero 提取术语 → 写 Obsidian 术语库 → 返回图数据 */
+ipcMain.handle('kb:terms:build', async (e, opts) => {
+  opts = opts || {};
+  let items = [];
+  try {
+    const stdout = await execFileP('python3', [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
+    if (stdout) items = JSON.parse(stdout);
+  } catch (err) { return { ok: false, error: '读取 Zotero 数据失败：' + String(err && err.message || err) }; }
+  if (!Array.isArray(items) || !items.length) return { ok: false, error: 'Zotero 里没有文献（请先在 Zotero 添加文献）' };
+
+  items = items.slice().sort(function (a, b) { return String(b.dateAdded || '').localeCompare(String(a.dateAdded || '')); });
+
+  const send = function (data) { if (!e.sender.isDestroyed()) e.sender.send('kb:terms:progress', data); };
+  const llm = function (messages) {
+    return completeChatStream('ollama', messages, null, { temperature: 0.2, maxTokens: 6000 })
+      .then(function (r) { return r.text; });
+  };
+
+  return await TermsEngine.buildTermsGraph({
+    items: items,
+    llm: llm,
+    vaultPath: vaultPath(),
+    batchSize: 10,
+    maxItems: parseInt(opts.maxItems, 10) || 40,
+    topK: parseInt(opts.topK, 10) || 40,
+    onProgress: function (phase, done, total) { send({ phase: phase, done: done, total: total }); },
+  });
+});
+
 /* ---------------- 工具能力（文件 / 数据库 / 电脑操作） ----------------
  * 只读、安全白名单：list / search / read / db query。
  * 写 / 删除 / 移动本版不提供（不可逆操作，需独立审批流后再开放）。
@@ -1819,12 +1849,23 @@ ipcMain.handle('tool:fs:append', (_e, p) => toolFsAppend(p));
 ipcMain.handle('tool:fs:edit', (_e, p) => toolFsEdit(p));
 ipcMain.handle('tool:fs:move', (_e, p) => toolFsMove(p));
 ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
-ipcMain.handle('tool:db:query', (_e, p) => {
+ipcMain.handle('tool:db:query', async (_e, p) => {
   const q = String((p && p.query) || '').trim();
   const k = Math.min(Math.max(parseInt((p && p.k), 10) || 5, 1), 10);
   if (!q) return { ok: false, error: '查询词为空' };
-  const hits = kbEngine.search(q, k);
-  return { ok: true, query: q, hits: hits };
+  const hits = await kbEngine.search(q, k);
+  const out = { ok: true, query: q, hits: hits };
+  // Notion（可选，未配 token 时静默跳过；检索失败不阻断本地结果）
+  try {
+    const t = notionToken();
+    if (t) {
+      const nr = await NotionEngine.search(t, q);
+      out.notion = (nr || []).slice(0, k).map(function (it) {
+        return { title: it.title, object: it.object, id: it.id, source: 'Notion' };
+      });
+    }
+  } catch (e) { /* ignore */ }
+  return out;
 });
 
 /* ---------------- 整理数据库工具（Obsidian 写 / Zotero 只读报告） ---------------- */

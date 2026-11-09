@@ -825,7 +825,7 @@
       tools.push('fs_delete：删除到废纸篓（非物理删除），参数 {"path":"/绝对路径"}');
     }
     if (caps.db) {
-      tools.push('db_query：查询本地知识库 / 文献库（Zotero、Obsidian 等），参数 {"query":"关键词"}');
+      tools.push('db_query：查询本地知识库 / 文献库（Zotero、Obsidian、Notion），参数 {"query":"关键词"}');
       tools.push('db_obsidian_write：写一篇整理笔记到 Obsidian 库（默认 _AI整理/ 目录），参数 {"title":"标题","content":"正文","tags":["标签"],"folder":"可选子目录"}');
       tools.push('db_obsidian_tag：给某篇 Obsidian 笔记打标签，参数 {"path":"相对库路径","tags":["标签1","标签2"]}');
       tools.push('db_obsidian_move：归档/移动 Obsidian 笔记，参数 {"from":"原路径","to":"新路径"}');
@@ -1400,6 +1400,16 @@
         if (r && r.ok && r.results && r.results.length) {
           return '【联网搜索结果 · 仅作参考，与问题无关则忽略，回答时标注来源】\n' +
             r.results.map(function (x, i) { return '[' + (i + 1) + '] ' + x.title + '\n' + x.link + '\n' + (x.snippet || ''); }).join('\n\n');
+        }
+        return '';
+      }).catch(function () { return ''; }));
+    }
+    // Notion 知识库（已配 token 才搜到；未配时快速失败，静默跳过）
+    if (window.ingrid.notionSearch) {
+      ps.push(window.ingrid.notionSearch(text).then(function (r) {
+        if (r && r.ok && r.results && r.results.length) {
+          return '【Notion 知识库 · 相关页面，仅作参考，与问题无关则忽略】\n' +
+            r.results.map(function (x, i) { return '[' + (i + 1) + '] ' + x.title + '（' + (x.object === 'database' ? '数据库' : '页面') + '）'; }).join('\n');
         }
         return '';
       }).catch(function () { return ''; }));

@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   kbStatus: () => ipcRenderer.invoke('kb:status'),
   kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),
   kbOpen: (kind) => ipcRenderer.invoke('kb:open', kind),
+  kbTermsBuild: (opts) => ipcRenderer.invoke('kb:terms:build', opts),
+  onKbTermsProgress: (cb) => ipcRenderer.on('kb:terms:progress', (_e, d) => { if (cb) cb(d || {}); }),
 
   // 浏览器自动化（安全白名单：打开 / 截图 / 提取文本）
   browserAutomate: (payload) => ipcRenderer.invoke('browser:automate', payload),
