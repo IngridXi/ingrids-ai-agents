@@ -244,6 +244,20 @@
 
   .localnote { margin-top: 14px; padding: 12px 14px; background: var(--accent-softer); border: 1px solid var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 8px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; }
 
+  /* 真实执行开关（toggle） */
+  .switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: #d4d1dd; border-radius: 999px;
+    transition: background .18s; cursor: pointer;
+  }
+  .switch .slider::before {
+    content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: transform .18s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(20px); }
+
   /* ---------- Settings panel ---------- */
   .engines-list { display: flex; flex-direction: column; gap: 10px; }
   .engine-row {
@@ -733,9 +747,9 @@ function openModal(a) {
 
   const capsEditHtml = a.href ? `<section>
       <h3>工具能力</h3>
-      <p class="desc" style="margin-bottom:10px">让这个 Agent 能直接操作本机文件与资料库（读、查、搜索；写 / 删除走后续审批）。</p>
+      <p class="desc" style="margin-bottom:10px">让这个 Agent 能直接操作本机文件与资料库（读 / 写 / 查 / 搜索；写与删除会逐条弹窗审批）。</p>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
-        <input type="checkbox" id="m-fs" ${(a.tools || []).indexOf('fs') >= 0 ? 'checked' : ''}> 📁 文件工具（列目录 · 搜索 · 读文件）
+        <input type="checkbox" id="m-fs" ${(a.tools || []).indexOf('fs') >= 0 ? 'checked' : ''}> 📁 文件工具（列目录 · 搜索 · 读 / 写 / 改 / 移动，写操作需审批）
       </label>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
         <input type="checkbox" id="m-db" ${(a.tools || []).indexOf('db') >= 0 ? 'checked' : ''}> 🗄️ 数据库工具（查知识库 / 文献）
@@ -862,6 +876,19 @@ function openSettings() {
       <button class="close" id="s-close">✕</button>
     </header>
     <section>
+      <h3>真实执行（安全开关）</h3>
+      <div class="engine-row" style="align-items:center">
+        <div class="e-body">
+          <div class="e-name">允许真实执行</div>
+          <div class="e-tag">关闭时，电脑操作与 Agent 运行均为「演练模式」——只看不动、不花 Key、不真改文件</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="s-runmode">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </section>
+    <section>
       <h3>本机 CLI 引擎（bring-your-own-agent）</h3>
       <div class="engines-list" id="cli-list">检测中…</div>
     </section>
@@ -871,6 +898,17 @@ function openSettings() {
       <div class="localnote">Key 只写不读（再次打开显示占位），经 Electron safeStorage 加密后落盘，不上云。</div>
     </section>`;
   document.getElementById('s-close').addEventListener('click', closeSettings);
+
+  // 真实执行开关：读取当前状态 + 变化时持久化
+  const runmodeEl = document.getElementById('s-runmode');
+  if (runmodeEl) {
+    if (IS_DESKTOP) {
+      window.ingrid.getRunMode().then(on => { runmodeEl.checked = !!on; }).catch(() => {});
+      runmodeEl.addEventListener('change', () => window.ingrid.setRunMode(runmodeEl.checked));
+    } else {
+      runmodeEl.disabled = true;
+    }
+  }
 
   // CLI 检测
   const cliList = document.getElementById('cli-list');

@@ -412,8 +412,14 @@
         else if (d && d.type === 'error') { done = true; resolve('失败：' + (d.message || '')); }
         else if (d && d.type === 'closed') { done = true; resolve(parts.join('\n') || '（已结束，无输出）'); }
       });
-      window.ingrid.computerStart({ task: String(task || ''), maxSteps: 8, dryRun: true }).then(function (ok) {
-        if (ok === false && !done) { done = true; resolve('（未能启动电脑操作，请检查系统屏幕录制授权）'); }
+      window.ingrid.getRunMode().then(function (real) {
+        window.ingrid.computerStart({ task: String(task || ''), maxSteps: 8, dryRun: !real }).then(function (ok) {
+          if (ok === false && !done) { done = true; resolve('（未能启动电脑操作，请检查系统「屏幕录制 + 辅助功能」授权）'); }
+        });
+      }).catch(function () {
+        window.ingrid.computerStart({ task: String(task || ''), maxSteps: 8, dryRun: true }).then(function (ok) {
+          if (ok === false && !done) { done = true; resolve('（未能启动电脑操作，请检查系统「屏幕录制 + 辅助功能」授权）'); }
+        });
       });
       setTimeout(function () { if (!done) { done = true; resolve(parts.join('\n') || '（电脑操作超时）'); } }, 120000);
     });
