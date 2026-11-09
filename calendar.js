@@ -286,11 +286,10 @@
   /* ---------- 研究分类（复用 SecretaryCore，兜底内置） ---------- */
   var RESEARCH_CATEGORIES = (window.SecretaryCore && window.SecretaryCore.RESEARCH_CATEGORIES) || [
     { id: 'submission', label: '投稿 deadline', emoji: '📮', color: '#e5484d' },
-    { id: 'review',     label: '审稿',         emoji: '🔎', color: '#f08c00' },
     { id: 'meeting',    label: '会议 / 组会',  emoji: '📅', color: '#4c8df6' },
     { id: 'advisor',    label: '导师 / 1:1',   emoji: '🎓', color: '#4c8df6' },
     { id: 'grant',      label: '基金 / 申请',  emoji: '💰', color: '#1d9e75' },
-    { id: 'campus',     label: '学校活动',     emoji: '🏫', color: '#4c8df6' },
+    { id: 'campus',     label: '学校活动',     emoji: '🏫', color: '#f08c00' },
     { id: 'other',      label: '其他',         emoji: '📌', color: '#8a8f98' },
   ];
   var REMINDER_OPTIONS = [
@@ -313,7 +312,7 @@
     }
     return catOf(cat);
   }
-  function isDeadlineCat(c) { return c.id === 'submission' || c.id === 'review' || c.id === 'grant'; }
+  function isDeadlineCat(c) { return c.id === 'submission' || c.id === 'grant'; }
   function reminderLabel(min) {
     for (var i = 0; i < REMINDER_OPTIONS.length; i++) if (REMINDER_OPTIONS[i].min === Number(min)) return REMINDER_OPTIONS[i].label;
     return min ? ('提前 ' + min + ' 分钟') : '到点提醒';
