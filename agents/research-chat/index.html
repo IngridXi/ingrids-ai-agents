@@ -117,6 +117,10 @@
     background: rgba(255,255,255,.16); color: #fff; font-size: 13px; cursor: pointer; outline: none;
   }
   header select option { color: var(--ink); background: #fff; }
+  #modelHint {
+    max-width: 220px; min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 10.5px; opacity: .82; color: #fff; line-height: 1.2;
+  }
   header .clear-btn {
     padding: 7px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,.35);
     background: rgba(255,255,255,.14); color: #fff; font-size: 13px; cursor: pointer;
@@ -333,6 +337,8 @@
   </div>
   <div class="spacer"></div>
   <select id="engineSelect" title="选择聊天引擎"></select>
+  <select id="modelSelect" title="选择模型"></select>
+  <span id="modelHint" title=""></span>
   <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge">–</span></button>
   <button class="clear-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息，研究助手默认关以保持「只依据证据」）">联网</button>
   <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
@@ -435,6 +441,26 @@
     deepseek: { label: 'DeepSeek · API Key' },
     gpt:      { label: 'GPT · API Key' },
     qwen:     { label: 'Qwen · API Key' },
+  };
+
+  // 各引擎可选模型 + 用途说明（id 与 main.js 实际请求的 model 名对齐）
+  var ENGINE_MODELS = {
+    ollama: [
+      { id: 'qwen3:32b', label: 'qwen3:32b · 通用', desc: '本地免费 · 日常问答 / 综述 / 写作' },
+    ],
+    'ollama-vision': [
+      { id: 'qwen2.5vl:7b', label: 'qwen2.5vl:7b · 识图', desc: '本地视觉模型 · 看图 / OCR / 截图提问' },
+    ],
+    deepseek: [
+      { id: 'deepseek-flash', label: 'Flash · 快 / 便宜', desc: '日常聊天、文献综述、工具调用、RAG、识图；速度快、最便宜' },
+      { id: 'deepseek-v4-pro', label: 'V4-Pro · 深度推理', desc: '最难推理、长链路编程与数学难题；更强但更贵更慢' },
+    ],
+    gpt: [
+      { id: 'gpt-4o-mini', label: 'gpt-4o-mini · 通用', desc: '通用对话 · 性价比高' },
+    ],
+    qwen: [
+      { id: 'qwen-plus', label: 'qwen-plus · 通用', desc: '通义千问 · 通用对话' },
+    ],
   };
 
   // 会话状态
@@ -540,6 +566,7 @@
     var acc = '';
     window.ingrid.chatStream({
       engine: engine,
+      model: currentModelId(),
       messages: [
         { role: 'system', content: '你是会话标题生成器。根据用户的问题，生成一个不超过 12 个字的简洁中文标题，概括主题。只输出标题本身，不要引号、书名号、标点、序号、解释或任何前后缀。' },
         { role: 'user', content: q },
@@ -632,7 +659,7 @@
     var s = currentSession();
     if (!s || !s.messages.length) { welcome(); return; }
     s.messages.forEach(function (m) {
-      var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content));
+      var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(stripToolMarkers(m.content)) : esc(m.content));
       if (m.role === 'assistant') renderMermaidIn(b);
     });
     messages.scrollTop = messages.scrollHeight;
@@ -692,6 +719,17 @@
         activeId = data.activeId;
       }
       sessions = (list && list.length) ? list : [];
+      // 一次性清洗历史消息里残留的 DSML / 工具标记（旧版本写入的脏数据），并回写持久化
+      var _cleaned = false;
+      sessions.forEach(function (s) {
+        (s.messages || []).forEach(function (m) {
+          if (m.role === 'assistant' && m.content) {
+            var c = stripToolMarkers(m.content);
+            if (c !== m.content) { m.content = c; _cleaned = true; }
+          }
+        });
+      });
+      if (_cleaned) { try { window.ingrid.chatHistorySave(AGENT_NAME, { v: 2, sessions: sessions.map(serializeSession), activeId: activeId }); } catch (e) {} }
       if (!sessions.length) { newChat(); return; }
       if (!currentSession()) activeId = sessions[0].id;
       history = currentSession().messages;
@@ -1069,6 +1107,7 @@
   var el = function (id) { return document.getElementById(id); };
   var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
   var engineSelect = el('engineSelect');
+  var modelSelect = el('modelSelect');
 
   /* ---------- 图标 ---------- */
   function setLogo() {
@@ -1214,6 +1253,7 @@
         engineSelect.appendChild(opt);
       });
       if (preferred) engineSelect.value = preferred;
+      loadModels(engineSelect.value || 'ollama');
     }
     if (IS_DESKTOP) {
       window.ingrid.getSettings().then(function (s) {
@@ -1228,6 +1268,48 @@
     } else {
       render();
     }
+  }
+
+  // 模型下拉：随引擎切换更新，带用途说明；记住上次选择
+  function currentModelMeta() {
+    var engine = engineSelect.value || 'ollama';
+    var list = ENGINE_MODELS[engine] || ENGINE_MODELS.ollama || [];
+    var id = modelSelect && modelSelect.value;
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return list[0] || { id: id, label: id, desc: '' };
+  }
+  function updateModelHint() {
+    var m = currentModelMeta();
+    if (modelSelect) modelSelect.title = m.desc;
+    var h = el('modelHint');
+    if (h) { h.textContent = m.desc; h.title = m.desc; }
+  }
+  function loadModels(engine) {
+    var list = ENGINE_MODELS[engine] || ENGINE_MODELS.ollama || [];
+    modelSelect.innerHTML = '';
+    list.forEach(function (m) {
+      var opt = document.createElement('option');
+      opt.value = m.id; opt.textContent = m.label; opt.title = m.desc;
+      modelSelect.appendChild(opt);
+    });
+    var saved = null; try { saved = localStorage.getItem('rc_model_' + engine); } catch (e) {}
+    if (saved) {
+      for (var i = 0; i < list.length; i++) if (list[i].id === saved) { modelSelect.value = saved; break; }
+    }
+    updateModelHint();
+  }
+  engineSelect.addEventListener('change', function () {
+    loadModels(engineSelect.value || 'ollama');
+    try { localStorage.setItem('rc_model_' + (engineSelect.value || 'ollama'), modelSelect.value); } catch (e) {}
+  });
+  modelSelect.addEventListener('change', function () {
+    updateModelHint();
+    try { localStorage.setItem('rc_model_' + (engineSelect.value || 'ollama'), modelSelect.value); } catch (e) {}
+  });
+  function currentModelId() { return (modelSelect && modelSelect.value) || ''; }
+  function defaultModelId(engine) {
+    var list = ENGINE_MODELS[engine] || ENGINE_MODELS.ollama || [];
+    return (list[0] && list[0].id) || '';
   }
 
   /* ---------- 知识库（本地 RAG） ---------- */
@@ -1359,7 +1441,8 @@
 
     // 带图片时：本地文本模型自动切到视觉模型
     var engine = engineSelect.value || 'ollama';
-    if (img && engine === 'ollama') engine = 'ollama-vision';
+    var model = modelSelect.value || '';
+    if (img && engine === 'ollama') { engine = 'ollama-vision'; model = defaultModelId('ollama-vision'); }
 
     function statusHtml(txt) {
       return '<div class="status-line">' + esc(txt) + '<span class="dots"><i></i><i></i><i></i></span></div>';
@@ -1418,7 +1501,7 @@
 
       function runToolTurn(msgs, round) {
         live = '';
-        window.ingrid.chatStream({ engine: engine, messages: msgs }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) thinking += chunk.thinking;
             if (chunk && chunk.text) live += chunk.text;
@@ -1544,7 +1627,7 @@
       .concat(history.slice(-12))
       .concat([{ role: 'user', content: text }]);
 
-    window.ingrid.reviewLoop({ engine: engine, messages: reqMessages, rounds: 2 }, {
+    window.ingrid.reviewLoop({ engine: engine, model: currentModelId(), messages: reqMessages, rounds: 2 }, {
       onPhase: function (d) {
         close();
         if (d.phase === 'draft') {
@@ -1670,7 +1753,7 @@
     s.messages.forEach(function (m) {
       var who = m.role === 'user' ? '我' : '研究助手';
       lines.push('## ' + who, '');
-      lines.push(m.content || '', '');
+      lines.push((m.role === 'assistant' ? stripToolMarkers(m.content) : (m.content || '')) || '', '');
     });
     var md = lines.join('\n');
     if (!IS_DESKTOP) { alert('浏览器预览模式无法导出，请用桌面应用'); return; }

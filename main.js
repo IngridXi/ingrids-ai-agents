@@ -258,14 +258,14 @@ const CLI_ADAPTERS = {
 
 // OpenAI 兼容端点（用户填 Key 后可真实调用）
 const API_ENDPOINTS = {
-  deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat' },
+  deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-flash' },
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus' },
 };
 
 // 聊天流式端点（研究助手聊天用）：OpenAI 兼容 API + 本地 Ollama（Ollama 走 /v1 兼容端点，无需 Key）
 const CHAT_ENDPOINTS = {
-  deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat', keyField: 'deepseek' },
+  deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-flash', keyField: 'deepseek' },
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini',    keyField: 'gpt' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
   ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:32b',      keyField: null },
@@ -1036,6 +1036,7 @@ ipcMain.handle('chat:start', (e, payload) => {
   const cfg = CHAT_ENDPOINTS[engine];
   if (!cfg) { e.sender.send('chat:done', { ok: false, error: '未知引擎：' + engine }); return true; }
   if (messages.length === 0) { e.sender.send('chat:done', { ok: false, error: '消息为空' }); return true; }
+  const model = String(p.model || cfg.model);   // 前端可指定模型（如 deepseek-flash / deepseek-v4-pro）
 
   const settings = decryptSettings(readSettingsRaw());
   const key = cfg.keyField ? settings[cfg.keyField] : '';
@@ -1053,7 +1054,7 @@ ipcMain.handle('chat:start', (e, payload) => {
       const timer = setTimeout(() => ctrl.abort(), 120000);
       const resp = await fetch(cfg.url, {
         method: 'POST', headers, signal: ctrl.signal,
-        body: JSON.stringify({ model: cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: 4000 }),
+        body: JSON.stringify({ model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 4000 }),
       });
       if (!resp.ok) {
         clearTimeout(timer);
@@ -1113,12 +1114,13 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   const headers = { 'Content-Type': 'application/json' };
   if (key) headers.Authorization = 'Bearer ' + key;
   const o = opts || {};
+  const model = String(o.model || cfg.model);   // 允许调用方覆盖模型
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 180000);
   const resp = await fetch(cfg.url, {
     method: 'POST', headers, signal: ctrl.signal,
     body: JSON.stringify({
-      model: cfg.model, messages: messages, stream: true,
+      model: model, messages: messages, stream: true,
       temperature: o.temperature != null ? o.temperature : 0.7,
       max_tokens: o.maxTokens || 4000,
     }),
@@ -1160,6 +1162,7 @@ async function completeChatStream(engine, messages, onChunk, opts) {
 ipcMain.handle('chat:review-loop', (e, payload) => {
   const p = payload || {};
   const engine = String(p.engine || 'ollama');
+  const model = String(p.model || '');   // 前端可选模型（仅作用于「干活」引擎，审稿引擎保持其自身默认）
   const messages = Array.isArray(p.messages) ? p.messages : [];
   const rounds = Math.min(Math.max(parseInt(p.rounds, 10) || 2, 1), 4);
   const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
@@ -1181,7 +1184,7 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
     try {
       // 初稿（干活引擎）
       send('review:phase', { phase: 'draft', round: 0, engine: engine, reviewer: reviewerEngine });
-      const d = await completeChatStream(engine, messages, (t, th) => send('review:delta', { text: t, thinking: th }));
+      const d = await completeChatStream(engine, messages, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
       finalText = d.text;
 
       // 对抗循环：审稿 → 返修
@@ -1206,7 +1209,7 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
           { role: 'assistant', content: finalText },
           { role: 'user', content: '【审稿人意见】\n' + review + '\n\n请据此返修：只修正审稿人指出的问题，保留原有优点，输出完整修订版（只输出修订后的正文，不要输出审稿意见）。' },
         ];
-        const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }));
+        const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
         finalText = rv2.text;
       }
       send('review:done', { ok: true, finalText: finalText, passed: false, rounds: rounds, engine: engine, reviewer: reviewerEngine });
