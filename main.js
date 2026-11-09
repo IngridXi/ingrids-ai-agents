@@ -460,12 +460,19 @@ async function runCalendarSync() {
   }
   // 合并进 secretary.json：移除旧的同步事件（id 以 cal- 开头），写入新事件，保留手动事件
   const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
-  const manual = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('cal-'); });
+  const all = Array.isArray(state.events) ? state.events : [];
+  const oldCal = all.filter(function (e) { return String(e.id).startsWith('cal-'); });
+  const oldMap = {};
+  oldCal.forEach(function (e) { oldMap[e.id] = e; });
+  const manual = all.filter(function (e) { return !String(e.id).startsWith('cal-'); });
   const synced = allEvents.map(function (e) {
+    const old = oldMap[e.id];
     return {
       id: e.id, title: e.title, at: e.at, end: e.end || '',
       location: e.location || '', source: e.source || '', note: e.note || '',
-      reminderMin: e.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
+      reminderMin: e.allDay ? 0 : 30,
+      reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
+      createdAt: old ? old.createdAt : Date.now(),
       category: SecretaryCore.classifyEvent(e.title, e.source),
     };
   });

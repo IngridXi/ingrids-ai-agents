@@ -204,16 +204,32 @@ function expandRrule(dtstart, rrule, lookaheadDays) {
       out.push(new Date(day)); produced++;
     }
   } else if (freq === 'MONTHLY') {
-    let m = new Date(start.getFullYear(), start.getMonth() + interval, start.getDate());
-    while (guard++ < 5000 && m.getTime() <= horizon && (!count || produced < count)) {
-      out.push(new Date(m)); produced++;
-      m = new Date(m.getFullYear(), m.getMonth() + interval, m.getDate());
+    // 用 UTC 分量 + 保留时分秒，避免 monthly 丢时间 / 跨时区漂移（月底自动 clamp 到当月最后一天）
+    const H = start.getUTCHours(), MI = start.getUTCMinutes(), SE = start.getUTCSeconds(), MS = start.getUTCMilliseconds();
+    const day = start.getUTCDate();
+    let yy = start.getUTCFullYear(), mo = start.getUTCMonth();
+    while (guard++ < 5000) {
+      mo += interval;
+      yy += Math.floor(mo / 12); mo = ((mo % 12) + 12) % 12;
+      const lastDay = new Date(Date.UTC(yy, mo + 1, 0)).getUTCDate();
+      const dd = Math.min(day, lastDay);
+      const cur = new Date(Date.UTC(yy, mo, dd, H, MI, SE, MS));
+      if (cur.getTime() > horizon) break;
+      if (count && produced >= count) break;
+      out.push(new Date(cur)); produced++;
     }
   } else if (freq === 'YEARLY') {
-    let y = new Date(start.getFullYear() + interval, start.getMonth(), start.getDate());
-    while (guard++ < 5000 && y.getTime() <= horizon && (!count || produced < count)) {
-      out.push(new Date(y)); produced++;
-      y = new Date(y.getFullYear() + interval, y.getMonth(), y.getDate());
+    const H = start.getUTCHours(), MI = start.getUTCMinutes(), SE = start.getUTCSeconds(), MS = start.getUTCMilliseconds();
+    const mo = start.getUTCMonth(), day = start.getUTCDate();
+    let yy = start.getUTCFullYear();
+    while (guard++ < 5000) {
+      yy += interval;
+      const lastDay = new Date(Date.UTC(yy, mo + 1, 0)).getUTCDate();
+      const dd = Math.min(day, lastDay);
+      const cur = new Date(Date.UTC(yy, mo, dd, H, MI, SE, MS));
+      if (cur.getTime() > horizon) break;
+      if (count && produced >= count) break;
+      out.push(new Date(cur)); produced++;
     }
   }
   return out;
@@ -266,27 +282,55 @@ async function syncCalendarAccount(account, opts) {
         continue;
       }
       const calName = String(cal.displayName || '').replace(/^['"]|['"]$/g, '') || '日历';
+      const calEvents = [];
       for (const obj of objects) {
         if (!obj || obj.data == null) continue;
         for (const ev of parseICalendar(obj.data)) {
           if (!ev.at) continue;
-          const t = new Date(ev.at).getTime();
-          if (!isFinite(t) || t < minAt || t > maxAt) continue;   // 时间窗口过滤
-          const key = ev.uid || (ev.title + '|' + ev.at + '|' + calName);
-          if (seen.has(key)) continue;
-          seen.add(key);
+          calEvents.push(ev);
+        }
+      }
+      // 先收集被取消的实例 (uid|发生时刻)，用于跳过「单次取消」的重复实例
+      const canceled = new Set();
+      calEvents.forEach(function (ev) {
+        if (String(ev.status || '').toUpperCase() === 'CANCELLED') {
+          const rid = ev.recurrenceId ? parseCalDate(ev.recurrenceId) : ev.at;
+          canceled.add((ev.uid || '') + '|' + (rid || ev.at));
+        }
+      });
+      calEvents.forEach(function (ev) {
+        if (String(ev.status || '').toUpperCase() === 'CANCELLED') return;   // 整个系列已取消
+        const startMs = new Date(ev.at).getTime();
+        if (!isFinite(startMs)) return;
+        const dur = ev.end ? (new Date(ev.end).getTime() - startMs) : 0;
+        // 重复事件：母事件 + RRULE 展开的实例，逐个落进时间窗口（修复周会/月会同步后只剩一次）
+        const occTimes = [startMs];
+        if (ev.rrule) {
+          expandRrule(ev.at, ev.rrule, lookahead).forEach(function (d) {
+            const t = d.getTime();
+            if (occTimes.indexOf(t) < 0) occTimes.push(t);
+          });
+        }
+        const uidBase = ev.uid ? String(ev.uid).replace(/[^a-zA-Z0-9._-]/g, '_') : (ev.title + '|' + calName).replace(/[^a-zA-Z0-9._-]/g, '_');
+        occTimes.forEach(function (t) {
+          if (t < minAt || t > maxAt) return;                       // 时间窗口过滤
+          const atIso = new Date(t).toISOString();
+          if (canceled.has((ev.uid || '') + '|' + atIso)) return;  // 单次取消的实例跳过
+          const id = 'cal-' + uidBase + '-' + atIso.replace(/[^0-9]/g, '');
+          if (seen.has(id)) return;
+          seen.add(id);
           events.push({
-            id: 'cal-' + (ev.uid ? ev.uid : key).replace(/[^a-zA-Z0-9._-]/g, '_'),
+            id: id,
             title: ev.title,
-            at: ev.at,
-            end: ev.end,
+            at: atIso,
+            end: dur > 0 ? new Date(t + dur).toISOString() : '',
             location: ev.location,
             note: (ev.description || '').slice(0, 500),
             source: account.name + ' · ' + calName,
             allDay: !!ev.allDay,
           });
-        }
-      }
+        });
+      });
     }
 
     return { ok: true, events, calendars: calendarsInfo };
