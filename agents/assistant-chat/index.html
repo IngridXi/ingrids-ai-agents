@@ -24,8 +24,55 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
     background: var(--bg); color: var(--ink);
-    display: flex; flex-direction: column; overflow: hidden;
+    display: flex; flex-direction: row; overflow: hidden;
   }
+
+  /* 布局：左侧会话栏 + 右侧聊天区 */
+  .layout { display: flex; flex: 1; min-height: 0; width: 100%; }
+  .sidebar {
+    flex: none; width: 264px; background: #f1eff6; border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .sidebar .sb-head { padding: 12px 12px 8px; }
+  #newChatBtn {
+    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--accent-2); font-size: 13.5px; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  #newChatBtn:hover { background: var(--accent-soft); border-color: var(--accent); }
+  .sidebar .sb-search { padding: 0 12px 10px; display: flex; gap: 6px; align-items: center; }
+  .sidebar .sb-search input {
+    flex: 1; min-width: 0; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line);
+    font-size: 12.5px; background: var(--card); outline: none; color: var(--ink);
+  }
+  .sidebar .sb-search input:focus { border-color: var(--accent); }
+  #searchCount { font-size: 11px; color: var(--ink-faint); min-width: 36px; text-align: center; flex: none; }
+  .sidebar .sb-search button {
+    flex: none; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--card); color: var(--ink-soft); cursor: pointer; font-size: 12px; line-height: 1;
+  }
+  .sidebar .sb-search button:hover { border-color: var(--accent); color: var(--accent); }
+  #sessionList { flex: 1; overflow-y: auto; padding: 4px 8px 12px; }
+  .session {
+    display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 9px;
+    cursor: pointer; margin-bottom: 2px;
+  }
+  .session:hover { background: #e9e6f1; }
+  .session.active { background: var(--card); box-shadow: 0 1px 4px rgba(40,32,70,.10); }
+  .session .s-title { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session .s-time { font-size: 11px; color: var(--ink-faint); flex: none; }
+  .session .s-del {
+    flex: none; width: 20px; height: 20px; border: none; background: none; color: var(--ink-faint);
+    cursor: pointer; font-size: 13px; border-radius: 5px; display: none; line-height: 1; padding: 0;
+  }
+  .session:hover .s-del { display: block; }
+  .session .s-del:hover { color: var(--danger); background: #fbe7e7; }
+  .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  /* 会话内检索高亮 */
+  mark.search-hit { background: #ffe08a; color: #4a3200; border-radius: 2px; padding: 0 1px; }
+  .msg.search-active .bubble { box-shadow: 0 0 0 2px #f5b942; }
+
   header {
     flex: none; display: flex; align-items: center; gap: 10px;
     padding: 14px 20px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
@@ -179,6 +226,18 @@
 </style>
 </head>
 <body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sb-head"><button id="newChatBtn">＋ 新对话</button></div>
+    <div class="sb-search">
+      <input id="searchInput" type="text" placeholder="搜索本会话消息">
+      <span id="searchCount"></span>
+      <button id="searchPrev" title="上一条">↑</button>
+      <button id="searchNext" title="下一条">↓</button>
+    </div>
+    <div id="sessionList"></div>
+  </aside>
+  <div class="main-col">
 <header>
   <div class="logo" id="logo"></div>
   <div class="title">
@@ -190,7 +249,7 @@
   <button class="h-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息）"><span id="webIcon"></span>联网</button>
   <button class="h-btn" id="exportBtn" title="把最后一条回答导出为 Word 文档"><span id="exportIcon"></span>导出 Word</button>
   <button class="h-btn" id="batchAuthBtn" title="批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复">🔓 批量授权</button>
-  <button class="h-btn" id="clearBtn">清空</button>
+  <button class="h-btn" id="clearBtn" title="开启一个新对话">新对话</button>
 </header>
 
 <main id="messages"></main>
@@ -206,6 +265,8 @@
   <div class="context-tag" id="contextTag"></div>
   <div class="foot-note" id="footNote">本地 Ollama 免费 · 云端 API 需先在主界面「引擎设置」配 Key</div>
 </footer>
+  </div>
+</div>
 <input type="file" id="imgFile" accept="image/*" hidden>
 
 <script src="../../vendor/marked.min.js"></script>
@@ -315,22 +376,203 @@
       return { role: m.role, content: String(c == null ? '' : c) };
     });
   }
-  function persistHistory() {
-    if (!IS_DESKTOP) return;
-    try { window.ingrid.chatHistorySave(AGENT_NAME, serializeHistory(history)); } catch (e) {}
+  /* ---------- 多会话：聊天记录列表 + 新对话 + 会话内检索 ---------- */
+  var sessions = [];      // [{ id, title, createdAt, updatedAt, messages: [] }]
+  var activeId = null;
+  var searchMatches = []; // 命中消息的 DOM 节点
+  var searchIndex = -1;
+
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function currentSession() {
+    for (var i = 0; i < sessions.length; i++) if (sessions[i].id === activeId) return sessions[i];
+    return null;
   }
-  function loadHistory() {
+  function serializeSession(s) {
+    return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, messages: serializeHistory(s.messages) };
+  }
+  function persistSessions() {
     if (!IS_DESKTOP) return;
-    window.ingrid.chatHistoryLoad(AGENT_NAME).then(function (list) {
-      if (!Array.isArray(list) || !list.length) return;
-      history = list;
-      if (messages.querySelector('.welcome')) messages.innerHTML = '';
-      list.forEach(function (m) {
-        var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content));
-        if (m.role === 'assistant') renderMermaidIn(b);
+    try { window.ingrid.chatHistorySave(AGENT_NAME, { v: 2, sessions: sessions.map(serializeSession), activeId: activeId }); } catch (e) {}
+  }
+  function touchCurrentSession() {
+    var s = currentSession();
+    if (!s) return;
+    s.updatedAt = Date.now();
+    if (s.title === '新对话') {
+      for (var i = 0; i < s.messages.length; i++) {
+        var m = s.messages[i];
+        if (m.role === 'user' && m.content) {
+          var t = String(m.content).replace(/\s+/g, ' ').trim();
+          if (t) { s.title = t.slice(0, 24); break; }
+        }
+      }
+    }
+  }
+  function relTime(ts) {
+    var d = Date.now() - (ts || 0);
+    if (d < 60000) return '刚刚';
+    if (d < 3600000) return Math.floor(d / 60000) + ' 分钟前';
+    if (d < 86400000) return Math.floor(d / 3600000) + ' 小时前';
+    if (d < 7 * 86400000) return Math.floor(d / 86400000) + ' 天前';
+    return new Date(ts).toLocaleDateString('zh-CN');
+  }
+  function renderSessionList() {
+    var box = el('sessionList');
+    if (!box) return;
+    var sorted = sessions.slice().sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
+    box.innerHTML = '';
+    sorted.forEach(function (s) {
+      var row = document.createElement('div');
+      row.className = 'session' + (s.id === activeId ? ' active' : '');
+      row.innerHTML = '<div class="s-title"></div><div class="s-time"></div><button class="s-del" title="删除会话">✕</button>';
+      row.querySelector('.s-title').textContent = s.title || '新对话';
+      row.querySelector('.s-time').textContent = relTime(s.updatedAt || s.createdAt || Date.now());
+      row.addEventListener('click', function (e) {
+        if (e.target && e.target.classList && e.target.classList.contains('s-del')) return;
+        switchSession(s.id);
       });
-      messages.scrollTop = messages.scrollHeight;
-    }).catch(function () {});
+      row.querySelector('.s-del').addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (confirm('删除这个对话？')) deleteSession(s.id);
+      });
+      box.appendChild(row);
+    });
+  }
+  function renderActiveSession() {
+    messages.innerHTML = '';
+    var s = currentSession();
+    if (!s || !s.messages.length) { welcome(); return; }
+    s.messages.forEach(function (m) {
+      var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content));
+      if (m.role === 'assistant') renderMermaidIn(b);
+    });
+    messages.scrollTop = messages.scrollHeight;
+  }
+  function newChat() {
+    if (streaming) return;
+    var cur = currentSession();
+    if (cur && cur.messages.length === 0) { activeId = cur.id; }
+    else {
+      var s = { id: uid(), title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
+      sessions.push(s); activeId = s.id;
+    }
+    history = currentSession().messages;
+    setBatchAuth(false);
+    clearSearch();
+    renderSessionList();
+    welcome();
+    persistSessions();
+    input.focus();
+  }
+  function switchSession(id) {
+    if (streaming) return;
+    activeId = id;
+    var s = currentSession();
+    history = s ? s.messages : [];
+    clearSearch();
+    renderSessionList();
+    renderActiveSession();
+    persistSessions();
+    input.focus();
+  }
+  function deleteSession(id) {
+    if (streaming) return;
+    var idx = -1;
+    for (var i = 0; i < sessions.length; i++) if (sessions[i].id === id) { idx = i; break; }
+    if (idx < 0) return;
+    sessions.splice(idx, 1);
+    if (!sessions.length) { newChat(); return; }
+    if (activeId === id) activeId = sessions[Math.max(0, idx - 1)].id;
+    history = currentSession().messages;
+    clearSearch();
+    renderSessionList();
+    renderActiveSession();
+    persistSessions();
+  }
+  function loadSessions() {
+    if (!IS_DESKTOP) { newChat(); return; }
+    window.ingrid.chatHistoryLoad(AGENT_NAME).then(function (data) {
+      var list = null;
+      if (Array.isArray(data)) {
+        list = [{ id: uid(), title: '历史会话', createdAt: Date.now(), updatedAt: Date.now(), messages: data }];
+      } else if (data && Array.isArray(data.sessions)) {
+        list = data.sessions.map(function (s) {
+          return { id: s.id || uid(), title: s.title || '新对话', createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), messages: Array.isArray(s.messages) ? s.messages : [] };
+        });
+        activeId = data.activeId;
+      }
+      sessions = (list && list.length) ? list : [];
+      if (!sessions.length) { newChat(); return; }
+      if (!currentSession()) activeId = sessions[0].id;
+      history = currentSession().messages;
+      renderSessionList();
+      renderActiveSession();
+      input.focus();
+    }).catch(function () { newChat(); });
+  }
+
+  /* ---------- 会话内消息检索 ---------- */
+  function clearSearch() {
+    var marks = messages.querySelectorAll('mark.search-hit');
+    for (var i = marks.length - 1; i >= 0; i--) {
+      var m = marks[i], t = document.createTextNode(m.textContent);
+      m.parentNode.replaceChild(t, m);
+    }
+    Array.prototype.forEach.call(messages.querySelectorAll('.msg.search-active'), function (n) { n.classList.remove('search-active'); });
+    messages.normalize();
+    searchMatches = []; searchIndex = -1;
+    var c = el('searchCount'); if (c) c.textContent = '';
+  }
+  function updateSearchUi() {
+    var c = el('searchCount');
+    if (!c) return;
+    c.textContent = searchMatches.length ? (searchIndex + 1) + '/' + searchMatches.length : '';
+  }
+  function jumpSearch(i) {
+    if (!searchMatches.length) return;
+    searchIndex = ((i % searchMatches.length) + searchMatches.length) % searchMatches.length;
+    Array.prototype.forEach.call(messages.querySelectorAll('.msg.search-active'), function (n) { n.classList.remove('search-active'); });
+    var m = searchMatches[searchIndex];
+    m.classList.add('search-active');
+    m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    updateSearchUi();
+  }
+  function doSearch(q) {
+    clearSearch();
+    var query = String(q || '').trim();
+    if (!query) { updateSearchUi(); return; }
+    var lower = query.toLowerCase();
+    Array.prototype.forEach.call(messages.querySelectorAll('.msg'), function (msg) {
+      var bubble = msg.querySelector('.bubble');
+      if (!bubble || bubble.textContent.toLowerCase().indexOf(lower) < 0) return;
+      searchMatches.push(msg);
+      highlightText(bubble, lower);
+    });
+    if (searchMatches.length) { searchIndex = 0; jumpSearch(0); }
+    updateSearchUi();
+  }
+  function highlightText(root, lowerQ) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), tn, nodes = [];
+    while ((tn = walker.nextNode())) {
+      var p = tn.parentNode;
+      if (!p || p.nodeType !== 1) continue;
+      if (p.closest && p.closest('.mermaid, .think, mark, .approval-card, .auto-exec')) continue;
+      if (tn.nodeValue.toLowerCase().indexOf(lowerQ) >= 0) nodes.push(tn);
+    }
+    nodes.forEach(function (tn) {
+      var text = tn.nodeValue, lower = text.toLowerCase(), frag = document.createDocumentFragment(), last = 0, pos = lower.indexOf(lowerQ);
+      while (pos >= 0) {
+        if (pos > last) frag.appendChild(document.createTextNode(text.slice(last, pos)));
+        var mk = document.createElement('mark');
+        mk.className = 'search-hit';
+        mk.textContent = text.slice(pos, pos + lowerQ.length);
+        frag.appendChild(mk);
+        last = pos + lowerQ.length;
+        pos = lower.indexOf(lowerQ, last);
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      tn.parentNode.replaceChild(frag, tn);
+    });
   }
 
   function stripToolMarkers(t) {
@@ -685,6 +927,9 @@
     if (urlMatch && !img && IS_DESKTOP) {
       var url = urlMatch[0];
       var instruction = text.replace(urlMatch[0], '').trim() || '请总结这个网页的主要内容';
+      history.push({ role: 'user', content: text });
+      while (history.length > 24) history.shift();
+      touchCurrentSession(); persistSessions(); renderSessionList();
       withWebFetch(url, instruction);
       return;
     }
@@ -705,8 +950,10 @@
     function finish(finalText, err) {
       history.push({ role: 'user', content: text || (img ? '（图片）' : '') });
       if (finalText) history.push({ role: 'assistant', content: finalText });
-      if (history.length > 24) history = history.slice(-24);
-      persistHistory();
+      while (history.length > 24) history.shift();
+      touchCurrentSession();
+      persistSessions();
+      renderSessionList();
       var thinkHtml = thinking ? '<details class="think"' + (finalText && !err ? '' : ' open') + '><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
       bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
@@ -812,6 +1059,7 @@
       bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc('⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
       else renderMermaidIn(bubble);
+      if (finalText) { history.push({ role: 'assistant', content: finalText }); touchCurrentSession(); persistSessions(); renderSessionList(); }
       streaming = false; sendBtn.disabled = false;
       setContextTag('');
       input.focus();
@@ -847,7 +1095,17 @@
   el('micBtn').addEventListener('click', toggleVoice);
   input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   input.addEventListener('input', autoGrow);
-  el('clearBtn').addEventListener('click', function () { history = []; if (IS_DESKTOP) { try { window.ingrid.chatHistoryClear(AGENT_NAME); } catch (e) {} } setBatchAuth(false); welcome(); setContextTag(''); });
+  el('clearBtn').addEventListener('click', function () { newChat(); setContextTag(''); });
+
+  // 新对话 + 会话内检索
+  el('newChatBtn').addEventListener('click', newChat);
+  var searchInput = el('searchInput');
+  searchInput.addEventListener('input', function () { doSearch(searchInput.value); });
+  searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); jumpSearch(e.shiftKey ? searchIndex - 1 : searchIndex + 1); }
+  });
+  el('searchPrev').addEventListener('click', function () { jumpSearch(searchIndex - 1); });
+  el('searchNext').addEventListener('click', function () { jumpSearch(searchIndex + 1); });
 
   // 批量授权开关
   el('batchAuthBtn').addEventListener('click', function () {
@@ -866,8 +1124,7 @@
   setLogo();
   loadSoul();
   loadEngines();
-  welcome();
-  loadHistory();
+  loadSessions();
   el('webBtn').classList.add('active');
   input.focus();
 })();

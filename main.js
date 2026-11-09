@@ -628,10 +628,10 @@ ipcMain.handle('chat:history:load', (_e, name) => {
   try { return JSON.parse(fs.readFileSync(chatHistoryFile(name), 'utf8')); }
   catch { return []; }
 });
-ipcMain.handle('chat:history:save', (_e, name, list) => {
+ipcMain.handle('chat:history:save', (_e, name, data) => {
   try {
-    const arr = Array.isArray(list) ? list : [];
-    fs.writeFileSync(chatHistoryFile(name), JSON.stringify(arr, null, 2), 'utf8');
+    // 支持多会话结构 { v, sessions, activeId }，也兼容旧的扁平数组
+    fs.writeFileSync(chatHistoryFile(name), JSON.stringify(data == null ? [] : data, null, 2), 'utf8');
     return true;
   } catch { return false; }
 });
