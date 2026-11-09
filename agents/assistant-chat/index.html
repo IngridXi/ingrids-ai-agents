@@ -94,6 +94,15 @@
   .approval-card .ap-no:hover { background: #fdf2f2; }
   .approval-card.decided { opacity: 0.6; }
   .approval-card.decided button { cursor: default; pointer-events: none; }
+  .approval-card .ap-all { border-color: #4a7dd6 !important; color: #2b5fa8; }
+  .approval-card .ap-all:hover { background: #eaf1fb; }
+
+  /* 批量授权：已自动执行标记 */
+  .auto-exec {
+    max-width: 640px; margin: 4px 0 4px 48px; padding: 6px 12px;
+    font-size: 12px; color: #2c7a41; background: #eaf7ee;
+    border: 1px solid #bfe3ca; border-radius: 8px; line-height: 1.5; word-break: break-all;
+  }
 
   .welcome { text-align: center; color: var(--ink-soft); padding: 40px 16px 20px; }
   .welcome .big { width: 60px; height: 60px; border-radius: 18px; background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; display: grid; place-items: center; margin: 0 auto 14px; }
@@ -146,6 +155,7 @@
   <select id="engineSelect" title="选择聊天引擎"></select>
   <button class="h-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息）"><span id="webIcon"></span>联网</button>
   <button class="h-btn" id="exportBtn" title="把最后一条回答导出为 Word 文档"><span id="exportIcon"></span>导出 Word</button>
+  <button class="h-btn" id="batchAuthBtn" title="批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复">🔓 批量授权</button>
   <button class="h-btn" id="clearBtn">清空</button>
 </header>
 
@@ -184,6 +194,7 @@
 
   var history = [];
   var streaming = false;
+  var writeAuthMode = 'per-item';  // 'per-item' 逐个审批 | 'session' 会话级批量授权
   var webEnabled = true;
   var pendingImage = null;   // { dataUrl, name }
   var recognition = null;
@@ -329,8 +340,28 @@
     if (kind === 'db_zotero_collection') return { icon: '📁', title: '归档到 Zotero 集合', body: ((args && args.itemKeys) || []).length + ' 篇 → 「' + String((args && args.collectionName) || (args && args.collectionKey) || '') + '」', extra: '首次执行会弹 Zotero 授权框，请点「始终允许」' };
     return { icon: '❓', title: kind, body: '', extra: '' };
   }
+  function autoLog(kind, args) {
+    var d = describeWrite(kind, args);
+    var row = document.createElement('div');
+    row.className = 'auto-exec';
+    row.innerHTML = '🔓 已自动执行 · ' + esc(d.title) + '：' + esc(d.body);
+    messages.appendChild(row);
+    messages.scrollTop = messages.scrollHeight;
+  }
+  function setBatchAuth(on) {
+    writeAuthMode = on ? 'session' : 'per-item';
+    var btn = el('batchAuthBtn');
+    if (btn) {
+      btn.classList.toggle('active', on);
+      btn.textContent = on ? '🔓 批量授权中' : '🔓 批量授权';
+      btn.title = on
+        ? '已开启：本会话所有写操作直接执行、不再逐个弹窗。点击关闭。'
+        : '批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复';
+    }
+  }
   function requestWriteApproval(kind, args) {
     return new Promise(function (resolve) {
+      if (writeAuthMode === 'session') { autoLog(kind, args); resolve(true); return; }
       var d = describeWrite(kind, args);
       var card = document.createElement('div');
       card.className = 'approval-card';
@@ -338,7 +369,7 @@
         '<div class="ap-head"><span class="ap-icon">' + d.icon + '</span><span class="ap-title">' + esc(d.title) + '（待你确认）</span></div>' +
         '<div class="ap-body">' + esc(d.body) + '</div>' +
         (d.extra ? '<div class="ap-extra">' + esc(d.extra) + '</div>' : '') +
-        '<div class="ap-actions"><button class="ap-yes">✅ 批准执行</button><button class="ap-no">✖ 拒绝</button></div>';
+        '<div class="ap-actions"><button class="ap-yes">✅ 批准执行</button><button class="ap-all">⏩ 全部允许</button><button class="ap-no">✖ 拒绝</button></div>';
       messages.appendChild(card);
       messages.scrollTop = messages.scrollHeight;
       function decide(ok) {
@@ -349,6 +380,7 @@
       }
       card.querySelector('.ap-yes').addEventListener('click', function () { decide(true); });
       card.querySelector('.ap-no').addEventListener('click', function () { decide(false); });
+      card.querySelector('.ap-all').addEventListener('click', function () { setBatchAuth(true); decide(true); });
     });
   }
   function formatToolResult(call, res) {
@@ -402,7 +434,12 @@
   }
 
   function buildSystemPrompt() {
-    return systemPrompt + toolSpecText(agentCapabilities());
+    var caps = agentCapabilities();
+    var s = systemPrompt + toolSpecText(caps);
+    if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
+      s += '\n\n【批量授权模式】用户已开启批量授权：你可以在一次回复里连续输出多个写操作工具（一次多个 <tool>），系统会全部自动执行，无需等待逐个确认。';
+    }
+    return s;
   }
 
   var el = function (id) { return document.getElementById(id); };
@@ -722,7 +759,12 @@
   el('micBtn').addEventListener('click', toggleVoice);
   input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   input.addEventListener('input', autoGrow);
-  el('clearBtn').addEventListener('click', function () { history = []; if (IS_DESKTOP) { try { window.ingrid.chatHistoryClear(AGENT_NAME); } catch (e) {} } welcome(); setContextTag(''); });
+  el('clearBtn').addEventListener('click', function () { history = []; if (IS_DESKTOP) { try { window.ingrid.chatHistoryClear(AGENT_NAME); } catch (e) {} } setBatchAuth(false); welcome(); setContextTag(''); });
+
+  // 批量授权开关
+  el('batchAuthBtn').addEventListener('click', function () {
+    setBatchAuth(writeAuthMode !== 'session');
+  });
   el('exportBtn').addEventListener('click', exportWord);
   el('webBtn').addEventListener('click', function () {
     webEnabled = !webEnabled;
