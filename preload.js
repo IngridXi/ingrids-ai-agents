@@ -127,6 +127,11 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolFsMove: (payload) => ipcRenderer.invoke('tool:fs:move', payload),
   toolFsDelete: (payload) => ipcRenderer.invoke('tool:fs:delete', payload),
   toolDbQuery: (payload) => ipcRenderer.invoke('tool:db:query', payload),
+  toolDbObsidianWrite: (payload) => ipcRenderer.invoke('tool:db:obsidian:write', payload),
+  toolDbObsidianTag: (payload) => ipcRenderer.invoke('tool:db:obsidian:tag', payload),
+  toolDbObsidianMove: (payload) => ipcRenderer.invoke('tool:db:obsidian:move', payload),
+  toolDbObsidianReport: () => ipcRenderer.invoke('tool:db:obsidian:report'),
+  toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
 
   // 聊天记忆持久化（按 Agent 名隔离）
   chatHistoryLoad: (name) => ipcRenderer.invoke('chat:history:load', name),

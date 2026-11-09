@@ -584,6 +584,17 @@ SEED_AGENTS.forEach(function (seed) {
   var a = registry.list().find(function (x) { return x.name === nm; });
   if (a) registry.remove(a.id);
 });
+// v8 迁移：给核心聊天 Agent 默认开启 fs + db 工具（能力化，不用手动逐卡勾选）
+// computer 保持默认关（涉及系统「屏幕录制 + 辅助功能」授权与真实鼠标键盘，需用户主动开启）
+['研究助手', '通用助手'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (!a || !a.href) return;
+  var tools = Array.isArray(a.tools) ? a.tools.slice() : [];
+  var changed = false;
+  if (tools.indexOf('fs') < 0) { tools.push('fs'); changed = true; }
+  if (tools.indexOf('db') < 0) { tools.push('db'); changed = true; }
+  if (changed) registry.update(a.id, { tools: tools });
+});
 window.__reg = registry;
 
 /* ---------- 渲染 ---------- */

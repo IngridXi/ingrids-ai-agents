@@ -132,6 +132,19 @@ def main():
             except Exception:
                 pass
 
+            # 标签（排除自动标签 type=1）
+            tags = []
+            try:
+                for r in conn.execute(
+                    "SELECT t.name FROM tags t "
+                    "JOIN itemTags it ON t.tagID = it.tagID "
+                    "WHERE it.itemID = ? AND it.type = 0 ORDER BY t.name",
+                    (item['itemID'],),
+                ):
+                    tags.append(r['name'])
+            except Exception:
+                pass
+
             # PDF 全文（--meta-only 时跳过，加快 kb-digest 取元数据）
             fulltext = ''
             if not meta_only:
@@ -156,6 +169,7 @@ def main():
                 'volume': meta.get('volume', ''),
                 'issue': meta.get('issue', ''),
                 'pages': meta.get('pages', ''),
+                'tags': tags,
                 'fulltext': fulltext,
             })
         json.dump(result, sys.stdout, ensure_ascii=False)

@@ -22,7 +22,7 @@ const net = require('net');
 const http = require('http');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
-const { KbEngine } = require('./kb-engine.js');
+const { KbEngine, detectObsidianVaults, detectZoteroDir } = require('./kb-engine.js');
 const syncEngine = require('./sync-engine.js');
 
 /* ---------------- 数据目录（local-first） ---------------- */
@@ -1484,6 +1484,161 @@ ipcMain.handle('tool:db:query', (_e, p) => {
   const hits = kbEngine.search(q, k);
   return { ok: true, query: q, hits: hits };
 });
+
+/* ---------------- 整理数据库工具（Obsidian 写 / Zotero 只读报告） ---------------- */
+function vaultPath() {
+  const vaults = detectObsidianVaults();
+  return (vaults && vaults.length) ? vaults[0] : null;
+}
+function parseFrontmatter(content) {
+  const m = String(content || '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!m) return { has: false, header: '', body: String(content || ''), tags: [] };
+  const fm = m[1];
+  const tags = [];
+  const inline = fm.match(/^tags\s*:\s*\[(.*?)\]\s*$/m);
+  if (inline) {
+    inline[1].split(',').forEach((t) => { const x = t.trim().replace(/^['"]|['"]$/g, ''); if (x) tags.push(x); });
+  } else {
+    const list = fm.match(/^tags\s*:\s*\r?\n((?:\s*-\s*.*\r?\n?)+)/m);
+    if (list) {
+      list[1].split(/\r?\n/).forEach((line) => {
+        const x = line.trim().replace(/^-\s*/, '').replace(/^['"]|['"]$/g, '');
+        if (x) tags.push(x);
+      });
+    }
+  }
+  return { has: true, header: m[0], body: String(content || '').slice(m[0].length), tags: tags };
+}
+function buildFrontmatter(title, tags, content) {
+  const t = Array.isArray(tags) ? tags.map((x) => String(x).trim()).filter(Boolean) : [];
+  const lines = ['---'];
+  if (title) lines.push('title: ' + JSON.stringify(String(title)));
+  lines.push('tags:');
+  if (t.length) t.forEach((x) => lines.push('  - ' + JSON.stringify(x)));
+  else lines.push('  - 未分类');
+  lines.push('---');
+  return lines.join('\n') + '\n\n' + String(content || '').trim() + '\n';
+}
+function resolveInVault(relPath) {
+  const vp = vaultPath();
+  if (!vp) return null;
+  const p = String(relPath || '').trim();
+  if (!p) return vp;
+  const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(vp, p);
+  return abs.startsWith(vp + path.sep) ? abs : null;
+}
+function safeFileName(name) {
+  return String(name || '未命名').replace(/[\\/:*?"<>|]/g, '-').replace(/^\.+/, '').trim() || '未命名';
+}
+
+function toolDbObsidianWrite(payload) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 库（请先安装 Obsidian 并创建 vault）' };
+  const title = String((payload && payload.title) || '').trim();
+  const content = String((payload && payload.content) || '');
+  const tags = Array.isArray(payload && payload.tags) ? payload.tags : [];
+  const folder = String((payload && payload.folder) || '_AI整理').trim();
+  if (!title) return { ok: false, error: '缺少标题' };
+  const dir = resolveInVault(folder);
+  if (!dir) return { ok: false, error: '目录超出 Obsidian 库范围：' + folder };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const base = safeFileName(title);
+    let full = path.join(dir, base + '.md');
+    if (fs.existsSync(full)) full = path.join(dir, base + '-' + Date.now().toString(36).slice(-4) + '.md');
+    const body = buildFrontmatter(title, tags, content);
+    fs.writeFileSync(full, body, 'utf8');
+    return { ok: true, path: full, title: title, tags: tags, chars: body.length };
+  } catch (e) { return { ok: false, error: '写入失败：' + String(e && e.message || e) }; }
+}
+function toolDbObsidianTag(payload) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
+  const target = resolveInVault((payload && payload.path) || '');
+  if (!target) return { ok: false, error: '路径超出 Obsidian 库范围' };
+  if (!fs.existsSync(target)) return { ok: false, error: '笔记不存在：' + String((payload && payload.path) || '') };
+  const tags = Array.isArray(payload && payload.tags) ? payload.tags.map((x) => String(x).trim()).filter(Boolean) : [];
+  const tagBlock = 'tags:\n' + (tags.length ? tags.map((t) => '  - ' + JSON.stringify(t)).join('\n') : '  - 未分类');
+  try {
+    const orig = fs.readFileSync(target, 'utf8');
+    const fm = parseFrontmatter(orig);
+    const bak = backupFile(target);
+    let body;
+    if (fm.has) {
+      const inner = fm.header.replace(/^---\r?\n/, '').replace(/\r?\n---\r?\n?$/, '');
+      let cleaned = inner
+        .replace(/^tags\s*:\s*\r?\n(?:\s+-\s+.*\r?\n?)+/m, '')
+        .replace(/^tags\s*:.*$/m, '')
+        .replace(/\n{2,}/g, '\n').trim();
+      const newInner = cleaned ? cleaned + '\n' + tagBlock : tagBlock;
+      body = '---\n' + newInner + '\n---\n' + fm.body;
+    } else {
+      body = '---\n' + tagBlock + '\n---\n\n' + orig;
+    }
+    fs.writeFileSync(target, body, 'utf8');
+    return { ok: true, path: target, tags: tags, backup: bak };
+  } catch (e) { return { ok: false, error: '打标签失败：' + String(e && e.message || e) }; }
+}
+function toolDbObsidianMove(payload) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
+  const from = resolveInVault((payload && payload.from) || '');
+  const to = resolveInVault((payload && payload.to) || '');
+  if (!from || !to) return { ok: false, error: '来源或目标超出 Obsidian 库范围' };
+  try {
+    if (!fs.existsSync(from)) return { ok: false, error: '来源不存在：' + String((payload && payload.from) || '') };
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    return { ok: true, from: from, to: to };
+  } catch (e) { return { ok: false, error: '移动失败：' + String(e && e.message || e) }; }
+}
+function toolDbObsidianReport() {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
+  const skip = new Set(['.obsidian', '.trash', '.git', 'node_modules']);
+  const st = { total: 0, withFm: 0, withoutFm: 0, withTags: 0, withoutTags: [], dirs: {} };
+  function walk(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      if (ent.isDirectory()) { if (!skip.has(ent.name)) walk(path.join(dir, ent.name)); continue; }
+      if (!/\.md$/i.test(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      let content; try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      st.total++;
+      const fm = parseFrontmatter(content);
+      const rel = path.relative(vp, full).split(path.sep).join('/');
+      if (fm.has) st.withFm++; else st.withoutFm++;
+      if (fm.tags.length) st.withTags++;
+      else if (st.withoutTags.length < 50) st.withoutTags.push(rel);
+      const d = path.dirname(rel) || '(根目录)';
+      st.dirs[d] = (st.dirs[d] || 0) + 1;
+    }
+  }
+  walk(vp);
+  return { ok: true, vault: vp, total: st.total, withFm: st.withFm, withoutFm: st.withoutFm, withTags: st.withTags, withoutTags: st.withoutTags, dirs: st.dirs };
+}
+async function toolDbZoteroReport() {
+  const zdir = detectZoteroDir();
+  if (!zdir) return { ok: false, error: '未检测到 Zotero 数据目录（~/Zotero 不存在）' };
+  const stdout = await execFileP('python3', [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
+  if (!stdout) return { ok: false, error: '读取 Zotero 数据失败（请确认 ~/Zotero/zotero.sqlite 可访问）' };
+  let items; try { items = JSON.parse(stdout); } catch { return { ok: false, error: '解析 Zotero 数据失败' }; }
+  const noTags = items.filter((i) => !(i.tags && i.tags.length));
+  const recent = items.slice().sort((a, b) => String(b.dateAdded || '').localeCompare(String(a.dateAdded || ''))).slice(0, 10)
+    .map((i) => ({ title: i.title, year: i.year, type: i.type, tags: i.tags || [] }));
+  return {
+    ok: true, total: items.length, withTags: items.length - noTags.length, withoutTags: noTags.length,
+    noTagsSample: noTags.slice(0, 20).map((i) => ({ title: i.title, year: i.year })),
+    recent: recent,
+  };
+}
+
+ipcMain.handle('tool:db:obsidian:write', (_e, p) => toolDbObsidianWrite(p));
+ipcMain.handle('tool:db:obsidian:tag', (_e, p) => toolDbObsidianTag(p));
+ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
+ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
+ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 
 /* ---------------- 生命周期 ---------------- */
 app.whenReady().then(() => {
