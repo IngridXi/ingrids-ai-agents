@@ -473,6 +473,8 @@
   var history = [];      // [{role:'user'|'assistant', content}]
   var streaming = false;
   var stopRequested = false;   // 用户点了「停止生成」
+  var pendingNotes = [];       // 生成中排队待发的「补充说明」（无需 /note 前缀）
+  var suppressUserBubble = false;  // 自动续发补充说明时，用户气泡已提前显示，跳过重复添加
   var writeAuthMode = 'per-item';  // 'per-item' 逐个审批 | 'session' 会话级批量授权
 
   /* ---------- 记忆持久化 + 工具能力（能力化：每个 Agent 都能挂文件/数据库/电脑操作） ---------- */
@@ -1435,10 +1437,24 @@
     return '【补充说明 · 仅作为附加约束/偏好，不是新任务，请纳入后续工作方式但不要复述它】\n' + s;
   }
 
+  // 生成中发送文字：自动当作「补充说明」，排队等当前回复结束后自动续发（无需 /note 前缀）
+  function queueNote(text) {
+    input.value = ''; autoGrow();
+    var html = '<span class="note-tag">补充说明</span>' + esc(text);
+    addBubble('user', html);
+    pendingNotes.push(text);
+  }
+
   function send() {
     var text = input.value.trim();
     var img = pendingImage;
-    if ((!text && !img) || streaming) return;
+    if (!text && !img) return;
+    // 生成中发送：文字自动当作「补充说明」排队，当前回复结束后自动续发（像 Claude 一样无需 /note 前缀）。
+    // 审稿闭环模式下暂保持忽略（其多阶段流程不适用即时补充）。
+    if (streaming) {
+      if (text && !reviewMode) queueNote(text);
+      return;
+    }
     stopRequested = false;   // 新一轮，重置停止标志
     input.value = ''; autoGrow();
     pendingImage = null; renderImgPreview();
@@ -1464,12 +1480,16 @@
     if (messages.querySelector('.welcome')) messages.innerHTML = '';
 
     // 用户气泡（含图片缩略 + 引擎切换提示 + 补充说明标签）
-    var userHtml = '';
-    if (img) userHtml += '<div class="user-img"><img src="' + img.dataUrl + '"></div>';
-    if (isNote) userHtml += '<span class="note-tag">补充说明</span>';
-    userHtml += esc(body || (img ? '（发送了一张图片）' : ''));
-    userHtml += imgEngineNote;
-    addBubble('user', userHtml);
+    // 自动续发补充说明时，用户气泡已在排队时提前显示，这里跳过以免重复
+    if (!suppressUserBubble) {
+      var userHtml = '';
+      if (img) userHtml += '<div class="user-img"><img src="' + img.dataUrl + '"></div>';
+      if (isNote) userHtml += '<span class="note-tag">补充说明</span>';
+      userHtml += esc(body || (img ? '（发送了一张图片）' : ''));
+      userHtml += imgEngineNote;
+      addBubble('user', userHtml);
+    }
+    suppressUserBubble = false;
 
     // 审稿闭环模式：产出 → 审稿 → 返修（独立多气泡渲染）
     if (reviewMode && IS_DESKTOP) {
@@ -1529,6 +1549,12 @@
       if (!err) renderMermaidIn(bubble);
       streaming = false; setSendBtnState(false);
       input.focus();
+      // 正常结束后若有排队的补充说明，自动当作 /note 续发，让约束立即生效
+      if (!err && pendingNotes.length) {
+        suppressUserBubble = true;
+        input.value = '/note ' + pendingNotes.shift();
+        setTimeout(send, 0);
+      }
     }
 
     function run(content) {
