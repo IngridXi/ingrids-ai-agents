@@ -499,7 +499,7 @@
 
   /* ---------- 记忆持久化 + 工具能力（能力化：每个 Agent 都能挂文件/数据库/电脑操作） ---------- */
   var AGENT_NAME = '研究助手';
-  var MAX_TOOL_ROUNDS = 3;
+  var MAX_TOOL_ROUNDS = 10;
 
   function agentCapabilities() {
     var caps = { fs: false, db: false, computer: false };
@@ -1097,6 +1097,7 @@
   }
   function formatToolResult(call, res) {
     var body;
+    try {
     if (res && res.ok) {
       if (call.name === 'fs_list') body = '目录 ' + res.dir + ' 共 ' + res.count + ' 项：\n' +
         res.entries.map(function (e) { return (e.dir ? '[目录] ' : '       ') + e.name + (e.size ? '  (' + e.size + ' B)' : ''); }).join('\n');
@@ -1125,6 +1126,7 @@
     } else {
       body = '工具执行失败：' + ((res && res.error) ? res.error : '未知错误');
     }
+    } catch (e) { body = '工具结果解析异常：' + String((e && e.message) || e); }
     return '【工具 ' + call.name + ' 结果】\n' + (body || '（无内容）');
   }
   function runComputerTask(task) {
@@ -1265,6 +1267,9 @@
     }
     var caps = agentCapabilities();
     var s = systemPrompt + extra + toolSpecText(caps);
+    if (caps.fs || caps.db || caps.computer) {
+      s += '\n\n【自主工作准则 · 必须遵守】你是能长时间自主完成复杂任务的智能体，不是一问一答的聊天机器人：① 工具失败 / 报错 / 路径不存在时，先读错误信息、找原因，再换一种办法重试（先 fs_list 列目录看真实名称、用 fs_search 搜索、检查路径里的空格与全角字符、确认 iCloud 文件是否已下载），绝不要停在「我失败了」或直接放弃；② 复杂任务自己拆成多步、一步步推进，一步没成不要就停下；③ 完成前先核对结果是否真的满足用户要求（文件是否找到、内容是否对得上、任务是否做完），没做完就继续，不草率宣称「已完成」；④ 同一招失败两次就换思路；实在卡住才明确告诉用户卡在哪、需要什么信息，而不是无脑反复试同一招。';
+    }
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
       s += '\n\n【批量授权模式】用户已开启批量授权：你可以在一次回复里连续输出多个写操作工具（一次多个 <tool>），系统会全部自动执行，无需等待逐个确认。';
     }
@@ -1649,6 +1654,8 @@
         return;
       }
 
+      var failStreak = 0;   // 连续工具失败轮数（有一项成功即清零），用于触发纠正提示、避免死循环
+
       function runToolTurn(msgs, round, contN) {
         live = '';
         window.ingrid.chatStream({ engine: engine, model: model, messages: msgs }, {
@@ -1673,14 +1680,23 @@
               renderStream();
               var caps = agentCapabilities();
               Promise.all(calls.map(function (c) {
-                return executeTool(c, caps).then(function (r) { return formatToolResult(c, r); });
+                return executeTool(c, caps)
+                  .then(function (r) { return formatToolResult(c, r); })
+                  .catch(function (e) { return '【工具 ' + c.name + ' 结果】\n工具执行失败：' + String((e && e.message) || e); });
               })).then(function (results) {
                 statusText = '正在思考…';
                 renderStream();
+                // 连续失败计数：只要有一项成功就清零，全失败则累加；用于触发纠正提示、避免死循环
+                var allFailed = results.length > 0 && results.every(function (r) { return r.indexOf('工具执行失败') >= 0; });
+                failStreak = allFailed ? (failStreak + 1) : 0;
+                var feed = results.join('\n\n');
+                if (failStreak >= 2) {
+                  feed += '\n\n【系统提示 · 重要】连续多次工具调用失败，不要再重复完全相同的尝试。先读上面的错误信息找出原因（路径不对、名称含空格或全角字符、iCloud 文件未下载到位等），换一种办法（先用 fs_list 列目录看真实名称、用 fs_search 搜索、修正路径大小写与空格），或者明确告诉用户你卡在哪、需要什么信息。';
+                }
                 var next = msgs.concat([{ role: 'assistant', content: rawRound }])
-                  .concat([{ role: 'user', content: results.join('\n\n') }]);
+                  .concat([{ role: 'user', content: feed }]);
                 runToolTurn(next, round + 1, 0);
-              }).catch(function () { finish(acc + stripToolMarkers(rawRound), '工具执行失败，已停止'); });
+              }).catch(function (e) { finish(acc + stripToolMarkers(rawRound), '工具执行异常：' + String((e && e.message) || e)); });
             } else {
               acc += stripToolMarkers(rawRound);
               var c = contN || 0;
