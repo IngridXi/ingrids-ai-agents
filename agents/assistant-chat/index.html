@@ -175,9 +175,39 @@
   @keyframes blink { 50% { opacity: 0; } }
   .msg .bubble .think {
     font-size: 12.5px; color: var(--ink-soft); background: var(--accent-soft);
-    border-radius: 8px; padding: 8px 11px; margin-bottom: 9px; line-height: 1.55;
+    border-radius: 8px; padding: 9px 11px; margin-bottom: 9px; line-height: 1.55;
   }
-  .msg .bubble .think summary { cursor: pointer; font-weight: 600; color: var(--accent-2); user-select: none; margin-bottom: 4px; }
+  .msg .bubble .think .think-head {
+    display: flex; align-items: center; gap: 6px;
+    font-weight: 600; color: var(--accent-2); font-size: 12.5px; margin-bottom: 4px;
+  }
+  .msg .bubble .think .think-count {
+    font-size: 10.5px; font-weight: 600; color: var(--accent-2); background: #fff;
+    border-radius: 9px; padding: 1px 7px; border: 1px solid rgba(99,85,196,.35);
+  }
+  .msg .bubble .think-step { border-top: 1px dashed rgba(99,85,196,.18); }
+  .msg .bubble .think-step:first-of-type { border-top: none; }
+  .msg .bubble .think-step summary {
+    cursor: pointer; list-style: none; user-select: none;
+    display: flex; align-items: flex-start; gap: 7px; padding: 5px 0;
+    font-size: 12.5px; color: var(--ink); font-weight: 500;
+  }
+  .msg .bubble .think-step summary::-webkit-details-marker { display: none; }
+  .msg .bubble .think-step summary .think-arrow { flex: 0 0 auto; color: var(--accent); font-size: 11px; line-height: 1.6; transition: transform .12s; }
+  .msg .bubble .think-step[open] summary .think-arrow { transform: rotate(90deg); }
+  .msg .bubble .think-step summary .think-title { flex: 1; min-width: 0; }
+  .msg .bubble .think-step .think-body {
+    margin: 2px 0 5px 16px; padding: 6px 9px;
+    background: rgba(255,255,255,.62); border-radius: 6px;
+    font-size: 12px; color: var(--ink-soft); white-space: pre-wrap; word-break: break-word;
+  }
+  .msg .bubble .think .think-tag { flex: 0 0 auto; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; line-height: 1.5; }
+  .msg .bubble .think .think-tag.goal   { background: #e3edfd; color: #1d4ed8; }
+  .msg .bubble .think .think-tag.step   { background: #e7e3f8; color: #5b4bc4; }
+  .msg .bubble .think .think-tag.tool   { background: #def4ec; color: #0f766e; }
+  .msg .bubble .think .think-tag.warn   { background: #fdf0dc; color: #b45309; }
+  .msg .bubble .think .think-tag.done   { background: #e4f4e6; color: #15803d; }
+  .msg .bubble .think .think-tag.think  { background: #efedf4; color: #6b6575; }
 
   /* 写操作审批卡片 */
   .approval-card {
@@ -1178,6 +1208,61 @@
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  /* ---------- 思考过程结构化展示：分段 + 标签 + 可折叠（像 WorkBuddy 的思考卡片） ---------- */
+  function classifyThinking(seg) {
+    if (/失败|错误|不存在|error|异常|无法|拒绝|没找到|没有找到|打不开/.test(seg)) return { tag: '遇到问题', cls: 'warn' };
+    if (/结论|最终|总结|因此|所以|答案|完成|搞定|结果|综上/.test(seg)) return { tag: '结论', cls: 'done' };
+    if (/工具|fs_|db_|computer|执行|调用|检索|搜索|读取|写入|列出/.test(seg)) return { tag: '调用工具', cls: 'tool' };
+    if (/用户|需求|想要|希望|问题|任务|目标|要求|先理解|先确认/.test(seg)) return { tag: '理解需求', cls: 'goal' };
+    if (/首先|第一步|接着|然后|接下来|开始|先|再|之后|继续|下一步/.test(seg)) return { tag: '推进', cls: 'step' };
+    return { tag: '思考', cls: 'think' };
+  }
+  function thinkingTitle(seg) {
+    var first = seg.split('\n')[0].trim();
+    first = first.replace(/^(好的|好|嗯|首先|那么|所以|然后|接下来|另外|注意|其实|让我想想|让我先|我先|总之|因此|其次|再次|综上)[，,：:]?/, '');
+    first = first.replace(/[，。：；！？,.:;!?、]+$/, '').trim();
+    if (!first) first = seg.replace(/\s+/g, ' ').trim();
+    if (first.length > 34) first = first.slice(0, 34) + '…';
+    return first;
+  }
+  function splitThinking(text) {
+    var t = String(text || '').trim();
+    if (!t) return [];
+    var raw = t.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!raw.length) raw = [t];
+    var blocks = [];
+    raw.forEach(function (line) {
+      var strong = /失败|错误|不存在|error|异常|无法|拒绝|没找到/.test(line);
+      if (blocks.length && !strong && line.length < 18 && blocks[blocks.length - 1].length < 200) {
+        blocks[blocks.length - 1] += '\n' + line;
+      } else blocks.push(line);
+    });
+    var out = [];
+    blocks.forEach(function (b) {
+      if (b.length <= 240) { out.push(b); return; }
+      var parts = b.match(/[^。；！？.!?;]+[。；！？.!?;]?/g) || [b];
+      var cur = '';
+      parts.forEach(function (p) {
+        if ((cur + p).length > 230 && cur) { out.push(cur); cur = p; }
+        else cur += p;
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  function renderThinking(text, openLast) {
+    var steps = splitThinking(text);
+    if (!steps.length) return '';
+    var html = '<div class="think"><div class="think-head">思考过程<span class="think-count">' + steps.length + ' 步</span></div>';
+    steps.forEach(function (b, i) {
+      var c = classifyThinking(b);
+      var open = (openLast && i === steps.length - 1) ? ' open' : '';
+      html += '<details class="think-step"' + open + '><summary><span class="think-arrow">▸</span><span class="think-tag ' + c.cls + '">' + esc(c.tag) + '</span><span class="think-title">' + esc(thinkingTitle(b)) + '</span></summary><div class="think-body">' + esc(b) + '</div></details>';
+    });
+    html += '</div>';
+    return html;
+  }
+
   function setContextTag(txt) { el('contextTag').textContent = txt || ''; }
 
   function send() {
@@ -1229,7 +1314,7 @@
     if (img && engine === 'ollama') engine = 'ollama-vision';
 
     function renderStream() {
-      var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      var thinkHtml = renderThinking(thinking, true);
       bubble.innerHTML = thinkHtml + (acc ? mdToHtml(acc) : '') + (live ? mdToHtml(live) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
@@ -1240,7 +1325,7 @@
       touchCurrentSession();
       persistSessions();
       renderSessionList();
-      var thinkHtml = thinking ? '<details class="think"' + (finalText && !err ? '' : ' open') + '><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      var thinkHtml = renderThinking(thinking, false);
       bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
       else renderMermaidIn(bubble);
@@ -1356,12 +1441,12 @@
     }).catch(function (e) { finish('', String(e && e.message || e)); });
 
     function render() {
-      var thinkHtml = thinking ? '<details class="think" open><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      var thinkHtml = renderThinking(thinking, true);
       bubble.innerHTML = thinkHtml + (acc ? mdToHtml(acc) : '') + '<span class="cursor"></span>';
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
-      var thinkHtml = thinking ? '<details class="think"><summary>思考过程</summary>' + esc(thinking) + '</details>' : '';
+      var thinkHtml = renderThinking(thinking, false);
       bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc('⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
       else renderMermaidIn(bubble);
