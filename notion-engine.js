@@ -105,19 +105,77 @@ async function readPageBlocks(token, id) {
   return out.join('\n');
 }
 
-/** 搜索页面 / 数据库 */
-async function search(token, query) {
-  var j = await notionRequest(token, 'POST', '/search', { query: String(query || ''), page_size: 30 });
-  var results = [];
+/** 查询一个数据库里的条目（row），返回 [{id, title}]。
+ *  Notion /search 不索引数据库内的条目，必须用 /databases/{id}/query 单独查。 */
+async function queryDatabaseRows(token, dbId, q) {
+  var titleProp = null;
+  try {
+    var schema = await notionRequest(token, 'GET', '/databases/' + dbId);
+    var props = (schema && schema.properties) || {};
+    for (var k in props) {
+      if (props[k] && props[k].type === 'title') { titleProp = k; break; }
+    }
+  } catch (e) { /* 拿不到 schema 不阻断，走全量 */ }
+  var body = { page_size: 50 };
+  if (q && titleProp) body.filter = { property: titleProp, title: { contains: q } };
+  var j = await notionRequest(token, 'POST', '/databases/' + dbId + '/query', body);
+  var rows = [];
   for (var i = 0; i < (j.results || []).length; i++) {
     var it = j.results[i];
-    results.push({
+    var title = '';
+    if (titleProp && it.properties && it.properties[titleProp]) {
+      title = richText(it.properties[titleProp].title);
+    }
+    if (!title) title = titleOf(it) || it.id;
+    rows.push({ id: it.id, title: title });
+  }
+  return rows;
+}
+
+/** 搜索页面 / 数据库 / 数据库条目。
+ *  Notion /search 只按标题匹配 page/database、不索引数据库内的 row；这里对命中的
+ *  database 追加条目查询，并在无命中时用空 query 兜底枚举最近数据库的条目。 */
+async function search(token, query) {
+  const q = String(query || '').trim();
+  var j = await notionRequest(token, 'POST', '/search', { query: q, page_size: 30 });
+  var results = [];
+  var dbHits = 0;
+  for (var i = 0; i < (j.results || []).length; i++) {
+    var it = j.results[i];
+    var entry = {
       id: it.id,
       object: it.object,       // 'page' | 'database'
       title: titleOf(it) || it.id,
       url: it.url || '',
       lastEdited: it.last_edited_time || '',
-    });
+    };
+    if (it.object === 'database') {
+      dbHits++;
+      // 数据库标题命中 query：返回该库条目；若按 query 过滤为空则回退到全量前 50 条
+      var rows = await queryDatabaseRows(token, it.id, q);
+      if (!rows.length && q) rows = await queryDatabaseRows(token, it.id, '');
+      entry.rows = rows;
+    }
+    results.push(entry);
+  }
+  // 兜底：query 没直接命中任何 database，但用户的内容可能藏在某个数据库的条目里
+  // （例如「研究进度」是某进度库的一行，库名不含关键词）→ 空 query 枚举最近数据库逐个过滤
+  if (q && dbHits === 0) {
+    try {
+      var all = await notionRequest(token, 'POST', '/search', { query: '', page_size: 30 });
+      var dbs = (all.results || []).filter(function (x) { return x.object === 'database'; }).slice(0, 5);
+      for (var d = 0; d < dbs.length; d++) {
+        var rows = await queryDatabaseRows(token, dbs[d].id, q);
+        if (rows.length) {
+          results.push({
+            id: dbs[d].id, object: 'database',
+            title: titleOf(dbs[d]) || dbs[d].id,
+            url: dbs[d].url || '', lastEdited: dbs[d].last_edited_time || '',
+            rows: rows,
+          });
+        }
+      }
+    } catch (e) { /* 兜底枚举失败不影响已返回结果 */ }
   }
   return results;
 }

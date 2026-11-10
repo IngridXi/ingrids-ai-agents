@@ -2010,9 +2010,21 @@ ipcMain.handle('tool:db:query', async (_e, p) => {
     const t = notionToken();
     if (t) {
       const nr = await NotionEngine.search(t, q);
-      out.notion = (nr || []).slice(0, k).map(function (it) {
-        return { title: it.title, object: it.object, id: it.id, source: 'Notion' };
-      });
+      const notionItems = [];
+      for (const it of (nr || [])) {
+        // 数据库：展开其条目（row）——Notion 进度笔记多在数据库行里
+        if (it.object === 'database' && Array.isArray(it.rows) && it.rows.length) {
+          for (const row of it.rows) {
+            notionItems.push({ title: row.title, object: 'database_row', id: row.id, db: it.title, source: 'Notion' });
+          }
+        } else if (it.object !== 'database') {
+          notionItems.push({ title: it.title, object: it.object, id: it.id, source: 'Notion' });
+        } else {
+          // 数据库本身命中但条目为空：至少告诉模型有这个库
+          notionItems.push({ title: it.title, object: 'database', id: it.id, source: 'Notion' });
+        }
+      }
+      out.notion = notionItems.slice(0, k);
     }
   } catch (e) { /* ignore */ }
   return out;

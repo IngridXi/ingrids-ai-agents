@@ -1114,7 +1114,12 @@
       else if (call.name === 'db_zotero_report') body = 'Zotero 共 ' + res.total + ' 篇文献：' + res.withTags + ' 篇有标签、' + res.withoutTags + ' 篇无标签。';
       else if (call.name === 'db_zotero_tag') body = '已给「' + (res.title || res.itemKey) + '」打标签：' + (res.tags || []).join('、');
       else if (call.name === 'db_zotero_collection') body = '已归档 ' + res.moved + ' 篇文献到集合「' + (res.collectionName || '') + '」' + (res.failed && res.failed.length ? '（失败 ' + res.failed.length + ' 篇）' : '');
-      else if (call.name === 'db_query') body = JSON.stringify(res.hits, null, 2);
+      else if (call.name === 'db_query') {
+        var _np = [];
+        if (res.hits && res.hits.length) _np.push('【本地知识库命中】\n' + JSON.stringify(res.hits, null, 2));
+        if (res.notion && res.notion.length) _np.push('【Notion 命中】\n' + JSON.stringify(res.notion, null, 2));
+        body = _np.join('\n\n') || JSON.stringify(res);
+      }
       else if (call.name === 'computer') body = res.summary;
       else body = JSON.stringify(res);
     } else {
