@@ -1681,6 +1681,7 @@
       }
 
       var failStreak = 0;   // 连续工具失败轮数（有一项成功即清零），用于触发纠正提示、避免死循环
+      var emptyStreak = 0;  // 连续空回复次数（推理型模型可能只输出思考、不输出正文），用于自动重试
 
       function runToolTurn(msgs, round, contN) {
         live = '';
@@ -1724,7 +1725,7 @@
                 runToolTurn(next, round + 1, 0);
               }).catch(function (e) { finish(acc + stripToolMarkers(rawRound), '工具执行异常：' + String((e && e.message) || e)); });
             } else {
-              acc += stripToolMarkers(rawRound);
+              var stripped = stripToolMarkers(rawRound).replace(/^\s+|\s+$/g, '');
               var c = contN || 0;
               if (d && d.truncated && c < 3) {
                 // 被 max_tokens 截断：自动续写，直到自然结束或续写 3 次封顶
@@ -1736,6 +1737,22 @@
                 runToolTurn(contMsgs, round, c + 1);
                 return;
               }
+              if (!stripped) {
+                // 空回复（推理型模型常见：只输出思考、正文为空或仅换行）。自动重试，逼它给出正文
+                emptyStreak += 1;
+                if (emptyStreak < 4) {
+                  statusText = '上一条回复为空，重新要求模型给出正文…';
+                  renderStream();
+                  var nudgeMsgs = msgs.concat([{ role: 'assistant', content: rawRound }])
+                    .concat([{ role: 'user', content: '你上一条回复只有思考、没有正文。请现在直接输出完整回答（需要就调用工具继续推进任务），不要只写思考过程，也不要复述前面已经说过的话。' }]);
+                  live = '';
+                  runToolTurn(nudgeMsgs, round, 0);
+                  return;
+                }
+                finish(acc, '连续多次返回空回复，模型可能暂时异常。请换一个模型，或点重试。');
+                return;
+              }
+              acc += stripToolMarkers(rawRound);
               finish(acc);
             }
           },
