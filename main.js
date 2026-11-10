@@ -1677,7 +1677,14 @@ ipcMain.handle('notify', (_e, payload) => {
 });
 
 /* ---------------- 知识库引擎（本地 RAG） ---------------- */
-const kbEngine = new KbEngine({ dataDir: path.join(dataDir(), 'kb') });
+const kbEngine = new KbEngine({
+  dataDir: path.join(dataDir(), 'kb'),
+  // Notion 源注入：token 走主进程解密，正文全量导出交给 notion-engine
+  notion: {
+    getToken: () => notionToken(),
+    exportAll: (token) => NotionEngine.exportAll(token),
+  },
+});
 
 let kbWatchTimer = null;
 let kbWatchers = [];
@@ -1700,7 +1707,7 @@ function startKbWatcher() {
   } catch { /* 忽略 */ }
 }
 
-ipcMain.handle('kb:scan', () => kbEngine.scan());
+ipcMain.handle('kb:scan', (_e, force) => kbEngine.scan({ force: !!force }));
 ipcMain.handle('kb:search', (_e, query, k) => kbEngine.search(String(query || ''), k));
 ipcMain.handle('kb:status', () => kbEngine.status());
 ipcMain.handle('kb:configure', (_e, patch) => {

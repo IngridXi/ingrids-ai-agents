@@ -66,6 +66,10 @@ class KbEngine {
     this.chunkSize = opts.chunkSize || 1200;
     this.chunkOverlap = opts.chunkOverlap || 150;
     this.topK = opts.topK || 4;
+    // Notion 源注入（由 main.js 提供）：{ getToken(), exportAll(token) }
+    this.notion = opts.notion || null;
+    // Notion 全量拉取较慢，两次拉取之间用缓存节流（手动重建索引可 force 绕过）
+    this.notionTTL = opts.notionTTL || 30 * 60 * 1000;
     fs.mkdirSync(this.root, { recursive: true });
   }
 
@@ -90,7 +94,7 @@ class KbEngine {
     fs.writeFileSync(this._configPath(), JSON.stringify(cfg, null, 2), 'utf8');
   }
 
-  /** 首次运行：自动探测 Obsidian 库 + Zotero（两者都摄取） */
+  /** 首次运行：自动探测 Obsidian 库 + Zotero + Notion（都摄取） */
   autoDetectSources() {
     const srcs = [];
     for (const p of detectObsidianVaults()) {
@@ -100,7 +104,15 @@ class KbEngine {
     if (z) {
       srcs.push({ id: 'src-' + md5('zotero:' + z).slice(0, 8), type: 'zotero', label: 'Zotero', path: z, enabled: true });
     }
+    if (this._notionToken()) {
+      srcs.push({ id: 'src-notion', type: 'notion', label: 'Notion', path: 'notion://', enabled: true });
+    }
     return srcs;
+  }
+
+  _notionToken() {
+    if (!this.notion || typeof this.notion.getToken !== 'function') return '';
+    try { return this.notion.getToken(); } catch { return ''; }
   }
 
   ensureConfig() {
@@ -114,6 +126,11 @@ class KbEngine {
     if (!(cfg.sources || []).some((s) => s.type === 'zotero') && detectZoteroDir()) {
       const z = detectZoteroDir();
       cfg.sources.push({ id: 'src-' + md5('zotero:' + z).slice(0, 8), type: 'zotero', label: 'Zotero', path: z, enabled: true });
+      this.saveConfig(cfg);
+    }
+    // 迁移：已有 config 但缺 Notion 源时自动补上（token 已配置才加）
+    if (!(cfg.sources || []).some((s) => s.type === 'notion') && this._notionToken()) {
+      cfg.sources.push({ id: 'src-notion', type: 'notion', label: 'Notion', path: 'notion://', enabled: true });
       this.saveConfig(cfg);
     }
     return cfg;
@@ -254,6 +271,38 @@ class KbEngine {
     return out;
   }
 
+  /* ---------------- Notion 源遍历（异步：拉取页面正文 + 数据库条目，带缓存节流） ---------------- */
+  async _walkNotion(src, force) {
+    if (!this.notion || typeof this.notion.getToken !== 'function' || typeof this.notion.exportAll !== 'function') return [];
+    let token;
+    try { token = this.notion.getToken(); } catch { return []; }
+    if (!token) return [];
+    let docs = null;
+    const cachePath = path.join(this.root, 'notion-cache.json');
+    if (!force) {
+      try {
+        const c = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+        if (c && c.fetchedAt && (Date.now() - c.fetchedAt) < this.notionTTL && Array.isArray(c.docs)) docs = c.docs;
+      } catch { /* 无缓存或过期 */ }
+    }
+    if (!docs) {
+      try { docs = await this.notion.exportAll(token); } catch { return []; }
+      try { fs.writeFileSync(cachePath, JSON.stringify({ fetchedAt: Date.now(), docs: docs }, null, 2), 'utf8'); } catch { /* 写缓存失败不阻断 */ }
+    }
+    const out = [];
+    for (const d of (docs || [])) {
+      const title = d.title || d.id || '未命名';
+      const content = '# ' + title + '\n\n' + String(d.text || '').trim();
+      if (!String(d.text || '').trim()) continue;
+      const rel = 'notion:' + d.id;
+      out.push({
+        rel, path: rel, md5: md5(content), content,
+        sourceId: src.id, sourceLabel: 'Notion', type: 'notion',
+      });
+    }
+    return out;
+  }
+
   /* ---------------- Ollama embedding ---------------- */
   async embedModelReady() {
     try {
@@ -278,7 +327,8 @@ class KbEngine {
   }
 
   /* ---------------- 扫描 + 增量摄取 ---------------- */
-  async scan() {
+  async scan(opts) {
+    opts = opts || {};
     const cfg = this.ensureConfig();
     this.embedModel = cfg.embedModel || this.embedModel;
     this.chunkSize = cfg.chunkSize || this.chunkSize;
@@ -293,7 +343,9 @@ class KbEngine {
     const seen = new Set();
 
     for (const src of sources) {
-      const files = src.type === 'zotero' ? await this._walkZotero(src) : this._walkSource(src);
+      const files = src.type === 'zotero' ? await this._walkZotero(src)
+        : src.type === 'notion' ? await this._walkNotion(src, opts.force)
+        : this._walkSource(src);
       for (const f of files) {
         seen.add(f.rel);
         newFiles[f.rel] = f.md5;

@@ -125,7 +125,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   notionRead: (id) => ipcRenderer.invoke('notion:read', id),
 
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
-  kbScan: () => ipcRenderer.invoke('kb:scan'),
+  kbScan: (force) => ipcRenderer.invoke('kb:scan', !!force),
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),
   kbStatus: () => ipcRenderer.invoke('kb:status'),
   kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),

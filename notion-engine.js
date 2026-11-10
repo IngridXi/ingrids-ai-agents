@@ -105,7 +105,7 @@ async function readPageBlocks(token, id) {
   return out.join('\n');
 }
 
-/** 查询一个数据库里的条目（row），返回 [{id, title}]。
+/** 查询一个数据库里的条目（row），返回 [{id, title}]，自动翻页取全。
  *  Notion /search 不索引数据库内的条目，必须用 /databases/{id}/query 单独查。 */
 async function queryDatabaseRows(token, dbId, q) {
   var titleProp = null;
@@ -116,19 +116,24 @@ async function queryDatabaseRows(token, dbId, q) {
       if (props[k] && props[k].type === 'title') { titleProp = k; break; }
     }
   } catch (e) { /* 拿不到 schema 不阻断，走全量 */ }
-  var body = { page_size: 50 };
-  if (q && titleProp) body.filter = { property: titleProp, title: { contains: q } };
-  var j = await notionRequest(token, 'POST', '/databases/' + dbId + '/query', body);
   var rows = [];
-  for (var i = 0; i < (j.results || []).length; i++) {
-    var it = j.results[i];
-    var title = '';
-    if (titleProp && it.properties && it.properties[titleProp]) {
-      title = richText(it.properties[titleProp].title);
+  var cursor = null;
+  do {
+    var body = { page_size: 100 };
+    if (q && titleProp) body.filter = { property: titleProp, title: { contains: q } };
+    if (cursor) body.start_cursor = cursor;
+    var j = await notionRequest(token, 'POST', '/databases/' + dbId + '/query', body);
+    for (var i = 0; i < (j.results || []).length; i++) {
+      var it = j.results[i];
+      var title = '';
+      if (titleProp && it.properties && it.properties[titleProp]) {
+        title = richText(it.properties[titleProp].title);
+      }
+      if (!title) title = titleOf(it) || it.id;
+      rows.push({ id: it.id, title: title });
     }
-    if (!title) title = titleOf(it) || it.id;
-    rows.push({ id: it.id, title: title });
-  }
+    cursor = j.has_more ? j.next_cursor : null;
+  } while (cursor);
   return rows;
 }
 
@@ -191,8 +196,58 @@ async function readPage(token, id) {
   return { id: id, title: title, text: text };
 }
 
+/** 分页列出工作区所有 page 与 database（空 query 搜索，自动翻页）。 */
+async function listAll(token) {
+  var out = [];
+  var cursor = null;
+  do {
+    var body = { page_size: 100 };
+    if (cursor) body.start_cursor = cursor;
+    var j = await notionRequest(token, 'POST', '/search', body);
+    for (var i = 0; i < (j.results || []).length; i++) {
+      var it = j.results[i];
+      out.push({
+        id: it.id, object: it.object,   // 'page' | 'database'
+        title: titleOf(it) || it.id, url: it.url || '',
+      });
+    }
+    cursor = j.has_more ? j.next_cursor : null;
+  } while (cursor);
+  return out;
+}
+
+/** 全量导出工作区内容为文档列表（供本地索引）：页面正文 + 数据库每个条目的正文。
+ *  返回 [{ id, title, text, object, db? }]，单个对象失败不阻断整体。 */
+async function exportAll(token) {
+  var docs = [];
+  var objects = await listAll(token);
+  for (var i = 0; i < objects.length; i++) {
+    var obj = objects[i];
+    try {
+      if (obj.object === 'database') {
+        var rows = await queryDatabaseRows(token, obj.id, '');
+        for (var r = 0; r < rows.length; r++) {
+          var p = await readPage(token, rows[r].id);
+          if (p && String(p.text || '').trim()) {
+            docs.push({ id: rows[r].id, title: rows[r].title || p.title || rows[r].id, text: p.text, object: 'database_row', db: obj.title });
+          }
+        }
+      } else if (obj.object === 'page') {
+        var p2 = await readPage(token, obj.id);
+        if (p2 && String(p2.text || '').trim()) {
+          docs.push({ id: obj.id, title: p2.title || obj.title || obj.id, text: p2.text, object: 'page' });
+        }
+      }
+    } catch (e) { /* 单个对象失败不阻断 */ }
+  }
+  return docs;
+}
+
 module.exports = {
   search: search,
   readPage: readPage,
   titleOf: titleOf,
+  queryDatabaseRows: queryDatabaseRows,
+  listAll: listAll,
+  exportAll: exportAll,
 };

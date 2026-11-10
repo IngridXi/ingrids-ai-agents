@@ -130,15 +130,17 @@
       '<div><div class="nm">Notion</div></div>' +
       '<span class="st ' + (configured ? 'ok' : 'miss') + '">' + (configured ? '已连接' : '未连接') + '</span>' +
       '</div>' +
-      '<div class="meta">' + (configured ? 'token 已保存（加密存本机），可跨库搜索' : '需在 notion.so/my-integrations 建集成，复制 token 后粘贴到这里') + '</div>' +
+      '<div class="meta">' + (configured ? '已建立本地索引，页面正文可全文检索；token 加密存本机' : '需在 notion.so/my-integrations 建集成，复制 token 后粘贴到这里') + '</div>' +
       '<div class="acts">' +
         '<button data-kind="notion">' + iconSvg('link') + '打开 Notion</button>' +
+        (configured ? '<button id="kbNotionIndex">' + iconSvg('zap') + '重建索引</button>' : '') +
         '<button id="kbNotionCfg">' + iconSvg('key') + (configured ? '重新配置 token' : '配置 token') + '</button>' +
       '</div>' +
       '<div id="kbNotionBox" style="display:none" class="cfgrow">' +
         '<input id="kbNotionToken" type="password" placeholder="ntn_... 或 secret_...">' +
         '<button id="kbNotionSave" class="primary">保存</button>' +
       '</div>' +
+      '<div id="kbNotionIndexStatus" class="meta" style="display:none"></div>' +
       '</div>';
   }
 
@@ -166,7 +168,7 @@
         '<div id="kbTermsStatus" class="meta" style="margin-top:9px"></div>' +
         '<div id="kbTermsResult" class="kb-res" style="display:none;margin-top:9px;margin-bottom:0"></div>' +
       '</div>' +
-      '<div class="kb-hint">本机优先：Zotero 与 Obsidian 内容在本机建立索引；Notion 走官方 API。「打开」会用系统默认方式启动对应应用或目录。</div>';
+      '<div class="kb-hint">本机优先：Zotero、Obsidian 与 Notion 内容均在本机建立索引（页面正文支持全文检索）。「打开」会用系统默认方式启动对应应用或目录。</div>';
 
     modal.querySelector('#kbClose').addEventListener('click', close);
     modal.querySelector('#kbSearchBtn').addEventListener('click', function () {
@@ -298,6 +300,27 @@
           alert('✓ 已保存。记得在 Notion 里给要读的页面/数据库授权这个集成（··· → Connections）。');
           loadStatus();
         }).catch(function (e) { alert(String(e && e.message || e)); });
+      });
+
+      // Notion 重建索引：全量拉取页面正文 + 数据库条目 → 本地 RAG
+      var indexBtn = box.querySelector('#kbNotionIndex');
+      if (indexBtn) indexBtn.addEventListener('click', function () {
+        var st = box.querySelector('#kbNotionIndexStatus');
+        if (st) { st.style.display = 'block'; st.textContent = '⏳ 正在拉取 Notion 内容并建立索引…（首次或页面较多需几分钟）'; }
+        indexBtn.disabled = true;
+        window.ingrid.kbScan(true).then(function (r) {
+          indexBtn.disabled = false;
+          if (st) {
+            st.style.display = 'block';
+            st.textContent = (r && r.files !== undefined)
+              ? ('✓ 索引完成：' + r.files + ' 个文件 · ' + r.chunks + ' 个分块' + (r.embedReady ? ' · 已向量化' : ' · 关键词检索'))
+              : '✓ 索引已刷新';
+          }
+          loadStatus();
+        }).catch(function (e) {
+          indexBtn.disabled = false;
+          if (st) { st.style.display = 'block'; st.textContent = '⚠️ 索引失败：' + String(e && e.message || e); }
+        });
       });
 
       // 本地索引概览
