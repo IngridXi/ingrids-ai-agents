@@ -346,12 +346,12 @@
     <aside class="cal-dock" id="calDock"></aside>
   </div>
 
-  <!-- 单窗口 agent 内嵌层：点 agent 卡片时，agent 页面在这里用 webview 加载，不再新开窗口 -->
+  <!-- 单窗口 agent 内嵌层：点 agent 卡片时，主进程用 BrowserView 加载 agent，这里只放顶部返回条 -->
   <style>
-    .agent-shell { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; background: var(--bg); }
+    .agent-shell { position: fixed; top: 0; left: 0; right: 0; z-index: 200; }
     .agent-shell[hidden] { display: none; }
     .agent-shell-bar {
-      flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px;
+      display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px;
       background: var(--side-bg); color: #e6e1f5; box-shadow: 0 2px 10px rgba(34,31,51,.15); user-select: none;
     }
     .agent-back, .agent-close {
@@ -361,7 +361,6 @@
     .agent-back:hover, .agent-close:hover { background: rgba(255,255,255,.26); }
     .agent-shell-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-close { padding: 7px 12px; font-size: 17px; }
-    .agent-shell webview { flex: 1; border: none; background: #fff; }
   </style>
   <div class="agent-shell" id="agentShell" hidden>
     <div class="agent-shell-bar">
@@ -369,7 +368,6 @@
       <span class="agent-shell-title" id="agentShellTitle">Agent</span>
       <button class="agent-close" id="agentCloseBtn" type="button" title="关闭">×</button>
     </div>
-    <webview id="agentView"></webview>
   </div>
 
   <!-- Modal -->
@@ -675,60 +673,30 @@ function escHtml(v) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/* ---------- 单窗口 agent 内嵌：用 <webview> 在主窗口里打开，不再新开窗口 ---------- */
+/* ---------- 单窗口 agent 内嵌：主进程用 BrowserView 加载 agent，这里只负责返回条显示/隐藏 ---------- */
 function openAgentInView(a) {
   if (!IS_DESKTOP) return;
   const shell = document.getElementById('agentShell');
-  const view = document.getElementById('agentView');
   const title = document.getElementById('agentShellTitle');
   title.textContent = a.name || 'Agent';
-  shell.hidden = false;
-  // preload 必须在 webview 首次 attach（设置 src）之前就位，否则 agent 页面拿不到 window.ingrid
-  // （表现为引擎/模型丢失、聊天记录为空）。preload 用文件路径，不用 file:// URL（内部走 require 加载）。
-  if (!view.getAttribute('preload') && window.ingrid && window.ingrid.preloadPath) {
-    view.setAttribute('preload', window.ingrid.preloadPath);
-  }
-  window.ingrid.openAgent(a.href).then((url) => {
-    if (!url) { shell.hidden = true; openModal(a); return; }
-    view.src = url;
+  window.ingrid.openAgent(a.href).then((ok) => {
+    if (!ok) { openModal(a); return; }
+    shell.hidden = false;   // 主进程已挂载 BrowserView，这里显示顶部返回条
   });
 }
 function closeAgentView() {
   const shell = document.getElementById('agentShell');
-  const view = document.getElementById('agentView');
-  try { view.removeAttribute('src'); } catch (e) { /* 忽略 */ }
   shell.hidden = true;
+  if (window.ingrid && window.ingrid.closeAgent) window.ingrid.closeAgent();
 }
 function bindAgentShell() {
   const back = document.getElementById('agentBackBtn');
   const close = document.getElementById('agentCloseBtn');
-  const view = document.getElementById('agentView');
-  // 初始化即注入 preload（文件路径，非 file:// URL）。webview 首次 attach 发生在 openAgentInView 设置 src 时，
-  // 这里提前把 preload 就位，确保 guest 页面在首次导航前就能拿到 window.ingrid。
-  if (view && window.ingrid && window.ingrid.preloadPath && !view.getAttribute('preload')) {
-    view.setAttribute('preload', window.ingrid.preloadPath);
-  }
   if (back) back.addEventListener('click', closeAgentView);
   if (close) close.addEventListener('click', closeAgentView);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.getElementById('agentShell').hidden) closeAgentView();
   });
-  // 拦截 webview 里可能的 window.open / 外链：外链交给系统浏览器打开，避免又弹出新窗口
-  if (view) {
-    view.addEventListener('new-window', (e) => {
-      e.preventDefault();
-      if (e.url && /^https?:\/\//.test(e.url) && window.ingrid && window.ingrid.openExternal) {
-        window.ingrid.openExternal(e.url);
-      }
-    });
-    view.addEventListener('will-navigate', (e) => {
-      // 点击 agent 回复里的外链时，交给系统浏览器打开，不在 webview 内跳转（避免丢失 agent 页面）
-      if (e.url && /^https?:\/\//.test(e.url)) {
-        e.preventDefault();
-        if (window.ingrid && window.ingrid.openExternal) window.ingrid.openExternal(e.url);
-      }
-    });
-  }
 }
 function loadPresets() {
   if (IS_DESKTOP) { try { return window.ingrid.loadPresetsSync() || []; } catch (e) { return []; } }

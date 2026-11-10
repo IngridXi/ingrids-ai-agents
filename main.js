@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, safeStorage, shell, Notification, dialog } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, safeStorage, shell, Notification, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execFile } = require('child_process');
@@ -211,25 +211,28 @@ const WEB_PREFS = {
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: false,
-  webviewTag: true,   // 单窗口：agent 页面用 <webview> 内嵌在主窗口里，不再每开一个 agent 就新开窗口
 };
 
+let mainWindow = null;   // 主窗口引用（供内嵌 agent 的 BrowserView 挂载）
+let agentView = null;    // 内嵌 agent 的 BrowserView（单窗口：点 agent 在主窗口内打开，不新开窗口）
+const AGENT_BAR_H = 46;  // 返回条高度，须与 index.html 的 .agent-shell-bar height 一致
+
 function createMainWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 960, minHeight: 600,
     title: "Ingrid's AI Agents", backgroundColor: '#f7f6f9', show: false,
     webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
   });
-  win.loadFile('index.html');
-  win.once('ready-to-show', () => win.show());
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.loadFile('index.html');
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // 窗口尺寸变化时重排内嵌 agent 的 BrowserView 边界
+  mainWindow.on('resize', () => layoutAgentView());
+  mainWindow.on('closed', () => { mainWindow = null; agentView = null; });
 }
-
-// 单窗口：agent 不再新开 BrowserWindow，改为返回 file:// URL 由主窗口 <webview> 内嵌。
-// （原 openAgentWindow 多窗口行为已移除，避免「像网页一样开一堆窗口」）
 
 /* ---------------- 会议纪要后端自动拉起 ---------------- */
 const MEETING_AUDIO_PORT = 8950;
@@ -440,6 +443,10 @@ function decryptSyncAccounts() {
 function broadcast(channel, data) {
   for (const w of BrowserWindow.getAllWindows()) {
     try { if (!w.isDestroyed()) w.webContents.send(channel, data); } catch { /* 忽略 */ }
+  }
+  // 内嵌 agent 的 BrowserView 也收广播（如研究助手监听 calendar:reminder）
+  if (agentView) {
+    try { if (!agentView.webContents.isDestroyed()) agentView.webContents.send(channel, data); } catch { /* 忽略 */ }
   }
 }
 
@@ -881,14 +888,43 @@ ipcMain.handle('agents:save', (_e, agents) => {
 });
 ipcMain.on('agents:list-sync', (e) => { e.returnValue = readJson('agents.json', []); });
 
-/* ---------------- IPC：打开 agent（单窗口，返回 file:// URL 供 webview 内嵌） ---------------- */
-ipcMain.handle('open-agent', (_e, href) => {
-  if (typeof href !== 'string' || !href || href.includes('..')) return '';
+/* ---------------- IPC：打开 agent（单窗口，用 BrowserView 内嵌，不新开窗口） ---------------- */
+function layoutAgentView() {
+  if (!agentView || !mainWindow) return;
+  const [w, h] = mainWindow.getContentSize();
+  agentView.setBounds({ x: 0, y: AGENT_BAR_H, width: w, height: Math.max(0, h - AGENT_BAR_H) });
+}
+function openAgentInMainView(href) {
+  if (typeof href !== 'string' || !href || href.includes('..')) return false;
   if (href.includes('meeting-audio')) ensureMeetingAudioBackend();
-  return 'file://' + path.join(__dirname, href);
-});
+  if (!mainWindow) return false;
+  if (!agentView) {
+    agentView = new BrowserView({
+      webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
+    });
+    mainWindow.setBrowserView(agentView);
+    // BrowserView 内 agent 的 window.open（如会议纪要 PPT 下载）交给系统浏览器
+    agentView.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+  }
+  agentView.webContents.loadFile(path.join(__dirname, href));
+  layoutAgentView();
+  return true;
+}
+function closeAgentInMainView() {
+  if (!mainWindow) return;
+  if (agentView) {
+    mainWindow.setBrowserView(null);
+    try { agentView.webContents.destroy(); } catch { /* 忽略 */ }
+    agentView = null;
+  }
+}
+ipcMain.handle('open-agent', (_e, href) => openAgentInMainView(href));
+ipcMain.handle('close-agent', () => { closeAgentInMainView(); return true; });
 
-/* ---------------- IPC：用系统浏览器打开外链（webview 内 agent 的 window.open / 下载链接） ---------------- */
+/* ---------------- IPC：用系统浏览器打开外链（BrowserView 内 agent 的 window.open / 下载链接） ---------------- */
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url === 'string' && /^https?:\/\//.test(url)) { shell.openExternal(url); return true; }
   return false;
