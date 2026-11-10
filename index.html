@@ -369,7 +369,7 @@
       <span class="agent-shell-title" id="agentShellTitle">Agent</span>
       <button class="agent-close" id="agentCloseBtn" type="button" title="关闭">×</button>
     </div>
-    <webview id="agentView" src="about:blank"></webview>
+    <webview id="agentView"></webview>
   </div>
 
   <!-- Modal -->
@@ -683,9 +683,10 @@ function openAgentInView(a) {
   const title = document.getElementById('agentShellTitle');
   title.textContent = a.name || 'Agent';
   shell.hidden = false;
-  // preload 必须先于 src 设置，否则 agent 页面拿不到 window.ingrid
-  if (!view.getAttribute('preload')) {
-    view.setAttribute('preload', 'file://' + window.ingrid.preloadPath);
+  // preload 必须在 webview 首次 attach（设置 src）之前就位，否则 agent 页面拿不到 window.ingrid
+  // （表现为引擎/模型丢失、聊天记录为空）。preload 用文件路径，不用 file:// URL（内部走 require 加载）。
+  if (!view.getAttribute('preload') && window.ingrid && window.ingrid.preloadPath) {
+    view.setAttribute('preload', window.ingrid.preloadPath);
   }
   window.ingrid.openAgent(a.href).then((url) => {
     if (!url) { shell.hidden = true; openModal(a); return; }
@@ -695,13 +696,18 @@ function openAgentInView(a) {
 function closeAgentView() {
   const shell = document.getElementById('agentShell');
   const view = document.getElementById('agentView');
-  try { view.src = 'about:blank'; } catch (e) { /* 忽略 */ }
+  try { view.removeAttribute('src'); } catch (e) { /* 忽略 */ }
   shell.hidden = true;
 }
 function bindAgentShell() {
   const back = document.getElementById('agentBackBtn');
   const close = document.getElementById('agentCloseBtn');
   const view = document.getElementById('agentView');
+  // 初始化即注入 preload（文件路径，非 file:// URL）。webview 首次 attach 发生在 openAgentInView 设置 src 时，
+  // 这里提前把 preload 就位，确保 guest 页面在首次导航前就能拿到 window.ingrid。
+  if (view && window.ingrid && window.ingrid.preloadPath && !view.getAttribute('preload')) {
+    view.setAttribute('preload', window.ingrid.preloadPath);
+  }
   if (back) back.addEventListener('click', closeAgentView);
   if (close) close.addEventListener('click', closeAgentView);
   document.addEventListener('keydown', (e) => {
