@@ -2033,6 +2033,33 @@ ipcMain.handle('tool:fs:append', (_e, p) => toolFsAppend(p));
 ipcMain.handle('tool:fs:edit', (_e, p) => toolFsEdit(p));
 ipcMain.handle('tool:fs:move', (_e, p) => toolFsMove(p));
 ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
+
+/* ---- 会议纪要官：朗读纪要（macOS 原生 TTS `say`，零安装、本地合成、不上云） ---- */
+// 吸收 VoiceStudio 的「语音合成」能力，但不引入其 10GB+ 依赖：直接复用 macOS 自带 TTS，
+// 并自动挑选中文语音（婷婷 / 美佳 / 淑惠 等），会议纪要本地朗读、零隐私风险。
+let speakChild = null;
+async function speakMinutes(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return { ok: false, error: '没有可朗读的内容' };
+  if (process.platform !== 'darwin') return { ok: false, error: '朗读功能目前仅支持 macOS' };
+  // 优先选中文语音：跑 `say -v '?'` 找 zh_CN / zh_TW / zh_HK，找不到就用系统默认
+  let voice = null;
+  try {
+    const stdout = await execFileP('/usr/bin/say', ['-v', '?']);
+    for (const line of String(stdout).split('\n')) {
+      // 直接取语言代码（zh_CN/zh_TW/zh_HK）当 -v 参数：say 支持语言代码，
+      // 且避开「语音名含空格（如 Eddy (Chinese (China mainland))）」的解析坑
+      const m = line.match(/\bzh_(CN|TW|HK)\b/i);
+      if (m) { voice = 'zh_' + m[1].toUpperCase(); break; }
+    }
+  } catch (e) { /* 无中文语音则用系统默认 */ }
+  if (speakChild) { try { speakChild.kill(); } catch { /* 忽略 */ } speakChild = null; }
+  const args = voice ? ['-v', voice, t] : [t];
+  speakChild = spawn('/usr/bin/say', args, { stdio: 'ignore' });
+  speakChild.on('exit', () => { speakChild = null; });
+  return { ok: true, voice: voice || '系统默认' };
+}
+ipcMain.handle('meeting:speak', (_e, text) => speakMinutes(text));
 ipcMain.handle('tool:db:query', async (_e, p) => {
   const q = String((p && p.query) || '').trim();
   const k = Math.min(Math.max(parseInt((p && p.k), 10) || 5, 1), 10);

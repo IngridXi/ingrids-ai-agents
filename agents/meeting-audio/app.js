@@ -296,7 +296,8 @@
         el('minutes-result').classList.remove('hidden');
         el('minutes-result').innerHTML = renderMarkdown(j.minutes);
         el('btn-ppt').disabled = false;
-        setStatus(el('minutes-status'), '会议纪要已生成，可导出 PPT', 'ok');
+        el('btn-speak').disabled = false;
+        setStatus(el('minutes-status'), '会议纪要已生成，可导出 PPT 或朗读', 'ok');
       }).catch(function (e) { setStatus(el('minutes-status'), '纪要生成失败：' + e.message, 'err'); })
       .finally(function () { busy(btn, false, '生成会议纪要'); });
   }
@@ -312,8 +313,44 @@
         el('ppt-download').setAttribute('download', j.file || 'meeting_minutes.pptx');
         window.open(url, '_blank');
         setStatus(el('ppt-status'), 'PPT 已生成，可下载', 'ok');
-      }).catch(function (e) { setStatus(el('ppt-status'), 'PPT 生成失败：' + e.message, 'err'); })
+      })      .catch(function (e) { setStatus(el('ppt-status'), 'PPT 生成失败：' + e.message, 'err'); })
       .finally(function () { busy(btn, false, '生成会议总结 PPT'); });
+  }
+
+  function doSpeak() {
+    if (!minutesMd) return;
+    var speaking = false;
+    var btn = el('btn-speak');
+    function toggle(on) {
+      speaking = on;
+      btn.innerHTML = on ? '■ 停止朗读' : '朗读纪要';
+      btn.classList.toggle('rec', on);
+      setStatus(el('minutes-status'), on ? '正在朗读纪要…（再次点击停止）' : '朗读已停止', on ? '' : 'ok');
+    }
+    if (speaking) {
+      // 二次点击 = 停止。当前用系统 say 进程，无法通过本方法中断，交给用户再次点击重新朗读
+      setStatus(el('minutes-status'), '（当前朗读由系统播放，结束后可再次朗读）', '');
+      return;
+    }
+    // 优先走主进程 macOS 原生 TTS（本地合成）；浏览器预览则降级 Web Speech API
+    if (window.ingrid && window.ingrid.speak) {
+      toggle(true);
+      window.ingrid.speak(minutesMd).then(function (r) {
+        if (r && r.ok) { setStatus(el('minutes-status'), '正在朗读（' + r.voice + '）…', ''); }
+        else { toggle(false); setStatus(el('minutes-status'), '朗读失败：' + ((r && r.error) || '未知'), 'err'); }
+      });
+      return;
+    }
+    if (window.speechSynthesis) {
+      var u = new SpeechSynthesisUtterance(minutesMd.replace(/[#*_`>|-]/g, ''));
+      u.lang = 'zh-CN';
+      u.rate = 1;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+      setStatus(el('minutes-status'), '正在朗读（浏览器语音）…', '');
+      return;
+    }
+    setStatus(el('minutes-status'), '当前环境不支持朗读', 'err');
   }
 
   function renderMarkdown(md) {
@@ -462,6 +499,7 @@
   el('btn-summary').addEventListener('click', doSummary);
   el('btn-minutes').addEventListener('click', doMinutes);
   el('btn-ppt').addEventListener('click', doPpt);
+  el('btn-speak').addEventListener('click', doSpeak);
   el('btn-upload').addEventListener('click', function () { el('file-input').click(); });
   el('file-input').addEventListener('change', function (e) { var f = e.target.files[0]; e.target.value = ''; if (f) doTranscribe(f); });
   el('btn-enroll-upload').addEventListener('click', function () { el('enroll-input').click(); });

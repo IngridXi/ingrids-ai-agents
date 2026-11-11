@@ -148,6 +148,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   computerStop: () => ipcRenderer.invoke('computer:stop'),
   onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // 会议纪要官：朗读纪要（macOS 原生 TTS，本地合成不上云）
+  speak: (text) => ipcRenderer.invoke('meeting:speak', text),
+
   // 工具能力（文件 / 数据库；读安全白名单，写需审批）
   toolFsList: (payload) => ipcRenderer.invoke('tool:fs:list', payload),
   toolFsSearch: (payload) => ipcRenderer.invoke('tool:fs:search', payload),
