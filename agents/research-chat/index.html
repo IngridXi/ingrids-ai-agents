@@ -1031,6 +1031,46 @@
       '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
       '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
+  // 原生工具定义（OpenAI tools 参数格式）：让模型走 API 原生 function calling，而非靠文本 <tool> 标签
+  // 这是根治「模型只说打算、不真正调用工具」的关键——推理型模型给 tools 参数后才会稳定产出 tool_calls
+  function toolsDef(caps) {
+    var defs = [];
+    function fn(name, desc, props) {
+      defs.push({ type: 'function', function: { name: name, description: desc, parameters: { type: 'object', properties: props, required: Object.keys(props) } } });
+    }
+    if (caps.fs) {
+      fn('fs_list', '列出某目录下的文件与子目录（省略 dir 则列主目录）', { dir: { type: 'string', description: '绝对路径，可选' } });
+      fn('fs_search', '按文件名/关键词搜索文件', { query: { type: 'string', description: '关键词' }, root: { type: 'string', description: '可选起始目录' } });
+      fn('fs_read', '读取文本文件内容', { path: { type: 'string', description: '绝对路径' } });
+      fn('fs_write', '写入/覆盖文件（覆盖前自动备份原文件）', { path: { type: 'string', description: '绝对路径' }, content: { type: 'string', description: '完整内容' } });
+      fn('fs_append', '向文件末尾追加内容', { path: { type: 'string' }, content: { type: 'string' } });
+      fn('fs_edit', '替换文件中的一段文字（原文须唯一）', { path: { type: 'string' }, old: { type: 'string', description: '原文' }, new: { type: 'string', description: '新文' } });
+      fn('fs_move', '移动/重命名', { from: { type: 'string' }, to: { type: 'string' } });
+      fn('fs_delete', '删除到废纸篓（非物理删除）', { path: { type: 'string' } });
+    }
+    if (caps.db) {
+      fn('db_query', '查询本地知识库 / 文献库（Zotero、Obsidian、Notion）', { query: { type: 'string', description: '关键词' } });
+      fn('db_obsidian_write', '写一篇整理笔记到 Obsidian 库（默认 _AI整理/ 目录）', { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, folder: { type: 'string' } });
+      fn('db_obsidian_tag', '给 Obsidian 笔记打标签', { path: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } });
+      fn('db_obsidian_move', '归档/移动 Obsidian 笔记', { from: { type: 'string' }, to: { type: 'string' } });
+      fn('db_obsidian_report', 'Obsidian 库整理报告（无标签/无 frontmatter 的笔记、目录统计）', {});
+      fn('db_zotero_report', 'Zotero 文献库整理报告（无标签条目、最近添加）', {});
+      fn('db_zotero_tag', '给 Zotero 文献打标签', { itemKey: { type: 'string', description: '文献条目key' }, tags: { type: 'array', items: { type: 'string' } } });
+      fn('db_zotero_collection', '把文献归档到集合（文件夹）', { itemKeys: { type: 'array', items: { type: 'string' } }, collectionName: { type: 'string' } });
+    }
+    if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
+    return defs;
+  }
+  function parseToolArgs(s) {
+    try { var o = JSON.parse(String(s == null ? '' : s)); return (o && typeof o === 'object') ? o : {}; }
+    catch (e) { return {}; }
+  }
+  // 判断模型是否「只说了打算、没真正动手」：短回复且含"先列/先读/先核实/开始核实…"等动作声明
+  function looksLikePendingAction(text) {
+    var t = String(text || '').trim();
+    if (!t || t.length > 160) return false;   // 过长的多半是完整回答
+    return /(先列|先读|先核实|先搜索|先查|先查看|先打开|先写|先找|先确认|开始核实|开始列|开始读|开始搜索|现在核实|现在列|现在读|现在搜索|我先列|我先读|我先核实|我先搜|我来列|我来读|我将先|接下来我会先)/.test(t);
+  }
   function executeTool(call, caps) {
     var n = call.name;
     if (n === 'fs_list' && caps.fs) return window.ingrid.toolFsList(call.args);
@@ -1682,10 +1722,15 @@
 
       var failStreak = 0;   // 连续工具失败轮数（有一项成功即清零），用于触发纠正提示、避免死循环
       var emptyStreak = 0;  // 连续空回复次数（推理型模型可能只输出思考、不输出正文），用于自动重试
+      var pendingStreak = 0;   // 连续「只说不做」次数，用于兜底：模型声明要动手却没真正调用工具时再催一次
+      // 原生工具调用：云端 OpenAI 兼容引擎（deepseek/gpt/qwen）传 tools 参数走 function calling；
+      // 本地 Ollama 模型兼容性不稳定，暂沿用文本 <tool> 标签解析
+      var useNativeTools = (engine === 'deepseek' || engine === 'gpt' || engine === 'qwen');
+      var toolsPayload = useNativeTools ? toolsDef(agentCapabilities()) : null;
 
       function runToolTurn(msgs, round, contN) {
         live = '';
-        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) thinking += chunk.thinking;
             if (chunk && chunk.text) live += chunk.text;
@@ -1695,7 +1740,11 @@
             var rawRound = live;
             if (stopRequested) { finish(acc + stripToolMarkers(rawRound), '已手动停止'); return; }
             if (d && !d.ok) { finish(acc + stripToolMarkers(rawRound), d && d.error); return; }
-            var calls = extractToolCalls(rawRound);
+            // 工具调用：优先原生 tool_calls（OpenAI tools 参数），退回文本 <tool> 标签解析
+            var nativeCalls = (d && Array.isArray(d.tool_calls)) ? d.tool_calls : [];
+            var calls = nativeCalls.length
+              ? nativeCalls.map(function (tc) { return { name: tc.name, args: parseToolArgs(tc.arguments), _id: tc.id }; })
+              : extractToolCalls(rawRound);
             if (calls.length && round < MAX_TOOL_ROUNDS) {
               // 中间轮：叙述 + 工具调用记录折叠进「思考过程」，不累进正文，
               // 避免模型每轮重复叙述导致最终答案出现重复段落
@@ -1716,12 +1765,20 @@
                 // 连续失败计数：只要有一项成功就清零，全失败则累加；用于触发纠正提示、避免死循环
                 var allFailed = results.length > 0 && results.every(function (r) { return r.indexOf('工具执行失败') >= 0; });
                 failStreak = allFailed ? (failStreak + 1) : 0;
-                var feed = results.join('\n\n');
-                if (failStreak >= 2) {
-                  feed += '\n\n【系统提示 · 重要】连续多次工具调用失败，不要再重复完全相同的尝试。先读上面的错误信息找出原因（路径不对、名称含空格或全角字符、iCloud 文件未下载到位等），换一种办法（先用 fs_list 列目录看真实名称、用 fs_search 搜索、修正路径大小写与空格），或者明确告诉用户你卡在哪、需要什么信息。';
+                var correction = failStreak >= 2
+                  ? '【系统提示 · 重要】连续多次工具调用失败，不要再重复完全相同的尝试。先读上面的错误信息找出原因（路径不对、名称含空格或全角字符、iCloud 文件未下载到位等），换一种办法（先用 fs_list 列目录看真实名称、用 fs_search 搜索、修正路径大小写与空格），或者明确告诉用户你卡在哪、需要什么信息。'
+                  : '';
+                var next;
+                if (nativeCalls.length) {
+                  // 原生工具调用：用 role:tool 回传结果（OpenAI 规范），模型才能继续
+                  var assistantMsg = { role: 'assistant', content: rawRound || '', tool_calls: nativeCalls.map(function (tc) { return { id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }; }) };
+                  var toolMsgs = calls.map(function (c, i) { return { role: 'tool', tool_call_id: nativeCalls[i] ? nativeCalls[i].id : ('t' + i), content: results[i] }; });
+                  next = msgs.concat([assistantMsg]).concat(toolMsgs);
+                  if (correction) next = next.concat([{ role: 'user', content: correction }]);
+                } else {
+                  next = msgs.concat([{ role: 'assistant', content: rawRound }])
+                    .concat([{ role: 'user', content: results.join('\n\n') + (correction ? '\n\n' + correction : '') }]);
                 }
-                var next = msgs.concat([{ role: 'assistant', content: rawRound }])
-                  .concat([{ role: 'user', content: feed }]);
                 runToolTurn(next, round + 1, 0);
               }).catch(function (e) { finish(acc + stripToolMarkers(rawRound), '工具执行异常：' + String((e && e.message) || e)); });
             } else {
@@ -1751,6 +1808,19 @@
                 }
                 finish(acc, '连续多次返回空回复，模型可能暂时异常。请换一个模型，或点重试。');
                 return;
+              }
+              // 「只说不做」兜底：模型声明要动手（先列/先读/开始核实…）却没真正调用工具，再催一次
+              if (round < MAX_TOOL_ROUNDS && looksLikePendingAction(stripped)) {
+                pendingStreak += 1;
+                if (pendingStreak < 3) {
+                  statusText = '模型只说了打算、没真正调用工具，再催一次…';
+                  renderStream();
+                  var actMsgs = msgs.concat([{ role: 'assistant', content: rawRound }])
+                    .concat([{ role: 'user', content: '你说要「' + stripped.slice(0, 40) + '」但并没有真正调用工具。请立刻调用工具执行这一步（不要只描述你打算做什么）；如果这一步已经完成，请直接给出最终结果。' }]);
+                  live = '';
+                  runToolTurn(actMsgs, round + 1, 0);
+                  return;
+                }
               }
               acc += stripToolMarkers(rawRound);
               finish(acc);

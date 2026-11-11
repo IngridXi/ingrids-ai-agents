@@ -1099,6 +1099,7 @@ ipcMain.handle('chat:start', (e, payload) => {
   if (!cfg) { e.sender.send('chat:done', { ok: false, error: '未知引擎：' + engine }); return true; }
   if (messages.length === 0) { e.sender.send('chat:done', { ok: false, error: '消息为空' }); return true; }
   const model = String(p.model || cfg.model);   // 前端可指定模型（如 deepseek-flash / deepseek-v4-pro）
+  const tools = Array.isArray(p.tools) && p.tools.length ? p.tools : null;   // 原生工具调用（OpenAI tools 参数）
 
   const settings = decryptSettings(readSettingsRaw());
   const key = cfg.keyField ? settings[cfg.keyField] : '';
@@ -1123,7 +1124,10 @@ ipcMain.handle('chat:start', (e, payload) => {
       const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
       const resp = await fetch(cfg.url, {
         method: 'POST', headers, signal: ctrl.signal,
-        body: JSON.stringify({ model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 }),
+        body: JSON.stringify(Object.assign(
+          { model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 },
+          tools ? { tools: tools, tool_choice: 'auto' } : {}
+        )),
       });
       if (!resp.ok) {
         clearTimeout(stallTimer);
@@ -1135,6 +1139,7 @@ ipcMain.handle('chat:start', (e, payload) => {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = '', truncated = false;
+      const toolCalls = {};   // index -> { id, name, arguments } 原生工具调用分片累积
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1157,11 +1162,22 @@ ipcMain.handle('chat:start', (e, payload) => {
             const thinking = delta.reasoning || delta.reasoning_content || '';
             if (thinking) send('chat:delta', { thinking: thinking });
             if (text) send('chat:delta', { text: text });
+            // 原生工具调用（OpenAI 兼容流式）：按 index 累积分片（name/arguments 可能分多块到达）
+            if (Array.isArray(delta.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                const ti = tc.index != null ? tc.index : 0;
+                if (!toolCalls[ti]) toolCalls[ti] = { id: '', name: '', arguments: '' };
+                if (tc.id) toolCalls[ti].id = tc.id;
+                if (tc.function && tc.function.name) toolCalls[ti].name = tc.function.name;
+                if (tc.function && tc.function.arguments) toolCalls[ti].arguments += tc.function.arguments;
+              }
+            }
           } catch { /* 忽略坏块 */ }
         }
       }
       clearTimeout(stallTimer);
-      send('chat:done', { ok: true, truncated: truncated });
+      const assembledCalls = Object.keys(toolCalls).map(function (k) { return toolCalls[k]; }).filter(function (t) { return t.name; });
+      send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls });
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err) });
     } finally {
