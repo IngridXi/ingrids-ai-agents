@@ -1885,7 +1885,15 @@ function toolFsList(payload) {
   let st; try { st = fs.statSync(abs); } catch { return { ok: false, error: '无法访问：' + target }; }
   if (!st.isDirectory()) return { ok: false, error: '不是目录：' + target };
   const entries = [];
-  for (const name of fs.readdirSync(abs)) {
+  let names;
+  try { names = fs.readdirSync(abs); }
+  catch (e) {
+    if (e && e.code === 'EPERM') {
+      return { ok: false, eperm: true, error: '无权限读取该目录（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用（Electron）加入并勾选，然后完全退出重启；或把该文件夹移到主目录下非保护目录（如 ~/Dev、~/work）。' };
+    }
+    return { ok: false, error: '读取失败：' + String((e && e.message) || e) };
+  }
+  for (const name of names) {
     if (name.startsWith('.')) continue; // 隐藏文件不列，减少噪音
     const full = path.join(abs, name);
     let s = null; try { s = fs.statSync(full); } catch {}
@@ -1926,7 +1934,10 @@ function toolFsRead(payload) {
     const buf = fs.readFileSync(target);
     if (buf.includes(0)) return { ok: false, error: '疑似二进制文件，暂不支持读取' };
     return { ok: true, path: target, size: st.size, content: buf.toString('utf8') };
-  } catch (e) { return { ok: false, error: '读取失败：' + String(e && e.message || e) }; }
+  } catch (e) {
+    if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
+    return { ok: false, error: '读取失败：' + String(e && e.message || e) };
+  }
 }
 
 /* ---------------- 写工具（需审批；安全边界：仅主目录、拒系统/隐藏/Library，覆盖前备份，删除走废纸篓） ---------------- */
