@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -27,6 +28,7 @@ PROFILE_DIR = Path(__file__).resolve().parent / "speaker_profiles"
 
 _ASR_MODEL = None
 _ASR_LIGHT = None
+_ASR_MULTI = None
 _SV_MODEL = None
 
 
@@ -84,6 +86,31 @@ def _load_asr_light():
             disable_update=True,
         )
     return _ASR_LIGHT
+
+
+def _load_asr_multilang():
+    """加载多语言模型 SenseVoice（中文 / 粤语 / 英 / 日 / 韩 + 自动检测）。
+
+    用于非普通话转写。注意：SenseVoice 不做说话人分离（CAM++ 是中文普通话声纹），
+    故多语言转写时 segments 的 spk 恒为 -1（前端显示「说话人 ?」）。
+    """
+    global _ASR_MULTI
+    if _ASR_MULTI is None:
+        from funasr import AutoModel
+        _ASR_MULTI = AutoModel(
+            model="iic/SenseVoiceSmall",
+            device=_device(),
+            disable_update=True,
+        )
+    return _ASR_MULTI
+
+
+# SenseVoice 输出带富文本标签（如 <|zh|><|NEUTRAL|><|Speech|><|woitn|>），需清洗
+_RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
+
+
+def _clean_sensevoice(text: str) -> str:
+    return _RICH_TAG_RE.sub("", str(text or "")).strip()
 
 
 def transcribe_light(pcm: np.ndarray, sr: int = 16000) -> str:
@@ -177,7 +204,11 @@ def denoise(pcm: np.ndarray, sr: int = 16000) -> np.ndarray:
 # 转写 + 说话人分离
 # --------------------------------------------------------------------------- #
 def transcribe(audio_path, denoise_first: bool = True, language: str = "zh"):
-    """转写一段音频并做说话人分离。
+    """转写一段音频并做说话人分离（可多语言）。
+
+    语言路由：
+      - zh / 普通话 → paraformer-zh + CAM++（有说话人分离、声纹认人）
+      - yue / en / ja / ko / auto 等 → SenseVoice 多语言模型（无说话人分离，spk 恒为 -1）
 
     返回 dict：
       text      全文
@@ -191,7 +222,9 @@ def transcribe(audio_path, denoise_first: bool = True, language: str = "zh"):
     if duration < 0.15:
         raise ValueError("音频过短，请至少录制/上传 1 秒以上")
 
-    model = _load_asr()
+    lang = (language or "zh").strip().lower()
+    is_zh = lang in ("", "zh", "zh-cn", "zh_cn", "cn", "mandarin", "chinese")
+    model = _load_asr() if is_zh else _load_asr_multilang()
     # funasr 接受文件路径；降噪后先落临时 wav 再送入。
     if denoise_first:
         tmp = Path(tempfile.mkdtemp(prefix="meeting_audio_")) / "denoised.wav"
@@ -203,7 +236,10 @@ def transcribe(audio_path, denoise_first: bool = True, language: str = "zh"):
         input_arg = str(tmp)
 
     try:
-        res = model.generate(input=input_arg, batch_size_s=60)
+        if is_zh:
+            res = model.generate(input=input_arg, batch_size_s=60)
+        else:
+            res = model.generate(input=input_arg, language=lang, batch_size_s=60)
     finally:
         for f in tmp.parent.iterdir():
             f.unlink(missing_ok=True)
@@ -213,10 +249,13 @@ def transcribe(audio_path, denoise_first: bool = True, language: str = "zh"):
     if res:
         info = res[0]
         for s in (info.get("sentence_info") or []):
+            seg_text = (s.get("text") or "").strip()
+            if not is_zh:
+                seg_text = _clean_sensevoice(seg_text)
             segments.append({
                 "start": round(float(s.get("start", 0)) / 1000.0, 3),
                 "end": round(float(s.get("end", 0)) / 1000.0, 3),
-                "text": (s.get("text") or "").strip(),
+                "text": seg_text,
                 "spk": int(s.get("spk", -1)),
             })
     text = "".join(s["text"] for s in segments)
@@ -345,10 +384,10 @@ def identify(pcm: np.ndarray, profiles: dict, threshold: float = DEFAULT_SIM_THR
 # --------------------------------------------------------------------------- #
 # 一键处理入口：转写 + 分离 + 自动识别人物
 # --------------------------------------------------------------------------- #
-def process(audio_path, denoise_first: bool = True, threshold: float = DEFAULT_SIM_THRESHOLD) -> dict:
-    """端到端处理：降噪 → 转写 → 说话人分离 → 与声纹库比对标注人名。"""
+def process(audio_path, denoise_first: bool = True, threshold: float = DEFAULT_SIM_THRESHOLD, language: str = "zh") -> dict:
+    """端到端处理：降噪 → 转写（可多语言）→ 说话人分离 → 与声纹库比对标注人名。"""
     profiles = _load_profiles()
-    result = transcribe(audio_path, denoise_first=denoise_first)
+    result = transcribe(audio_path, denoise_first=denoise_first, language=language)
     pcm = load_audio(audio_path)
 
     # 为每个分离出的说话人取代表音频段，做声纹识别

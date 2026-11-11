@@ -334,6 +334,7 @@
 <script src="../../vendor/mermaid.min.js"></script>
 <script src="../../agents-core.js"></script>
 <script src="../../icons.js"></script>
+<script src="../../supervisor-core.js"></script>
 <script>
 (function () {
   'use strict';
@@ -392,6 +393,7 @@
   var SOUL_FALLBACK = '你是通用助手（Assistant），Ingrid 的日常主力之一。擅长：日常问答、信息检索与总结、内容创作、文档整理。回答清晰、结构化、直接有用；能给出可执行的建议。需要时可把内容整理成 Word/PPT/Excel 大纲。不确定时如实说明，不编造事实。';
   var soul = SOUL_FALLBACK;
   var systemPrompt = soul;
+  var liveTaskGoal = '';   // 实时监事：当前任务核心目标（本轮用户输入），防目标漂移
 
   var ENGINE_META = {
     ollama:   { label: '本地 Ollama · qwen3:32b（免费）' },
@@ -1059,6 +1061,9 @@
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
       s += '\n\n【批量授权模式】用户已开启批量授权：你可以在一次回复里连续输出多个写操作工具（一次多个 <tool>），系统会全部自动执行，无需等待逐个确认。';
     }
+    if (liveTaskGoal) {
+      s += '\n\n【监事 · 本次任务核心目标（必须始终对齐，不要跑偏、不要答非所问）】\n' + liveTaskGoal;
+    }
     s += '\n\n【输出格式】用 Markdown 排版：标题用 # / ##，重点加粗，善用列表、表格、引用；需要展示关系、流程或数据对比时，用 ```mermaid 代码块输出图表（flowchart 流程图、sequenceDiagram 时序图、pie 饼图、xychart-beta 柱状/折线图），不要用纯文字描述本可图示的内容。';
     return s;
   }
@@ -1378,6 +1383,7 @@
       }
     }
     function run(content) {
+      if (!isNote) liveTaskGoal = body || '';
       var prompt = content || (img ? '请分析这张图片。' : '');
       if (isNote) prompt = noteWrap(prompt);
       var userMsg = { role: 'user', content: prompt };
@@ -1393,6 +1399,7 @@
       var failStreak = 0;   // 连续工具失败轮数（有一项成功即清零），用于触发纠正提示、避免死循环
       var emptyStreak = 0;  // 连续空回复次数（推理型模型可能只输出思考、不输出正文），用于自动重试
       var pendingStreak = 0;   // 连续「只说不做」次数，用于兜底：模型声明要动手却没真正调用工具时再催一次
+      var driftStreak = 0;     // 实时监事：连续「收尾正文与核心目标零关联」次数，触发目标纠偏
       // 原生工具调用：云端 OpenAI 兼容引擎传 tools 参数走 function calling；本地 Ollama 沿用文本 <tool> 标签
       var useNativeTools = (engine === 'deepseek' || engine === 'gpt' || engine === 'qwen');
       var toolsPayload = useNativeTools ? toolsDef(agentCapabilities()) : null;
@@ -1467,6 +1474,24 @@
                   live = '';
                   runToolTurn(actMsgs, round + 1);
                   return;
+                }
+              }
+              // 实时监事：收尾正文与核心目标完全零关联时，拉回目标再补一轮（防目标漂移）
+              if (round < MAX_TOOL_ROUNDS && liveTaskGoal && liveTaskGoal.length >= 6 && window.SupervisorCore) {
+                var sig = window.SupervisorCore.fastDriftCheck(stripped, [{ text: liveTaskGoal, weight: 3, active: true }]);
+                if (sig.level === 'warn' && sig.score === 0) {
+                  driftStreak += 1;
+                  if (driftStreak < 2) {
+                    statusText = '监事发现可能偏离目标，正在拉回…';
+                    renderStream();
+                    var backMsgs = msgs.concat([{ role: 'assistant', content: rawRound }])
+                      .concat([{ role: 'user', content: '【监事 · 目标纠偏】你上面的回复和本次核心目标「' + liveTaskGoal.slice(0, 120) + '」没有关联。请回到这个目标把它完成（该调用工具就调用工具），不要答非所问、不要另起炉灶。' }]);
+                    live = '';
+                    runToolTurn(backMsgs, round + 1);
+                    return;
+                  }
+                } else if (sig.score > 0) {
+                  driftStreak = 0;
                 }
               }
               acc += stripToolMarkers(rawRound);

@@ -201,6 +201,18 @@ footer{padding:28px 0 48px;font-size:12px;color:var(--faint);text-align:center}
    <p class="lead">点击开始后，说话内容会实时转写并标注说话人；未知人声会提示你输入姓名，之后自动认出。</p>
    <label for="meeting-title">会议主题（可选，用于纪要）</label>
    <input type="text" id="meeting-title" placeholder="例如：博士论文进展组会">
+   <div class="engine-bar" style="margin:14px 0 0">
+    <span class="eb-label">转写语言</span>
+    <select id="lang-select" aria-label="转写语言">
+     <option value="zh" selected>普通话 · 支持说话人分离</option>
+     <option value="yue">粤语（多语言模型）</option>
+     <option value="en">英语（多语言模型）</option>
+     <option value="ja">日语（多语言模型）</option>
+     <option value="ko">韩语（多语言模型）</option>
+     <option value="auto">自动检测（中/粤/英/日/韩）</option>
+    </select>
+    <span class="eb-hint" id="lang-hint">普通话用 paraformer-zh + 声纹认人；其他语言用 SenseVoice 多语言模型（首次需联网下载，无说话人标注）</span>
+   </div>
    <div class="row">
     <button class="btn rec" id="btn-rec" type="button">● <span id="rec-label">开始会议录音</span></button>
     <span class="rec-timer hidden" id="rec-timer">00:00</span>

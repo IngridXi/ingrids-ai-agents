@@ -110,7 +110,8 @@ class Handler(BaseHTTPRequestHandler):
                 if action == "transcribe":
                     denoise = (qs.get("denoise") or ["1"])[0] != "0"
                     threshold = float((qs.get("threshold") or [str(ma.DEFAULT_SIM_THRESHOLD)])[0])
-                    out = ma.process(str(tmp), denoise_first=denoise, threshold=threshold)
+                    language = (qs.get("language") or ["zh"])[0]
+                    out = ma.process(str(tmp), denoise_first=denoise, threshold=threshold, language=language)
                     return _json(self, {"ok": True, "result": out})
                 return _json(self, {"error": "未知动作"}, 400)
             finally:

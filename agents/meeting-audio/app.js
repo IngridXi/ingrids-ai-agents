@@ -168,7 +168,7 @@
     pcmChunks.forEach(function (c) { total.set(c, off); off += c.length; });
     if (total.length < 16000) { setStatus(el('status'), '录音过短，未生成结果', 'err'); return; }
     var wav = floatToWav(total, 16000);
-    postAudio('/transcribe?denoise=1', wav).then(function (j) {
+    postAudio('/transcribe?denoise=1&language=' + encodeURIComponent(currentLang), wav).then(function (j) {
       finalResult = j.result;
       renderFinalResult(j.result);
       el('btn-minutes').disabled = false;
@@ -228,6 +228,7 @@
     { id: 'qwen', name: 'Qwen', tag: 'API · 通义千问' }
   ];
   var currentEngine = 'ollama';
+  var currentLang = 'zh';   // 转写语言（zh=普通话带声纹；yue/en/ja/ko/auto=多语言 SenseVoice）
 
   function updateEngineHint() {
     var hint = el('engine-hint'), v = el('summary-engine').value;
@@ -261,6 +262,12 @@
       });
       updateEngineHint();
     }).catch(function () { updateEngineHint(); });
+  }
+
+  function initLangSelect() {
+    var sel = el('lang-select');
+    if (!sel) return;
+    sel.addEventListener('change', function () { currentLang = sel.value; });
   }
 
   /* ============ 笔记：本地自动保存 ============ */
@@ -398,7 +405,7 @@
   function doTranscribe(blob) {
     setStatus(el('upload-status'), '正在降噪转写…（首次运行需加载模型，可能稍慢）');
     var btn = el('btn-upload'); busy(btn, true, '处理中');
-    fileToWav(blob).then(function (wav) { return postAudio('/transcribe?denoise=1', wav); }).then(function (j) {
+    fileToWav(blob).then(function (wav) { return postAudio('/transcribe?denoise=1&language=' + encodeURIComponent(currentLang), wav); }).then(function (j) {
       renderResult(j.result); setStatus(el('upload-status'), '转写完成，共 ' + j.result.segments.length + ' 段', 'ok');
     }).catch(function (e) { setStatus(el('upload-status'), '处理失败：' + e.message, 'err'); })
       .finally(function () { busy(btn, false, '上传录音转写'); });
@@ -522,6 +529,7 @@
 
   healthCheck();
   initEngineSelect();
+  initLangSelect();
   loadSpeakers();
   restoreNotes();
 })();
