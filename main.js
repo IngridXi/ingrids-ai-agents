@@ -1401,6 +1401,7 @@ async function runBackgroundTask(ticket) {
   let emptyStreak = 0;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    q.heartbeat(ticket.id);   // 每轮心跳：让 Watchdog 知道还在推进，避免误判卡死
     const r = await callBgChat(engine, model, msgs, BG_TOOLS);
     if (!r.ok) {
       failStreak++;
@@ -1460,6 +1461,23 @@ async function runBackgroundTask(ticket) {
   q.fail(ticket.id, '超过 ' + MAX_ROUNDS + ' 轮仍未完成，请人工介入');
   broadcastTasks();
   return { ok: false, error: '超过最大轮次' };
+}
+
+/* ---------------- 后台任务 Watchdog：定时巡检卡死任务（吸收 dsh 自愈思想） ---------------- */
+let taskWatchdogTimer = null;
+function startTaskWatchdog() {
+  if (taskWatchdogTimer) return;
+  // 每 60 秒巡检一次：运行中但超过 15 分钟无心跳的任务判定为卡死，自动停止并标记失败
+  taskWatchdogTimer = setInterval(() => {
+    try {
+      const q = getTaskQueue();
+      const stale = q.listStale(15 * 60 * 1000);
+      if (stale.length) {
+        stale.forEach((t) => q.fail(t.id, '任务长时间无进展（超过 15 分钟无心跳），已自动停止。请检查后重试或换模型。'));
+        broadcastTasks();
+      }
+    } catch { /* 忽略巡检异常 */ }
+  }, 60 * 1000);
 }
 
 ipcMain.handle('task:list', () => {
@@ -2708,6 +2726,8 @@ if (gotSingleInstanceLock) {
     // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
     runReminderCheck();
     setInterval(() => { runReminderCheck(); }, 60 * 1000);
+    // 后台任务 Watchdog：定时巡检卡死任务（吸收 dsh 自愈思想）
+    startTaskWatchdog();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });

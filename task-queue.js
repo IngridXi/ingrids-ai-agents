@@ -97,6 +97,23 @@
     this._save();
   };
 
+  /** 心跳：任务运行中定期调用，刷新 updatedAt（供 Watchdog 判断是否卡死） */
+  TaskQueue.prototype.heartbeat = function (id) {
+    if (this.tickets[id] && this.tickets[id].status === 'running') {
+      this.tickets[id].updatedAt = nowIso();
+      this._save();
+    }
+  };
+
+  /** 返回「运行中但超过 staleMs 毫秒没有心跳」的任务（Watchdog 据此判定卡死） */
+  TaskQueue.prototype.listStale = function (staleMs) {
+    var now = Date.now();
+    return this.list('running').filter(function (t) {
+      var ts = new Date(t.updatedAt || t.createdAt).getTime();
+      return (now - ts) > (staleMs || 10 * 60 * 1000);
+    });
+  };
+
   /**
    * 创建一个任务单并入队。
    * @param {object} t   { title, goal, agent, engine, model, messages }
