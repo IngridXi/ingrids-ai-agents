@@ -28,6 +28,7 @@ require('./secretary-core.js');
 const SecretaryCore = globalThis.SecretaryCore;
 const NotionEngine = require('./notion-engine.js');
 const TermsEngine = require('./terms-engine.js');
+const TaskQueue = require('./task-queue.js');
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -62,6 +63,20 @@ function usageDir() {
   const dir = path.join(dataDir(), 'usage');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/* ---------------- 后台任务队列（吸收 dsh Ticket 思想） ---------------- */
+let taskQueue = null;
+function getTaskQueue() {
+  if (!taskQueue) taskQueue = new TaskQueue(dataDir(), { maxConcurrent: 2 });
+  return taskQueue;
+}
+// 任务状态变化时广播给渲染进程（任务中心面板实时刷新）；复用下方 broadcast() 投递
+function broadcastTasks() {
+  try {
+    const q = getTaskQueue();
+    broadcast('task:changed', { tickets: q.list(), counts: q.counts() });
+  } catch { /* 忽略广播失败 */ }
 }
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(path.join(dataDir(), name), 'utf8')); }
@@ -1184,6 +1199,309 @@ ipcMain.handle('chat:start', (e, payload) => {
       if (activeChatAbort === ctrl) activeChatAbort = null;
     }
   })();
+  return true;
+});
+
+/* ---------------- 后台任务队列：执行器与 IPC（吸收 dsh Ticket 思想） ---------------- */
+// 后台任务 = 一件「丢进队列、独立会话、后台自主跑完、完成或需决策才打扰用户」的活。
+// 复用了本工作台已有的工具函数（toolFs*/kbEngine/web 抓取），无需前端窗口参与。
+
+const BG_TOOLS = [
+  { type: 'function', function: { name: 'fs_list', description: '列出目录内容（文件名、是否目录、大小）', parameters: { type: 'object', properties: { dir: { type: 'string', description: '目录绝对路径，默认主目录' } } } } },
+  { type: 'function', function: { name: 'fs_read', description: '读取文本文件内容（<200KB）', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'fs_search', description: '按文件名搜索文件', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, root: { type: 'string', description: '搜索根目录，默认主目录' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'fs_write', description: '写入文本文件（覆盖前自动备份，仅主目录内）', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
+  { type: 'function', function: { name: 'web_search', description: '联网搜索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'web_fetch', description: '抓取网页正文', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'kb_search', description: '在本地知识库（Obsidian/Notion 索引）里检索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+];
+
+function buildBgSystemPrompt(ticket) {
+  return [
+    '你是 Ingrid 工作台的后台任务执行员，正在独立完成一个用户丢到后台的任务（用户可能不在旁边盯着）。',
+    '',
+    '自主工作准则（必须遵守）：',
+    '1. 持续自主推进：把能查、能读、能写、能核对的步骤全部自己做完，少打扰、多交付。',
+    '2. 只在三种情况停下：任务完成 / 确实需要用户提供信息或做决定 / 反复尝试后确实无法继续。',
+    '3. 工具失败要读错误信息、换方法重试，绝不停在「我失败了」；同一招失败两次就换思路。',
+    '4. 完成前核对结果；没做完就继续做。',
+    '',
+    '输出要求：最终交付用 Markdown，结构清晰、结论明确。',
+    '',
+    '本次任务目标：' + String(ticket.goal || ticket.title || ''),
+  ].join('\n');
+}
+
+function stripBgToolMarkers(s) {
+  return String(s || '').replace(/<tool\b[^>]*>[\s\S]*?<\/tool\b[^>]*>/g, '').trim();
+}
+
+function extractBgToolCalls(s) {
+  const out = [];
+  const re = /<\s*tool\b([^>]*)>([\s\S]*?)<\s*\/\s*tool\b[^>]*>/g;
+  let m;
+  const str = String(s || '');
+  while ((m = re.exec(str)) !== null) {
+    const nm = m[1].match(/\bname\s*=\s*"([^"]+)"/i);
+    if (!nm) continue;
+    const inner = (m[2] || '').trim();
+    let args = {};
+    if (inner) { try { args = JSON.parse(inner); } catch (e) { args = { raw: inner }; } }
+    out.push({ id: 'bg' + out.length, name: nm[1].trim(), arguments: JSON.stringify(args) });
+  }
+  return out;
+}
+
+async function executeBgTool(name, argsStr) {
+  let args = {};
+  try { args = JSON.parse(argsStr || '{}'); } catch (e) { args = {}; }
+  try {
+    switch (name) {
+      case 'fs_list': return toolFsList(args);
+      case 'fs_read': return toolFsRead(args);
+      case 'fs_search': return await toolFsSearch(args);
+      case 'fs_write': return toolFsWrite(args);
+      case 'kb_search': return kbEngine.search(String(args.query || ''), 5);
+      case 'web_search': return await bgWebSearch(String(args.query || ''));
+      case 'web_fetch': return await bgWebFetch(String(args.url || ''));
+      default: return { ok: false, error: '未知工具：' + name };
+    }
+  } catch (e) {
+    return { ok: false, error: '工具执行异常：' + String((e && e.message) || e) };
+  }
+}
+
+async function bgWebSearch(query) {
+  if (!query) return { ok: false, error: '搜索词为空' };
+  try {
+    const cheerio = require('cheerio');
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+    const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' }, redirect: 'follow', signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return { ok: false, error: '搜索失败：HTTP ' + res.status };
+    const $ = cheerio.load(await res.text());
+    const results = [];
+    $('.result').each(function () {
+      if (results.length >= 6) return;
+      const a = $(this).find('.result__a').first();
+      const title = a.text().trim();
+      let link = a.attr('href') || '';
+      const m = link.match(/uddg=([^&]+)/);
+      if (m) link = decodeURIComponent(m[1]);
+      const snippet = $(this).find('.result__snippet').first().text().trim();
+      if (title && link) results.push({ title: title, link: link, snippet: snippet });
+    });
+    if (!results.length) return { ok: false, error: '未取到搜索结果（可能被限流）' };
+    return { ok: true, query: query, results: results };
+  } catch (err) { return { ok: false, error: '搜索失败：' + String((err && err.message) || err) }; }
+}
+
+async function bgWebFetch(url) {
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https 链接' };
+  try {
+    const cheerio = require('cheerio');
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    if (!res.ok) return { ok: false, error: '抓取失败：HTTP ' + res.status };
+    const $ = cheerio.load(await res.text());
+    $('script,style,nav,footer,header,aside,iframe,noscript').remove();
+    let text = $('body').text().replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+    if (text.length > 16000) text = text.slice(0, 16000) + '\n…（内容过长已截断）';
+    if (!text) return { ok: false, error: '未能提取到正文' };
+    return { ok: true, url: url, content: text };
+  } catch (err) { return { ok: false, error: '抓取失败：' + String((err && err.message) || err) }; }
+}
+
+// 带 tools 参数的流式调用（后台任务专用，返回完整文本 + 原生 tool_calls）
+async function callBgChat(engine, model, messages, tools) {
+  const cfg = CHAT_ENDPOINTS[engine];
+  if (!cfg) return { ok: false, error: '未知引擎：' + engine };
+  const settings = decryptSettings(readSettingsRaw());
+  const key = cfg.keyField ? settings[cfg.keyField] : '';
+  if (cfg.keyField && !key) return { ok: false, error: '尚未配置 ' + engine + ' 的 API Key' };
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers.Authorization = 'Bearer ' + key;
+  try {
+    const STALL_MS = 120000;
+    const ctrl = new AbortController();
+    let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
+    const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
+    const body = { model: model || cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 };
+    if (tools && tools.length) { body.tools = tools; body.tool_choice = 'auto'; }
+    const resp = await fetch(cfg.url, { method: 'POST', headers, signal: ctrl.signal, body: JSON.stringify(body) });
+    if (!resp.ok) {
+      clearTimeout(stallTimer);
+      let msg = 'HTTP ' + resp.status;
+      try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
+      return { ok: false, error: msg };
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '', text = '', truncated = false;
+    const toolCalls = {};
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      resetStall();
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 1);
+        if (!line || line.indexOf('data:') !== 0) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const j = JSON.parse(data);
+          const choice = j.choices && j.choices[0];
+          if (choice && choice.finish_reason === 'length') truncated = true;
+          const delta = choice && choice.delta;
+          if (!delta) continue;
+          if (delta.content) text += delta.content;
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const ti = tc.index != null ? tc.index : 0;
+              if (!toolCalls[ti]) toolCalls[ti] = { id: '', name: '', arguments: '' };
+              if (tc.id) toolCalls[ti].id = tc.id;
+              if (tc.function && tc.function.name) toolCalls[ti].name = tc.function.name;
+              if (tc.function && tc.function.arguments) toolCalls[ti].arguments += tc.function.arguments;
+            }
+          }
+        } catch { /* 忽略坏块 */ }
+      }
+    }
+    clearTimeout(stallTimer);
+    const assembled = Object.keys(toolCalls).map((k) => toolCalls[k]).filter((t) => t.name);
+    return { ok: true, text: text, tool_calls: assembled, truncated: truncated };
+  } catch (err) {
+    return { ok: false, error: '请求失败：' + String((err && err.message) || err) };
+  }
+}
+
+// 后台任务主循环：单任务独立会话，最多 10 轮工具，完成/失败/需决策时落库并通知
+async function runBackgroundTask(ticket) {
+  const q = getTaskQueue();
+  const engine = String(ticket.engine || 'deepseek');
+  const model = String(ticket.model || '');
+  const cfg = CHAT_ENDPOINTS[engine];
+  if (!cfg) { q.fail(ticket.id, '未知引擎：' + engine); broadcastTasks(); return { ok: false, error: '未知引擎：' + engine }; }
+
+  q.start(ticket.id);
+  broadcastTasks();
+
+  let msgs = [{ role: 'system', content: buildBgSystemPrompt(ticket) }];
+  if (Array.isArray(ticket.messages) && ticket.messages.length) {
+    msgs = msgs.concat(ticket.messages);
+  } else {
+    msgs.push({ role: 'user', content: String(ticket.goal || ticket.title || '') });
+  }
+
+  const MAX_ROUNDS = 10;
+  let failStreak = 0;
+  let emptyStreak = 0;
+
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const r = await callBgChat(engine, model, msgs, BG_TOOLS);
+    if (!r.ok) {
+      failStreak++;
+      if (failStreak >= 3) { q.fail(ticket.id, r.error); broadcastTasks(); return r; }
+      msgs.push({ role: 'user', content: '【系统提示】上一轮调用失败：' + r.error + '。请重试或换一种方式继续。' });
+      continue;
+    }
+    const raw = r.text || '';
+
+    // 原生工具调用（优先）
+    if (r.tool_calls && r.tool_calls.length) {
+      failStreak = 0; emptyStreak = 0;
+      const results = [];
+      for (const tc of r.tool_calls) {
+        const res = await executeBgTool(tc.name, tc.arguments);
+        results.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(res) });
+      }
+      msgs.push({
+        role: 'assistant', content: raw,
+        tool_calls: r.tool_calls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })),
+      });
+      msgs = msgs.concat(results);
+      continue;
+    }
+
+    // 文本 <tool> 标签兜底（本地 Ollama 等）
+    const textCalls = extractBgToolCalls(raw);
+    if (textCalls.length) {
+      failStreak = 0; emptyStreak = 0;
+      const results = [];
+      for (const tc of textCalls) {
+        const res = await executeBgTool(tc.name, tc.arguments);
+        results.push('【工具 ' + tc.name + ' 结果】\n' + JSON.stringify(res));
+      }
+      msgs.push({ role: 'assistant', content: raw });
+      msgs.push({ role: 'user', content: results.join('\n\n') });
+      continue;
+    }
+
+    // 无工具调用：检查空回复
+    const stripped = stripBgToolMarkers(raw).replace(/^\s+|\s+$/g, '');
+    if (!stripped) {
+      emptyStreak++;
+      if (emptyStreak >= 4) { q.fail(ticket.id, '连续多次空回复，模型可能暂时异常'); broadcastTasks(); return { ok: false, error: '空回复' }; }
+      msgs.push({ role: 'assistant', content: raw });
+      msgs.push({ role: 'user', content: '你上一条只有思考没有正文，请直接输出完整回答（需要就调用工具继续推进），不要只写思考过程。' });
+      continue;
+    }
+
+    // 有正文：完成
+    failStreak = 0;
+    q.complete(ticket.id, stripBgToolMarkers(raw));
+    broadcastTasks();
+    return { ok: true, result: q.get(ticket.id).result };
+  }
+
+  q.fail(ticket.id, '超过 ' + MAX_ROUNDS + ' 轮仍未完成，请人工介入');
+  broadcastTasks();
+  return { ok: false, error: '超过最大轮次' };
+}
+
+ipcMain.handle('task:list', () => {
+  const q = getTaskQueue();
+  return { tickets: q.list(), counts: q.counts() };
+});
+ipcMain.handle('task:create', (_e, t) => {
+  const ticket = getTaskQueue().enqueue(t || {});
+  broadcastTasks();
+  return ticket;
+});
+ipcMain.handle('task:update', (_e, id, patch) => {
+  const q = getTaskQueue();
+  if (!q.get(id)) return null;
+  if (patch && patch.status === 'cancelled') q.cancel(id);
+  else if (patch && patch.status === 'queued') q.setStatus(id, 'queued');
+  broadcastTasks();
+  return q.get(id);
+});
+ipcMain.handle('task:remove', (_e, id) => { getTaskQueue().remove(id); broadcastTasks(); return true; });
+ipcMain.handle('task:clear', () => {
+  const q = getTaskQueue();
+  ['done', 'failed', 'cancelled'].forEach((s) => q.list(s).forEach((t) => q.remove(t.id)));
+  broadcastTasks();
+  return true;
+});
+ipcMain.handle('task:run', async (_e, id) => {
+  const t = getTaskQueue().get(id);
+  if (!t) return { ok: false, error: '任务不存在' };
+  if (t.status === 'running') return { ok: false, error: '任务已在运行' };
+  // 后台执行，不阻塞 IPC；完成后由 broadcastTasks 通知面板
+  runBackgroundTask(t).catch((e) => {
+    getTaskQueue().fail(t.id, String((e && e.message) || e));
+    broadcastTasks();
+  });
+  return { ok: true, id: t.id };
+});
+ipcMain.handle('task:stop', (_e, id) => {
+  const q = getTaskQueue();
+  const t = q.get(id);
+  if (t && (t.status === 'running' || t.status === 'queued')) q.cancel(id);
+  broadcastTasks();
   return true;
 });
 

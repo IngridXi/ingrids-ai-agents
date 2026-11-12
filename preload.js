@@ -174,4 +174,14 @@ contextBridge.exposeInMainWorld('ingrid', {
   chatHistorySave: (name, history) => ipcRenderer.invoke('chat:history:save', name, history),
   chatHistoryClear: (name) => ipcRenderer.invoke('chat:history:clear', name),
   chatBackup: () => ipcRenderer.invoke('chat:backup'),
+
+  // 后台任务队列（丢任务后台跑、完成/需决策才提醒）
+  taskList: () => ipcRenderer.invoke('task:list'),
+  taskCreate: (t) => ipcRenderer.invoke('task:create', t),
+  taskUpdate: (id, patch) => ipcRenderer.invoke('task:update', id, patch),
+  taskRemove: (id) => ipcRenderer.invoke('task:remove', id),
+  taskClear: () => ipcRenderer.invoke('task:clear'),
+  taskRun: (id) => ipcRenderer.invoke('task:run', id),
+  taskStop: (id) => ipcRenderer.invoke('task:stop', id),
+  onTaskChanged: (cb) => ipcRenderer.on('task:changed', (_e, d) => { if (cb) cb(d || {}); }),
 });

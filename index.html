@@ -317,6 +317,7 @@
         <div class="side-sep">知识库</div>
         <button class="side-item" id="navKnowledge"><span class="ic" data-icon="book"></span><span>知识库</span></button>
         <div class="side-sep">系统</div>
+        <button class="side-item" id="navTasks"><span class="ic" data-icon="zap"></span><span>任务中心</span><span class="bdot" id="taskDot" hidden></span></button>
         <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>调度中枢</span><span class="scnt" id="skillsCount">0</span></button>
         <button class="side-item" id="navSettings"><span class="ic" data-icon="settings"></span><span>引擎设置</span></button>
       </nav>
@@ -1075,6 +1076,7 @@ document.addEventListener('click', e => {
   if (id === 'navHome') { setActiveNav('navHome'); var s = document.querySelector('.shell'); if (s) s.scrollTop = 0; return; }
   if (id === 'navSettings') { openSettings(); setActiveNav('navSettings'); return; }
   if (id === 'navSkills') { if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator(); setActiveNav('navSkills'); return; }
+  if (id === 'navTasks') { if (typeof window.__openTasks === 'function') window.__openTasks(); setActiveNav('navTasks'); return; }
   if (id === 'navCalendar') { if (typeof window.__openCalendar === 'function') window.__openCalendar(); return; }
   if (id === 'navKnowledge') { if (typeof window.__openKnowledge === 'function') window.__openKnowledge(); setActiveNav('navKnowledge'); return; }
   // navSecretary / navSupervisor 由各自面板脚本绑定开关
@@ -1123,5 +1125,6 @@ window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents:
 <script src="secretary.js"></script>
 <script src="calendar.js"></script>
 <script src="knowledge.js"></script>
+<script src="tasks.js"></script>
 </body>
 </html>
