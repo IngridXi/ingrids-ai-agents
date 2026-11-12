@@ -9,3 +9,6 @@ extensions/meeting_audio/speaker_profiles/
 extensions/meeting_audio/server.log
 extensions/meeting_audio/__pycache__/
 *.pyc
+
+# 定时自动化任务的运行日志（机器自动写的流水账，不入库）
+.workbuddy/memory/automations/
