@@ -1480,6 +1480,32 @@ function startTaskWatchdog() {
   }, 60 * 1000);
 }
 
+/* ---------------- 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想） ---------------- */
+let taskSchedulerTimer = null;
+function startTaskScheduler() {
+  if (taskSchedulerTimer) return;
+  // 每 60 秒检查一次：带 schedule 的任务到点触发（复制成一次性任务入队并后台跑）
+  taskSchedulerTimer = setInterval(() => {
+    try {
+      const q = getTaskQueue();
+      const now = new Date();
+      const hhmm = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+      const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+      q.listScheduled().forEach((t) => {
+        if (t.schedule === hhmm && t.lastRunDate !== today) {
+          q.markScheduledRun(t.id, today);
+          const copy = q.enqueue({ title: t.title, goal: t.goal, agent: t.agent, engine: t.engine, model: t.model });
+          broadcastTasks();
+          runBackgroundTask(copy).catch((e) => {
+            getTaskQueue().fail(copy.id, String((e && e.message) || e));
+            broadcastTasks();
+          });
+        }
+      });
+    } catch { /* 忽略调度异常 */ }
+  }, 60 * 1000);
+}
+
 ipcMain.handle('task:list', () => {
   const q = getTaskQueue();
   return { tickets: q.list(), counts: q.counts() };
@@ -2728,6 +2754,8 @@ if (gotSingleInstanceLock) {
     setInterval(() => { runReminderCheck(); }, 60 * 1000);
     // 后台任务 Watchdog：定时巡检卡死任务（吸收 dsh 自愈思想）
     startTaskWatchdog();
+    // 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想）
+    startTaskScheduler();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });

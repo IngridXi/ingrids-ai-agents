@@ -114,6 +114,23 @@
     });
   };
 
+  /** 返回所有带定时计划（schedule）的任务模板 */
+  TaskQueue.prototype.listScheduled = function () {
+    return this.list().filter(function (t) { return !!t.schedule; });
+  };
+
+  /** 记录定时任务在某日期已触发，避免同日重复触发（用本地日期） */
+  TaskQueue.prototype.markScheduledRun = function (id, dateStr) {
+    if (this.tickets[id]) {
+      if (!dateStr) {
+        const d = new Date();
+        dateStr = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      }
+      this.tickets[id].lastRunDate = dateStr;
+      this._save();
+    }
+  };
+
   /**
    * 创建一个任务单并入队。
    * @param {object} t   { title, goal, agent, engine, model, messages }
@@ -135,6 +152,8 @@
       question: '',
       result: '',
       error: '',
+      schedule: t.schedule || null,   // 定时任务："HH:MM" 每天触发；null = 一次性
+      lastRunDate: t.lastRunDate || '', // 定时任务上次触发的日期（YYYY-MM-DD），避免同日重复触发
       createdAt: now,
       updatedAt: now,
     };

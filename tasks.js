@@ -59,7 +59,7 @@
     '.tk-footbar .tk-note{font-size:11px;color:#b4b2a9;}',
   ].join('');
 
-  var mask, panel, bodyEl, form, titleEl, goalEl, engineEl, goBtn, clearBtn, noteEl;
+  var mask, panel, bodyEl, form, titleEl, goalEl, engineEl, scheduleEl, goBtn, clearBtn, noteEl;
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -98,6 +98,7 @@
       '      <option value="gpt">GPT</option>' +
       '      <option value="qwen">Qwen</option>' +
       '    </select>' +
+      '    <input class="tk-schedule" placeholder="定时(可选) 如 09:00 每天跑">' +
       '    <button class="tk-go-btn" type="button">丢到后台运行</button>' +
       '  </div>' +
       '  <div class="tk-body"></div>' +
@@ -113,6 +114,7 @@
     titleEl = mask.querySelector('.tk-title');
     goalEl = mask.querySelector('.tk-goal');
     engineEl = mask.querySelector('.tk-engine');
+    scheduleEl = mask.querySelector('.tk-schedule');
     goBtn = mask.querySelector('.tk-go-btn');
     clearBtn = mask.querySelector('.tk-footbar button');
     noteEl = mask.querySelector('.tk-note');
@@ -164,9 +166,11 @@
     // 新任务在上，按创建时间倒序
     tickets.slice().reverse().forEach(function (t) {
       var m = STATUS_META[t.status] || STATUS_META.queued;
+      var badge = t.schedule
+        ? '<span class="tk-badge" style="color:#534AB7;background:#EEEDFE">定时 ' + esc(t.schedule) + ' 每天</span>'
+        : '<span class="tk-badge" style="color:' + m.color + ';background:' + m.bg + '">' + m.label + '</span>';
       html += '<div class="tk-item">' +
-        '<div class="tk-top"><span class="tk-title">' + esc(t.title || '未命名任务') + '</span>' +
-        '<span class="tk-badge" style="color:' + m.color + ';background:' + m.bg + '">' + m.label + '</span></div>';
+        '<div class="tk-top"><span class="tk-title">' + esc(t.title || '未命名任务') + '</span>' + badge + '</div>';
       if (t.goal) html += '<div class="tk-goal">' + esc(t.goal) + '</div>';
       if (t.status === 'waiting' && t.question) html += '<div class="tk-question">' + esc(t.question) + '</div>';
       if (t.status === 'done' && t.result) html += '<div class="tk-result">' + esc(t.result) + '</div>';
@@ -202,18 +206,27 @@
     var goal = goalEl.value.trim();
     if (!goal) { goalEl.focus(); return; }
     if (!IS_DESKTOP) return;
+    var sched = scheduleEl.value.trim();
+    if (sched && !/^([01]\d|2[0-3]):[0-5]\d$/.test(sched)) {
+      alert('定时格式应为 HH:MM（24 小时制），例如 09:00，或留空表示只跑一次');
+      scheduleEl.focus();
+      return;
+    }
     var t = {
       title: titleEl.value.trim() || goal.slice(0, 20),
       goal: goal,
       engine: engineEl.value || 'deepseek',
+      schedule: sched || null,
     };
     goBtn.disabled = true;
     window.ingrid.taskCreate(t).then(function (ticket) {
       titleEl.value = '';
       goalEl.value = '';
+      scheduleEl.value = '';
       goBtn.disabled = false;
-      // 创建后立即丢后台跑
-      window.ingrid.taskRun(ticket.id).then(load);
+      // 定时任务交给调度器到点触发；一次性任务创建后立即丢后台跑
+      if (!sched) window.ingrid.taskRun(ticket.id).then(load);
+      else load();
     }).catch(function (e) {
       goBtn.disabled = false;
       alert('创建失败：' + ((e && e.message) || e));
