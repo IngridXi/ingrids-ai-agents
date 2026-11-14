@@ -2479,6 +2479,19 @@ ipcMain.handle('notion:research-config', (_e, cfg) => {
   return { parentId: researchSyncParentId(), dir: researchSyncDir() };
 });
 
+// 列出 Notion 里所有页面（供研究同步官「选一个作为同步目标」的下拉选择器用，免手动复制 ID）
+ipcMain.handle('notion:list-pages', async () => {
+  const t = notionToken();
+  if (!t) return { ok: false, error: '尚未配置 Notion token' };
+  try {
+    const objs = await NotionEngine.listAll(t);
+    const pages = objs
+      .filter((o) => o.object === 'page')
+      .map((o) => ({ id: o.id, title: o.title || o.id, url: o.url || '' }));
+    return { ok: true, pages };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+
 /* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
 const OAUTH_PORT = 18888;
 const OAUTH_REDIRECT = 'http://localhost:' + OAUTH_PORT;

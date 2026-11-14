@@ -66,6 +66,12 @@
     font: inherit; font-size: 13px; color: var(--ink); background: #fbfaff; outline: none;
   }
   input:focus { border-color: var(--accent); }
+  select {
+    flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px;
+    font: inherit; font-size: 13px; color: var(--ink); background: #fbfaff; outline: none;
+    cursor: pointer;
+  }
+  select:focus { border-color: var(--accent); }
   .btn {
     display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff;
     padding: 9px 16px; border-radius: 9px; font-weight: 600; font-size: 13px; border: 0; cursor: pointer; font-family: inherit; white-space: nowrap;
@@ -167,16 +173,20 @@
         </div>
         <div class="panel">
           <div class="p-title">⬆️ 研究同步官（本地 latest → Notion）</div>
-          <div class="p-desc">把电脑 latest 目录里的 .md / .docx 自动推成 Notion 子页面（docx 自动提取正文）。需先在 Notion 建一个「研究进展」父页面并授权集成，再把页面 ID 填到下面。</div>
+          <div class="p-desc">把电脑 latest 目录里的 .md / .docx 一键推成 Notion 子页面（docx 自动提取正文）。先点「刷新列表」，从下拉框选一个页面作为接收页，再点「立即推送」。</div>
           <div class="config-inline">
-            <label>Notion 父页面 ID（32 位）<input type="text" id="researchParentId" placeholder="从页面 URL 复制，例如 1a2b3c4d5e6f..."></label>
+            <label>同步到哪个 Notion 页面
+              <div class="row" style="margin-top:4px">
+                <select id="researchParentSel"><option value="">（点「刷新列表」加载…）</option></select>
+                <button class="btn ghost small" id="researchParentRefresh">刷新列表</button>
+              </div>
+            </label>
           </div>
           <div class="config-inline">
             <label>本地同步目录<input type="text" id="researchDir" placeholder="latest 目录绝对路径（留空用默认）"></label>
           </div>
           <div class="row">
-            <button class="btn ghost" id="researchConfigBtn">保存配置</button>
-            <button class="btn" id="researchSyncBtn">立即推送</button>
+            <button class="btn" id="researchSyncBtn" style="flex:1">立即推送（一键同步到 Notion）</button>
           </div>
           <div class="out" id="researchSyncOut"></div>
         </div>
@@ -345,9 +355,35 @@
     if (!ing.notionResearchConfig) return;
     ing.notionResearchConfig(null).then(function (c) {
       if (!c) return;
-      if (c.parentId) el('researchParentId').value = c.parentId;
       if (c.dir) el('researchDir').value = c.dir;
+      // 自动加载 Notion 页面列表，并回填已配置的父页面
+      loadNotionPages(c.parentId || '');
     }).catch(function () {});
+  }
+  function loadNotionPages(preferredId) {
+    if (!ing.notionListPages) return;
+    var sel = el('researchParentSel');
+    sel.innerHTML = '<option value="">加载中…</option>';
+    ing.notionListPages().then(function (r) {
+      sel.innerHTML = '';
+      if (!r || !r.ok) {
+        sel.innerHTML = '<option value="">（读取失败：' + esc((r && r.error) || '') + '）</option>';
+        return;
+      }
+      if (!r.pages || !r.pages.length) {
+        sel.innerHTML = '<option value="">（没有可用页面：请先在 Notion 建页面并授权集成）</option>';
+        return;
+      }
+      r.pages.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = p.title + '（' + p.id.slice(0, 8) + '…）';
+        if (preferredId && p.id === preferredId) o.selected = true;
+        sel.appendChild(o);
+      });
+    }).catch(function (e) {
+      sel.innerHTML = '<option value="">（读取失败：' + esc(String(e && e.message || e)) + '）</option>';
+    });
   }
   el('notionSave').addEventListener('click', function () {
     var t = el('notionToken').value.trim();
@@ -388,23 +424,27 @@
       showOut('notionOut', '<b class="ok">同步完成</b>：当前 ' + r.total + ' 篇' + change + '。<br><span class="muted">' + t + ' · 之后每 30 分钟自动同步。</span>');
     }).catch(function (e) { showOutText('notionOut', '同步失败：' + (e && e.message || e)); });
   });
-  el('researchConfigBtn').addEventListener('click', function () {
-    if (!ing.notionResearchConfig) return;
-    var pid = el('researchParentId').value.trim();
-    var dir = el('researchDir').value.trim();
-    ing.notionResearchConfig({ parentId: pid, dir: dir }).then(function () { alert('研究同步官配置已保存。'); }).catch(function (e) { alert(String(e && e.message || e)); });
+  el('researchParentRefresh').addEventListener('click', function () {
+    loadNotionPages('');
+    showOutText('researchSyncOut', '已刷新页面列表，请从下拉框选择一个作为同步接收页。');
   });
   el('researchSyncBtn').addEventListener('click', function () {
     if (!ing.notionResearchSync) return;
+    var pid = el('researchParentSel').value || '';
+    var dir = el('researchDir').value.trim();
+    if (!pid) { showOut('researchSyncOut', '<b class="err">请先选择同步目标页面</b>：点「刷新列表」→ 从下拉框选一个 Notion 页面作为接收页。'); return; }
     showOutText('researchSyncOut', '推送中（读取 latest 目录 + 提取 docx 正文 + 写入 Notion）…');
-    ing.notionResearchSync().then(function (r) {
+    var save = ing.notionResearchConfig ? ing.notionResearchConfig({ parentId: pid, dir: dir }) : Promise.resolve();
+    save.then(function () {
+      return ing.notionResearchSync();
+    }).then(function (r) {
       if (!r) { showOutText('researchSyncOut', '推送失败：无返回'); return; }
       if (!r.ok) { showOut('researchSyncOut', '<b class="err">推送失败</b>：' + esc(r.error || '')); return; }
       var t = new Date(r.syncedAt).toLocaleTimeString();
       var html = '<b class="ok">推送完成</b>：共 ' + r.total + ' 个文件（新增 ' + r.created + '、更新 ' + r.updated + '、跳过 ' + r.unchanged + '）';
       if (r.failed) html += '<br><b class="err">失败 ' + r.failed + ' 个</b>';
       if (r.errors && r.errors.length) html += '<br><span class="muted">' + esc(r.errors.slice(0, 5).join('；')) + '</span>';
-      html += '<br><span class="muted">' + t + ' · 之后每 30 分钟自动检查推送。</span>';
+      html += '<br><span class="muted">' + t + ' · 已记住这个接收页，之后每 30 分钟自动检查推送。</span>';
       showOut('researchSyncOut', html);
     }).catch(function (e) { showOutText('researchSyncOut', '推送失败：' + (e && e.message || e)); });
   });

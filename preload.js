@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   onNotionSynced: (cb) => ipcRenderer.on('notion:synced', (_e, d) => { if (cb) cb(d || {}); }),
   notionResearchSync: () => ipcRenderer.invoke('notion:research-sync'),
   notionResearchConfig: (cfg) => ipcRenderer.invoke('notion:research-config', cfg),
+  notionListPages: () => ipcRenderer.invoke('notion:list-pages'),
   onResearchSynced: (cb) => ipcRenderer.on('research:synced', (_e, d) => { if (cb) cb(d || {}); }),
   fsPermCheck: () => ipcRenderer.invoke('fs:perm-check'),
 
