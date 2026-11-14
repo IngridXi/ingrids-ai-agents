@@ -115,8 +115,8 @@
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook 邮箱</button></div></div>' +
-      '<div class="sec-sec"><label>知识库 · Notion · 权限</label>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('link') + ' 连接 Notion</button></div>' +
+      '<div class="sec-sec"><label>知识库</label>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('book') + ' 打开知识库（Notion · Obsidian）</button></div>' +
         '<div class="sec-bout" id="secNotionOut" hidden></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secPerm" style="flex:1">' + iconSvg('lock') + ' 系统权限自检</button></div>' +
         '<div class="sec-bout" id="secPermOut" hidden></div></div>' +
@@ -571,7 +571,10 @@
       }).catch(function (e) { box.textContent = '推送失败：' + (e && e.message || e); });
     });
   }
-  document.getElementById('secNotion').addEventListener('click', openNotionModal);
+  document.getElementById('secNotion').addEventListener('click', function () {
+    if (typeof window.openAgentInView === 'function') window.openAgentInView({ name: '知识库', href: 'agents/knowledge/index.html' });
+    else if (window.ingrid && window.ingrid.openAgent) window.ingrid.openAgent('agents/knowledge/index.html');
+  });
 
   /* 系统权限自检：检测 macOS 受保护目录（桌面/文稿/下载）可读性 */
   document.getElementById('secPerm').addEventListener('click', function () {

@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识库 · Ingrid's AI Agents</title>
+<style>
+  :root {
+    --accent: #7c6fd6;
+    --accent-2: #6355c4;
+    --accent-soft: #ebe7f7;
+    --deep: #4a3f8c;
+    --ink: #26232e;
+    --ink-soft: #55515e;
+    --ink-faint: #8f8b98;
+    --line: #e6e4ec;
+    --bg: #f7f6f9;
+    --card: #ffffff;
+    --danger: #dc2626;
+    --ok: #16a34a;
+    --warn-soft: #fdf6e7;
+    --gold: #c79b4c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--ink); display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
+    box-shadow: 0 2px 12px rgba(74,63,140,.18);
+  }
+  header .logo { width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,.18); display: grid; place-items: center; font-size: 19px; flex: none; }
+  header .title { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  header .title .sub { font-size: 11.5px; font-weight: 400; opacity: .82; }
+
+  .layout { flex: 1; display: flex; min-height: 0; }
+  .sidenav { flex: none; width: 200px; background: #f1eff6; border-right: 1px solid var(--line); padding: 12px 10px; overflow-y: auto; }
+  .sidenav .grp { font-size: 11px; color: var(--ink-faint); padding: 8px 10px 4px; letter-spacing: .5px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: transparent; border: 1px solid transparent; border-radius: 10px;
+    padding: 10px 12px; cursor: pointer; font-family: inherit; font-size: 13.5px; color: var(--ink);
+    transition: background .12s, border-color .12s; margin-bottom: 2px;
+  }
+  .nav-item:hover { background: #e9e6f1; }
+  .nav-item.active { background: var(--card); border-color: var(--line); box-shadow: 0 1px 4px rgba(40,32,70,.10); color: var(--accent-2); font-weight: 600; }
+  .nav-item .em { font-size: 16px; }
+
+  .main { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px 32px; }
+  .main .page-head { margin-bottom: 16px; }
+  .main .page-head h2 { font-size: 19px; font-weight: 700; }
+  .main .page-head .desc { font-size: 12.5px; color: var(--ink-faint); margin-top: 3px; line-height: 1.6; }
+
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+  .panel .p-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .panel .p-title .em { font-size: 16px; }
+  .panel .p-desc { font-size: 12px; color: var(--ink-faint); margin-bottom: 12px; line-height: 1.6; }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row + .row { margin-top: 10px; }
+  input[type=text], input[type=password], input[type=number] {
+    flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px;
+    font: inherit; font-size: 13px; color: var(--ink); background: #fbfaff; outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff;
+    padding: 9px 16px; border-radius: 9px; font-weight: 600; font-size: 13px; border: 0; cursor: pointer; font-family: inherit; white-space: nowrap;
+  }
+  .btn:hover { background: var(--accent-2); }
+  .btn.ghost { background: transparent; color: var(--ink-soft); border: 1px solid var(--line); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent-2); background: var(--accent-soft); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.small { padding: 6px 12px; font-size: 12px; border-radius: 7px; }
+
+  .out { display: none; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; background: #fbfafd; font-size: 12.5px; color: var(--ink-soft); line-height: 1.7; max-height: 260px; overflow: auto; }
+  .out.show { display: block; }
+  .out b.ok { color: var(--ok); }
+  .out b.err { color: var(--danger); }
+  .out .muted { color: var(--ink-faint); }
+  .out code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+
+  .src-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+  .src-card .top { display: flex; align-items: center; gap: 10px; }
+  .src-card .ic { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; background: var(--accent-soft); flex: none; }
+  .src-card .nm { font-size: 14px; font-weight: 700; }
+  .src-card .st { margin-left: auto; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .src-card .st.ok { background: #e9f7ee; color: var(--ok); }
+  .src-card .st.miss { background: #f1f0f5; color: var(--ink-faint); }
+  .src-card .meta { font-size: 12px; color: var(--ink-soft); margin-top: 7px; line-height: 1.6; word-break: break-all; }
+  .src-card .acts { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+  .kb-res .it { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .kb-res .it:last-child { border-bottom: none; }
+  .kb-res .it b { color: var(--ink); }
+  .kb-res .it .src { font-size: 10.5px; color: var(--accent); font-weight: 700; }
+  .kb-res .it .p { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--ink-faint); margin-top: 2px; word-break: break-all; }
+
+  .ws-note { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
+  .ws-note:hover { border-color: var(--accent); }
+  .ws-main { flex: 1; min-width: 0; }
+  .ws-title { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  .ws-tag { font-size: 11px; color: var(--accent-2); background: var(--accent-soft); border-radius: 6px; padding: 1px 7px; }
+  .ws-time { font-size: 11px; color: var(--ink-faint); }
+  .empty { text-align: center; color: var(--ink-faint); font-size: 13px; padding: 32px 0; }
+  .err { font-size: 13px; color: var(--danger); background: #fcebeb; border-radius: 8px; padding: 12px; }
+  .hint { font-size: 11.5px; color: var(--ink-faint); line-height: 1.7; margin-top: 8px; }
+
+  .label-inline { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+  .config-inline { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .config-inline label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-faint); }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">📚</div>
+    <div class="title">知识库<div class="sub">Zotero · Obsidian · Notion · 术语图谱，统一入口</div></div>
+  </header>
+  <div class="layout">
+    <nav class="sidenav" id="sidenav">
+      <div class="grp">知识源</div>
+      <button class="nav-item active" data-tab="overview"><span class="em">🗂️</span> 概览与检索</button>
+      <button class="nav-item" data-tab="notion"><span class="em">🧠</span> Notion</button>
+      <button class="nav-item" data-tab="workspace"><span class="em">📝</span> Obsidian 工位库</button>
+      <button class="nav-item" data-tab="terms"><span class="em">🕸️</span> 术语图谱</button>
+      <div class="grp">系统</div>
+      <button class="nav-item" data-tab="perm"><span class="em">🛡️</span> 权限自检</button>
+    </nav>
+    <div class="main" id="main">
+      <!-- 概览 -->
+      <section id="tab-overview">
+        <div class="page-head"><h2>概览与检索</h2><div class="desc">三个来源（Zotero / Obsidian / Notion）统一查看，跨库全文检索。</div></div>
+        <div class="panel">
+          <div class="p-title">🔍 跨库搜索</div>
+          <div class="row">
+            <input type="text" id="kbQuery" placeholder="搜索：文献 / 笔记 / Notion 页面…">
+            <button class="btn" id="kbSearchBtn">搜索</button>
+          </div>
+          <div class="out kb-res" id="kbRes"></div>
+        </div>
+        <div class="panel">
+          <div class="p-title">📚 三个来源</div>
+          <div id="kbSources"><div class="hint">检测中…</div></div>
+        </div>
+      </section>
+
+      <!-- Notion -->
+      <section id="tab-notion" style="display:none">
+        <div class="page-head"><h2>Notion</h2><div class="desc">连接、同步、以及把本地 latest 研究文件推送到 Notion。</div></div>
+        <div class="panel">
+          <div class="p-title">🔑 连接</div>
+          <div class="p-desc">在 notion.so/my-integrations 创建集成，粘贴 Internal Integration Token（形如 ntn_ / secret_ 开头）。token 加密存本机钥匙串，不上传。</div>
+          <div class="row">
+            <input type="password" id="notionToken" placeholder="ntn_... 或 secret_...">
+            <button class="btn" id="notionSave">保存 token</button>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="notionTest">测试连接</button>
+            <button class="btn ghost" id="notionSyncBtn">立即同步（拉取索引）</button>
+          </div>
+          <div class="out" id="notionOut"></div>
+          <div class="hint">⚠️ token 有效 ≠ 能看到内容：保存后还要在 Notion 里给要读的页面/数据库授权这个集成（页面右上角 ··· → Connections → 勾选），否则搜不到。</div>
+        </div>
+        <div class="panel">
+          <div class="p-title">⬆️ 研究同步官（本地 latest → Notion）</div>
+          <div class="p-desc">把电脑 latest 目录里的 .md / .docx 自动推成 Notion 子页面（docx 自动提取正文）。需先在 Notion 建一个「研究进展」父页面并授权集成，再把页面 ID 填到下面。</div>
+          <div class="config-inline">
+            <label>Notion 父页面 ID（32 位）<input type="text" id="researchParentId" placeholder="从页面 URL 复制，例如 1a2b3c4d5e6f..."></label>
+          </div>
+          <div class="config-inline">
+            <label>本地同步目录<input type="text" id="researchDir" placeholder="latest 目录绝对路径（留空用默认）"></label>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="researchConfigBtn">保存配置</button>
+            <button class="btn" id="researchSyncBtn">立即推送</button>
+          </div>
+          <div class="out" id="researchSyncOut"></div>
+        </div>
+      </section>
+
+      <!-- Obsidian 工位库 -->
+      <section id="tab-workspace" style="display:none">
+        <div class="page-head"><h2>Obsidian 工位库</h2><div class="desc">AI 的「凌乱库」——AI 只在这里跑脚本、写草稿；确认值得留，再一键晋升到主库。判断权始终在你手上。</div></div>
+        <div class="panel">
+          <div class="row">
+            <span class="label-inline">晋升到主库目录：</span>
+            <input type="text" id="wsTargetInput" value="术语库" style="max-width:180px">
+            <button class="btn ghost small" id="wsRefresh">刷新</button>
+          </div>
+          <div style="height:12px"></div>
+          <div id="wsBody"><div class="empty">读取中…</div></div>
+        </div>
+        <div class="panel">
+          <div class="p-title">🏠 双库说明</div>
+          <div class="p-desc">
+            主库（<b>Obsidian Vault</b>）：只放你亲手敲的字，AI 只读不写。<br>
+            工位库（<b>Obsidian AI 工位库</b>）：AI 的凌乱库，草稿随便改删。<br>
+            晋升 = 从工位库搬到主库，把「AI生成」标签换成「已采纳」。
+          </div>
+        </div>
+      </section>
+
+      <!-- 术语图谱 -->
+      <section id="tab-terms" style="display:none">
+        <div class="page-head"><h2>术语图谱</h2><div class="desc">从 Zotero 文献自动提取术语，按共现关系连线，写入 Obsidian「术语库/」。</div></div>
+        <div class="panel">
+          <div class="p-desc">图谱里只想看术语、不想看到其他笔记时，在 Obsidian 图谱视图过滤框输入 <b>path:术语库</b> 即可。</div>
+          <div class="row">
+            <label class="label-inline">文献数</label><input type="number" id="kbTermsMax" min="10" max="1000" step="10" value="200" style="max-width:110px">
+            <label class="label-inline">术语数</label><input type="number" id="kbTermsTopK" min="10" max="300" step="10" value="80" style="max-width:110px">
+            <button class="btn" id="kbTermsBuild">构建术语网</button>
+            <button class="btn ghost" id="kbTermsOpen">打开 Obsidian 看图谱</button>
+          </div>
+          <div class="out" id="kbTermsStatus" style="margin-top:10px"></div>
+          <div class="out kb-res" id="kbTermsResult"></div>
+        </div>
+      </section>
+
+      <!-- 权限自检 -->
+      <section id="tab-perm" style="display:none">
+        <div class="page-head"><h2>权限自检</h2><div class="desc">检测 macOS 受保护目录的可读性。研究助手「找不到文件」多半是这里没授权。</div></div>
+        <div class="panel">
+          <button class="btn" id="permCheckBtn">开始检测</button>
+          <div class="out" id="permOut" style="margin-top:10px"></div>
+          <div class="hint">若某个目录标红：去「系统设置 → 隐私与安全性 → 完全磁盘访问」，点 + 添加 Electron.app，勾选后 ⌘Q 完全退出再重启。</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var ing = window.ingrid || {};
+  var DESKTOP = !!ing.isDesktop;
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function el(id) { return document.getElementById(id); }
+  function showOut(id, html) { var o = el(id); o.classList.add('show'); o.innerHTML = html; }
+  function showOutText(id, txt) { var o = el(id); o.classList.add('show'); o.textContent = txt; }
+
+  /* ---------- Tab 切换 ---------- */
+  var tabs = ['overview', 'notion', 'workspace', 'terms', 'perm'];
+  document.querySelectorAll('.nav-item').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var t = btn.getAttribute('data-tab');
+      document.querySelectorAll('.nav-item').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      tabs.forEach(function (name) { el('tab-' + name).style.display = (name === t) ? '' : 'none'; });
+      if (t === 'overview') loadOverview();
+      if (t === 'notion') loadNotion();
+      if (t === 'workspace') loadWorkspace();
+    });
+  });
+
+  /* ============ 概览 ============ */
+  function loadOverview() {
+    var kbStatus = ing.kbStatus ? ing.kbStatus() : Promise.resolve(null);
+    var notionStatus = ing.notionStatus ? ing.notionStatus() : Promise.resolve(null);
+    var zoteroReport = ing.toolDbZoteroReport ? ing.toolDbZoteroReport().catch(function () { return { ok: false }; }) : Promise.resolve({ ok: false });
+    var obsidianReport = ing.toolDbObsidianReport ? ing.toolDbObsidianReport().catch(function () { return { ok: false }; }) : Promise.resolve({ ok: false });
+    Promise.all([kbStatus, notionStatus, zoteroReport, obsidianReport]).then(function (res) {
+      var kb = res[0] || {}, nt = res[1] || {}, zr = res[2] || {}, or_ = res[3] || {};
+      var sources = kb.sources || [];
+      var obsSource = sources.filter(function (s) { return s.type === 'markdown'; })[0];
+      var obsPath = (or_ && or_.vault) || (obsSource && obsSource.path) || null;
+      var zoteroDetected = kb.zoteroDetected !== undefined ? kb.zoteroDetected : !!zr.ok;
+      var html = '';
+      html += srcCard('📚', 'Zotero', !!zoteroDetected,
+        zr.ok ? (zr.total + ' 条文献') : '已检测到', '未检测到（~/Zotero）',
+        zr.ok ? ('已打标签 ' + zr.withTags + ' · 未打标签 ' + zr.withoutTags) : '',
+        [{ kind: 'zotero', label: '打开 Zotero' }, { kind: 'zotero-folder', label: '打开数据目录' }]);
+      html += srcCard('📝', 'Obsidian', !!obsPath,
+        or_.ok ? (or_.total + ' 篇笔记') : '已检测到', '未检测到（需建库）',
+        obsPath ? '<code>' + esc(obsPath) + '</code>' : '',
+        [{ kind: 'obsidian', label: '打开 Obsidian' }, { kind: 'obsidian-folder', label: '打开库文件夹' }]);
+      html += srcCard('🧠', 'Notion', !!nt.configured,
+        '已连接', '未连接',
+        nt.configured ? '已建立本地索引，页面正文可全文检索；token 加密存本机' : '需在 notion.so/my-integrations 建集成，复制 token 后到「Notion」页配置',
+        []);
+      var box = el('kbSources');
+      box.innerHTML = html;
+      box.querySelectorAll('[data-kind]').forEach(function (b) {
+        b.addEventListener('click', function () { openSource(b.getAttribute('data-kind')); });
+      });
+      if (kb.totalFiles) {
+        box.insertAdjacentHTML('beforeend', '<div class="hint">本地索引：' + kb.totalFiles + ' 个文件 · ' + kb.totalChunks + ' 个分块' + (kb.embedReady ? ' · 已向量化' : ' · 关键词检索') + '</div>');
+      }
+    }).catch(function () { el('kbSources').innerHTML = '<div class="err">读取状态失败</div>'; });
+  }
+
+  function srcCard(icon, name, ok, okText, missText, meta, acts) {
+    var actsHtml = acts.map(function (a) {
+      return '<button class="btn ghost small" data-kind="' + esc(a.kind) + '">' + esc(a.label) + '</button>';
+    }).join('');
+    return '<div class="src-card"><div class="top">' +
+      '<div class="ic">' + icon + '</div><div class="nm">' + esc(name) + '</div>' +
+      '<span class="st ' + (ok ? 'ok' : 'miss') + '">' + esc(ok ? okText : missText) + '</span>' +
+      '</div>' +
+      (meta ? '<div class="meta">' + meta + '</div>' : '') +
+      (actsHtml ? '<div class="acts">' + actsHtml + '</div>' : '') +
+      '</div>';
+  }
+
+  function openSource(kind) {
+    if (!DESKTOP) { alert('请在桌面版使用'); return; }
+    if (!ing.kbOpen) return;
+    ing.kbOpen(kind).then(function (r) { if (r && !r.ok) alert(r.error || '打开失败'); }).catch(function (e) { alert(String(e && e.message || e)); });
+  }
+
+  function doSearch(q) {
+    var box = el('kbRes');
+    box.classList.add('show');
+    box.innerHTML = '搜索中…';
+    var jobs = [];
+    if (ing.kbSearch) jobs.push(ing.kbSearch(q, 5).then(function (r) { return { src: '本地知识库', list: r || [] }; }).catch(function () { return { src: '本地知识库', list: [] }; }));
+    if (ing.notionSearch) jobs.push(ing.notionSearch(q).then(function (r) { return { src: 'Notion', list: (r && r.ok && r.results) ? r.results : [] }; }).catch(function () { return { src: 'Notion', list: [] }; }));
+    Promise.all(jobs).then(function (groups) {
+      var html = '', total = 0;
+      groups.forEach(function (g) {
+        (g.list || []).forEach(function (it) {
+          if (!it || !it.title) return;
+          total++;
+          html += '<div class="it"><span class="src">' + esc(g.src) + '</span> · <b>' + esc(it.title) + '</b>';
+          if (it.relPath) html += '<div class="p">' + esc(it.relPath) + '</div>';
+          if (it.object) html += '<div class="p">' + (it.object === 'database' ? '🗂️ 数据库' : '📄 页面') + ' · ' + esc(it.id || '') + '</div>';
+          html += '</div>';
+        });
+      });
+      box.innerHTML = total ? html : '<div>没有找到相关内容。若 Notion 未配 token，此处只搜本地知识库（Zotero + Obsidian）。</div>';
+    });
+  }
+  el('kbSearchBtn').addEventListener('click', function () { var q = el('kbQuery').value.trim(); if (q) doSearch(q); });
+  el('kbQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') { var q = this.value.trim(); if (q) doSearch(q); } });
+
+  /* ============ Notion ============ */
+  function loadNotion() {
+    if (!ing.notionResearchConfig) return;
+    ing.notionResearchConfig(null).then(function (c) {
+      if (!c) return;
+      if (c.parentId) el('researchParentId').value = c.parentId;
+      if (c.dir) el('researchDir').value = c.dir;
+    }).catch(function () {});
+  }
+  el('notionSave').addEventListener('click', function () {
+    var t = el('notionToken').value.trim();
+    if (!t) { alert('请先粘贴 Notion Token'); return; }
+    if (!ing.notionConfigure) return;
+    ing.notionConfigure(t).then(function () {
+      el('notionToken').value = '';
+      showOut('notionOut', '<b class="ok">✓ token 已保存（加密存本机）。</b>记得在 Notion 里给要读的页面授权这个集成。');
+    }).catch(function (e) { alert(String(e && e.message || e)); });
+  });
+  el('notionTest').addEventListener('click', function () {
+    if (!ing.notionTest) return;
+    showOutText('notionOut', '测试中…');
+    ing.notionTest().then(function (r) {
+      if (!r) { showOutText('notionOut', '测试失败：无返回'); return; }
+      if (!r.configured) { showOutText('notionOut', '尚未保存 token，请先在上方粘贴并「保存 token」。'); return; }
+      if (!r.ok) { showOut('notionOut', '<b class="err">token 无效</b>：' + esc(r.error || '未知错误') + '<br>请回到 notion.so/my-integrations 重新复制 token，再粘贴保存。'); return; }
+      if (r.total === 0) {
+        showOut('notionOut', '<b class="err">token 有效，但看不到任何页面</b>：集成还没被授权访问内容。<br>去 Notion 打开要同步的页面，点右上角 <b>··· → Connections（连接）</b>，勾选你的集成，然后回来点「立即同步」。');
+      } else {
+        showOut('notionOut', '<b class="ok">连接正常</b>：能看到 ' + r.total + ' 个对象（页面 ' + r.pages + '、数据库 ' + r.databases + '）。<br>点「立即同步」即可把 Notion 内容纳入本地检索。');
+      }
+    }).catch(function (e) { showOutText('notionOut', '测试失败：' + (e && e.message || e)); });
+  });
+  el('notionSyncBtn').addEventListener('click', function () {
+    if (!ing.notionSync) return;
+    showOutText('notionOut', '同步中（拉取 Notion 全文 + 增量索引，可能需要几秒到几十秒）…');
+    ing.notionSync().then(function (r) {
+      if (!r) { showOutText('notionOut', '同步失败：无返回'); return; }
+      if (r.skipped) { showOutText('notionOut', '尚未保存 Notion token，无法同步。请先在上方粘贴并保存。'); return; }
+      if (!r.ok) { showOut('notionOut', '<b class="err">同步失败</b>：' + esc(r.error || '')); return; }
+      var t = new Date(r.syncedAt).toLocaleTimeString();
+      var parts = [];
+      if (r.added) parts.push('新增 ' + r.added);
+      if (r.updated) parts.push('更新 ' + r.updated);
+      if (r.removed) parts.push('移除 ' + r.removed);
+      var change = parts.length ? '（' + parts.join('、') + '）' : '（无变化）';
+      showOut('notionOut', '<b class="ok">同步完成</b>：当前 ' + r.total + ' 篇' + change + '。<br><span class="muted">' + t + ' · 之后每 30 分钟自动同步。</span>');
+    }).catch(function (e) { showOutText('notionOut', '同步失败：' + (e && e.message || e)); });
+  });
+  el('researchConfigBtn').addEventListener('click', function () {
+    if (!ing.notionResearchConfig) return;
+    var pid = el('researchParentId').value.trim();
+    var dir = el('researchDir').value.trim();
+    ing.notionResearchConfig({ parentId: pid, dir: dir }).then(function () { alert('研究同步官配置已保存。'); }).catch(function (e) { alert(String(e && e.message || e)); });
+  });
+  el('researchSyncBtn').addEventListener('click', function () {
+    if (!ing.notionResearchSync) return;
+    showOutText('researchSyncOut', '推送中（读取 latest 目录 + 提取 docx 正文 + 写入 Notion）…');
+    ing.notionResearchSync().then(function (r) {
+      if (!r) { showOutText('researchSyncOut', '推送失败：无返回'); return; }
+      if (!r.ok) { showOut('researchSyncOut', '<b class="err">推送失败</b>：' + esc(r.error || '')); return; }
+      var t = new Date(r.syncedAt).toLocaleTimeString();
+      var html = '<b class="ok">推送完成</b>：共 ' + r.total + ' 个文件（新增 ' + r.created + '、更新 ' + r.updated + '、跳过 ' + r.unchanged + '）';
+      if (r.failed) html += '<br><b class="err">失败 ' + r.failed + ' 个</b>';
+      if (r.errors && r.errors.length) html += '<br><span class="muted">' + esc(r.errors.slice(0, 5).join('；')) + '</span>';
+      html += '<br><span class="muted">' + t + ' · 之后每 30 分钟自动检查推送。</span>';
+      showOut('researchSyncOut', html);
+    }).catch(function (e) { showOutText('researchSyncOut', '推送失败：' + (e && e.message || e)); });
+  });
+
+  /* ============ Obsidian 工位库 ============ */
+  function fmtTime(ms) {
+    if (!ms) return '';
+    var d = new Date(ms), now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    var hh = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    if (sameDay) return '今天 ' + hh;
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2) + ' ' + hh;
+  }
+  function loadWorkspace() {
+    var body = el('wsBody');
+    if (!DESKTOP || !ing.workspaceList) { body.innerHTML = '<div class="empty">工位库需在桌面应用中使用</div>'; return; }
+    body.innerHTML = '<div class="empty">读取中…</div>';
+    ing.workspaceList().then(function (r) {
+      if (!r || r.ok === false) { body.innerHTML = '<div class="err">' + esc((r && r.error) || '数据异常') + '</div>'; return; }
+      if (!r.vault) { body.innerHTML = '<div class="empty">未检测到工位库（Obsidian AI 工位库）</div>'; return; }
+      var notes = r.notes || [];
+      if (!notes.length) { body.innerHTML = '<div class="empty">工位库还是空的——让 AI 写点东西，或把草稿直接丢进工位库</div>'; return; }
+      var html = '';
+      notes.forEach(function (n) {
+        var tags = (n.tags || []).map(function (t) { return '<span class="ws-tag">' + esc(t) + '</span>'; }).join('');
+        html += '<div class="ws-note"><div class="ws-main">' +
+          '<div class="ws-title" title="' + esc(n.path) + '">' + esc(n.title || n.name) + '</div>' +
+          '<div class="ws-meta">' + tags + '<span class="ws-time">' + esc(fmtTime(n.mtime)) + '</span></div>' +
+          '</div><button class="btn small" data-path="' + esc(n.path) + '">⬆️ 晋升</button></div>';
+      });
+      body.innerHTML = html;
+      body.querySelectorAll('button[data-path]').forEach(function (btn) {
+        btn.addEventListener('click', function () { promote(btn.getAttribute('data-path'), btn); });
+      });
+    }).catch(function (e) { body.innerHTML = '<div class="err">加载失败：' + esc((e && e.message) || e) + '</div>'; });
+  }
+  el('wsRefresh').addEventListener('click', loadWorkspace);
+  function promote(path, btn) {
+    var target = (el('wsTargetInput').value || '').trim() || '术语库';
+    if (btn) btn.disabled = true;
+    ing.toolDbObsidianPromote({ path: path, folder: target, tags: ['已采纳'] })
+      .then(function (res) {
+        if (res && res.ok) { alert('已晋升到主库「' + target + '」'); loadWorkspace(); }
+        else { if (btn) btn.disabled = false; alert('晋升失败：' + ((res && res.error) || '未知错误')); }
+      })
+      .catch(function (e) { if (btn) btn.disabled = false; alert('晋升失败：' + ((e && e.message) || e)); });
+  }
+
+  /* ============ 术语图谱 ============ */
+  var termsStatusEl = null;
+  if (DESKTOP && ing.onKbTermsProgress) {
+    ing.onKbTermsProgress(function (p) {
+      if (!termsStatusEl || !p) return;
+      if (p.phase === 'ollama') termsStatusEl.textContent = p.msg || '正在启动本地 Ollama…';
+      else if (p.phase === 'extract') termsStatusEl.textContent = '正在提取术语… 本次处理 ' + p.done + ' / ' + p.total + ' 篇（已构建的自动跳过）';
+    });
+  }
+  el('kbTermsBuild').addEventListener('click', function () {
+    if (!DESKTOP || !ing.kbTermsBuild) { alert('术语图谱需在桌面版使用（并运行本地 Ollama）'); return; }
+    var status = el('kbTermsStatus'), result = el('kbTermsResult');
+    var maxItems = parseInt(el('kbTermsMax').value, 10) || 200;
+    var topK = parseInt(el('kbTermsTopK').value, 10) || 80;
+    if (maxItems < 1 || topK < 1) { alert('文献数与术语数需为正整数'); return; }
+    var btn = this; btn.disabled = true;
+    termsStatusEl = status;
+    status.classList.add('show');
+    status.textContent = '准备中… 将处理 ' + maxItems + ' 篇文献，约需 1–10 分钟（取决于本地模型速度）';
+    ing.kbTermsBuild({ maxItems: maxItems, topK: topK }).then(function (r) {
+      btn.disabled = false; termsStatusEl = null;
+      if (!r || !r.ok) { status.textContent = '失败：' + ((r && r.error) || '未知错误'); return; }
+      var rangeNote = (r.totalItems != null) ? '（本次范围 ' + r.maxItems + ' / 共 ' + r.totalItems + ' 篇）' : '';
+      if (r.processedCount === 0 && r.skippedCount > 0) status.textContent = '已完成：本次无新文献（' + r.skippedCount + ' 篇已构建），已重写 ' + r.noteCount + ' 篇术语笔记补标签。' + rangeNote;
+      else if (r.skippedCount > 0) status.textContent = '完成：本次新处理 ' + r.processedCount + ' 篇，跳过已构建 ' + r.skippedCount + ' 篇；共 ' + r.allTermCount + ' 个术语' + rangeNote;
+      else status.textContent = '完成：' + r.allTermCount + ' 个术语 · 重写 ' + r.noteCount + ' 篇笔记' + rangeNote;
+      result.classList.add('show');
+      var termsHtml = (r.terms || []).slice(0, 25).map(function (t) {
+        return '<div class="it"><span class="src">' + esc(t.category) + '</span> · <b>' + esc(t.term) + '</b>' + (t.zh ? '<div style="color:var(--ink-soft);margin-top:2px">' + esc(t.zh) + '</div>' : '') + '</div>';
+      }).join('');
+      result.innerHTML = '<div style="margin-bottom:8px">重写 ' + r.noteCount + ' 篇术语笔记（覆盖式，保证「相关术语」双链与 #术语库 标签最新）+ 刷新总览图（' + (r.edges ? r.edges.length : 0) + ' 条关联）。点「打开 Obsidian 看图谱」→ 打开「术语总览」→ 切到图谱视图。</div>' + termsHtml;
+    }).catch(function (e) {
+      btn.disabled = false; termsStatusEl = null;
+      status.classList.add('show');
+      status.textContent = '失败：' + String(e && e.message || e);
+    });
+  });
+  el('kbTermsOpen').addEventListener('click', function () { openSource('obsidian'); });
+
+  /* ============ 权限自检 ============ */
+  el('permCheckBtn').addEventListener('click', function () {
+    if (!DESKTOP || !ing.fsPermCheck) { showOutText('permOut', '权限自检需在桌面版使用'); return; }
+    showOutText('permOut', '检测中…');
+    ing.fsPermCheck().then(function (r) {
+      if (!r) { showOutText('permOut', '检测失败：无返回'); return; }
+      var rows = [], anyFail = false;
+      for (var k in r) {
+        if (k.charAt(0) === '_') continue;
+        var it = r[k];
+        if (it.ok) rows.push('✅ ' + it.label + ' 可读');
+        else { anyFail = true; rows.push('❌ ' + it.label + ' 不可读' + (it.code === 'EPERM' ? '（macOS 隐私保护）' : '')); }
+      }
+      var html = rows.join('<br>');
+      if (anyFail) {
+        html += '<br><b class="err">有目录读不到</b>：研究助手会因此「找不到你电脑的文件」。<br>去 <b>系统设置 → 隐私与安全性 → 完全磁盘访问</b>，点 + 添加这个应用：<br><code>' + esc(r._electronApp || '(路径未知)') + '</code><br>勾选后 ⌘Q 完全退出再重启。';
+      } else {
+        html += '<br><b class="ok">全部可读</b>，研究助手可以正常访问你电脑的文件。';
+      }
+      showOut('permOut', html);
+    }).catch(function (e) { showOutText('permOut', '检测失败：' + (e && e.message || e)); });
+  });
+
+  /* 初始加载概览 */
+  loadOverview();
+})();
+</script>
+</body>
+</html>
