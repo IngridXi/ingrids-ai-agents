@@ -2975,6 +2975,10 @@ function toolDbObsidianPromote(payload) {
       const tagBlock = 'tags:\n' + tags.map((t) => '  - ' + JSON.stringify(t)).join('\n');
       content = '---\n' + (cleaned ? cleaned + '\n' + tagBlock : tagBlock) + '\n---\n' + fm.body;
       fs.writeFileSync(target, content, 'utf8');
+    } else {
+      // 旧笔记没有 frontmatter，晋升时补一个（title 用文件名 + 已采纳标签）
+      content = buildFrontmatter(path.basename(target).replace(/\.md$/i, ''), tags, content);
+      fs.writeFileSync(target, content, 'utf8');
     }
     return { ok: true, from: from, to: target, tags: tags };
   } catch (e) { return { ok: false, error: '晋升失败：' + String(e && e.message || e) }; }
@@ -3004,6 +3008,37 @@ function toolDbObsidianReport() {
   }
   walk(vp);
   return { ok: true, vault: vp, total: st.total, withFm: st.withFm, withoutFm: st.withoutFm, withTags: st.withTags, withoutTags: st.withoutTags, dirs: st.dirs };
+}
+// 列出工位库里的全部笔记（供「工位库」面板展示 + 一键晋升按钮）
+function toolDbWorkspaceList() {
+  const ws = workspaceVaultPath();
+  if (!ws) return { ok: true, vault: null, notes: [] };
+  const skip = new Set(['.obsidian', '.trash', '.git', 'node_modules']);
+  const notes = [];
+  function walk(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      if (ent.isDirectory()) { if (!skip.has(ent.name)) walk(path.join(dir, ent.name)); continue; }
+      if (!/\.md$/i.test(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      let st; try { st = fs.statSync(full); } catch { continue; }
+      let tags = [], title = ent.name.replace(/\.md$/i, '');
+      try {
+        const content = fs.readFileSync(full, 'utf8');
+        const fm = parseFrontmatter(content);
+        tags = fm.tags;
+        const tm = fm.header.match(/^title\s*:\s*(.+)$/m);
+        if (tm) {
+          try { title = JSON.parse(tm[1].trim()); } catch { title = tm[1].trim().replace(/^['"]|['"]$/g, ''); }
+        }
+      } catch { /* 忽略单篇读取失败 */ }
+      notes.push({ path: path.relative(ws, full).split(path.sep).join('/'), name: ent.name, title: title, tags: tags, mtime: st.mtimeMs });
+    }
+  }
+  walk(ws);
+  notes.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  return { ok: true, vault: ws, notes: notes };
 }
 async function toolDbZoteroReport() {
   const zdir = detectZoteroDir();
@@ -3148,6 +3183,7 @@ ipcMain.handle('tool:db:obsidian:tag', (_e, p) => toolDbObsidianTag(p));
 ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
 ipcMain.handle('tool:db:obsidian:promote', (_e, p) => toolDbObsidianPromote(p));
 ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
+ipcMain.handle('workspace:list', () => toolDbWorkspaceList());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));
 ipcMain.handle('tool:db:zotero:collection', (_e, p) => toolDbZoteroCollection(p));

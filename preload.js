@@ -148,6 +148,13 @@ contextBridge.exposeInMainWorld('ingrid', {
   computerStop: () => ipcRenderer.invoke('computer:stop'),
   onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // 授权门（有副作用操作前显式授权 + 审计：电脑操作 / 可执行 Skill / 文件写入）
+  permissionList: () => ipcRenderer.invoke('permission:list'),
+  permissionGrant: (action, opts) => ipcRenderer.invoke('permission:grant', action, opts),
+  permissionRevoke: (idOrAction) => ipcRenderer.invoke('permission:revoke', idOrAction),
+  permissionCheck: (action, opts) => ipcRenderer.invoke('permission:check', action, opts),
+  permissionAudit: () => ipcRenderer.invoke('permission:audit'),
+
   // 会议纪要官：朗读纪要（macOS 原生 TTS，本地合成不上云）
   speak: (text) => ipcRenderer.invoke('meeting:speak', text),
 
@@ -166,6 +173,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbObsidianMove: (payload) => ipcRenderer.invoke('tool:db:obsidian:move', payload),
   toolDbObsidianPromote: (payload) => ipcRenderer.invoke('tool:db:obsidian:promote', payload),
   toolDbObsidianReport: () => ipcRenderer.invoke('tool:db:obsidian:report'),
+  workspaceList: () => ipcRenderer.invoke('workspace:list'),
   toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
   toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),
   toolDbZoteroCollection: (payload) => ipcRenderer.invoke('tool:db:zotero:collection', payload),
