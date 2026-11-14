@@ -164,6 +164,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbObsidianWrite: (payload) => ipcRenderer.invoke('tool:db:obsidian:write', payload),
   toolDbObsidianTag: (payload) => ipcRenderer.invoke('tool:db:obsidian:tag', payload),
   toolDbObsidianMove: (payload) => ipcRenderer.invoke('tool:db:obsidian:move', payload),
+  toolDbObsidianPromote: (payload) => ipcRenderer.invoke('tool:db:obsidian:promote', payload),
   toolDbObsidianReport: () => ipcRenderer.invoke('tool:db:obsidian:report'),
   toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
   toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),
@@ -175,6 +176,12 @@ contextBridge.exposeInMainWorld('ingrid', {
   chatHistoryClear: (name) => ipcRenderer.invoke('chat:history:clear', name),
   chatBackup: () => ipcRenderer.invoke('chat:backup'),
 
+  // 会话回放（append-only 事件日志：列表 / 回放 / 分叉 / 续跑上下文）
+  sessionLogList: () => ipcRenderer.invoke('session:log:list'),
+  sessionLogReplay: (id) => ipcRenderer.invoke('session:log:replay', id),
+  sessionLogFork: (id) => ipcRenderer.invoke('session:log:fork', id),
+  sessionLogResume: (id, opts) => ipcRenderer.invoke('session:log:resume', id, opts),
+
   // 后台任务队列（丢任务后台跑、完成/需决策才提醒）
   taskList: () => ipcRenderer.invoke('task:list'),
   taskCreate: (t) => ipcRenderer.invoke('task:create', t),
@@ -183,5 +190,17 @@ contextBridge.exposeInMainWorld('ingrid', {
   taskClear: () => ipcRenderer.invoke('task:clear'),
   taskRun: (id) => ipcRenderer.invoke('task:run', id),
   taskStop: (id) => ipcRenderer.invoke('task:stop', id),
+  taskClassify: (text) => ipcRenderer.invoke('task:classify', text),
   onTaskChanged: (cb) => ipcRenderer.on('task:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
+  // 自然语言定时解析（「明天下午3点 / 每天9点」→ schedule 字符串）
+  scheduleParse: (text) => ipcRenderer.invoke('schedule:parse', text),
+
+  // 数据仪表盘：聚合本地多源数据（笔记 / 聊天 / 任务 / 日历 / 术语）
+  dashboardGet: () => ipcRenderer.invoke('dashboard:get'),
+
+  // 灵感目录（生态雷达：每日调研 DSH 插件生态）
+  ecoRadarRun: () => ipcRenderer.invoke('eco:radar:run'),
+  ecoRadarStatus: () => ipcRenderer.invoke('eco:radar:status'),
+  onEcoRadarUpdated: (cb) => ipcRenderer.on('eco-radar:updated', (_e, d) => { if (cb) cb(d || {}); }),
 });

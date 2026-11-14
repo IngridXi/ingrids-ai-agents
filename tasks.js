@@ -94,11 +94,12 @@
       '    <input class="tk-title" placeholder="标题（可选）">' +
       '    <input class="tk-goal" placeholder="任务目标，例如：读取 Desktop/PhD 文件并生成对比报告">' +
       '    <select class="tk-engine">' +
+      '      <option value="auto" selected>自动分拣</option>' +
       '      <option value="deepseek">DeepSeek</option>' +
       '      <option value="gpt">GPT</option>' +
       '      <option value="qwen">Qwen</option>' +
       '    </select>' +
-      '    <input class="tk-schedule" placeholder="定时(可选) 如 09:00 每天跑">' +
+      '    <input class="tk-schedule" placeholder="定时(可选) 如「每天9点」或「明天下午3点」">' +
       '    <button class="tk-go-btn" type="button">丢到后台运行</button>' +
       '  </div>' +
       '  <div class="tk-body"></div>' +
@@ -166,11 +167,18 @@
     // 新任务在上，按创建时间倒序
     tickets.slice().reverse().forEach(function (t) {
       var m = STATUS_META[t.status] || STATUS_META.queued;
-      var badge = t.schedule
-        ? '<span class="tk-badge" style="color:#534AB7;background:#EEEDFE">定时 ' + esc(t.schedule) + ' 每天</span>'
-        : '<span class="tk-badge" style="color:' + m.color + ';background:' + m.bg + '">' + m.label + '</span>';
+      var badge;
+      if (t.schedule) {
+        var isDaily = String(t.schedule).indexOf(' ') < 0;
+        badge = '<span class="tk-badge" style="color:#534AB7;background:#EEEDFE">' +
+          (isDaily ? '每天 ' : '定时 ') + esc(t.schedule) + '</span>';
+      } else {
+        badge = '<span class="tk-badge" style="color:' + m.color + ';background:' + m.bg + '">' + m.label + '</span>';
+      }
       html += '<div class="tk-item">' +
-        '<div class="tk-top"><span class="tk-title">' + esc(t.title || '未命名任务') + '</span>' + badge + '</div>';
+        '<div class="tk-top"><span class="tk-title">' + esc(t.title || '未命名任务') + '</span>' +
+        (t.category ? '<span class="tk-badge" style="color:#0F6E56;background:#E1F5EE">' + esc(t.category) + '</span>' : '') +
+        badge + '</div>';
       if (t.goal) html += '<div class="tk-goal">' + esc(t.goal) + '</div>';
       if (t.status === 'waiting' && t.question) html += '<div class="tk-question">' + esc(t.question) + '</div>';
       if (t.status === 'done' && t.result) html += '<div class="tk-result">' + esc(t.result) + '</div>';
@@ -207,29 +215,50 @@
     if (!goal) { goalEl.focus(); return; }
     if (!IS_DESKTOP) return;
     var sched = scheduleEl.value.trim();
-    if (sched && !/^([01]\d|2[0-3]):[0-5]\d$/.test(sched)) {
-      alert('定时格式应为 HH:MM（24 小时制），例如 09:00，或留空表示只跑一次');
-      scheduleEl.focus();
-      return;
-    }
-    var t = {
-      title: titleEl.value.trim() || goal.slice(0, 20),
-      goal: goal,
-      engine: engineEl.value || 'deepseek',
-      schedule: sched || null,
-    };
+    var engineSel = engineEl.value || 'auto';
     goBtn.disabled = true;
-    window.ingrid.taskCreate(t).then(function (ticket) {
-      titleEl.value = '';
-      goalEl.value = '';
-      scheduleEl.value = '';
-      goBtn.disabled = false;
-      // 定时任务交给调度器到点触发；一次性任务创建后立即丢后台跑
-      if (!sched) window.ingrid.taskRun(ticket.id).then(load);
-      else load();
+
+    // 自动分拣：引擎选「自动分拣」时，用规则分类器判断任务类型 + 默认引擎 + 分类标签
+    var resolveClassify = function () {
+      if (engineSel !== 'auto') return Promise.resolve({ engine: engineSel, category: '' });
+      return window.ingrid.taskClassify(goal).then(function (r) {
+        return { engine: (r && r.engine) || 'deepseek', category: (r && r.label) || '' };
+      }).catch(function () { return { engine: 'deepseek', category: '' }; });
+    };
+    var resolveSchedule = function () {
+      if (!sched) return Promise.resolve(null);
+      return window.ingrid.scheduleParse(sched).then(function (r) {
+        if (!r || r.ok === false) throw new Error('定时没看懂：' + ((r && r.error) || '') + '。试试「每天9点」「明天下午3点」「下周一上午10点」，或留空表示只跑一次');
+        return r.schedule;
+      });
+    };
+
+    Promise.all([resolveClassify(), resolveSchedule()]).then(function (vals) {
+      var cls = vals[0], schedule = vals[1];
+      var t = {
+        title: titleEl.value.trim() || goal.slice(0, 20),
+        goal: goal,
+        engine: cls.engine,
+        category: cls.category,
+        schedule: schedule || null,
+      };
+      window.ingrid.taskCreate(t).then(function (ticket) {
+        titleEl.value = '';
+        goalEl.value = '';
+        scheduleEl.value = '';
+        engineEl.value = 'auto';
+        goBtn.disabled = false;
+        // 定时任务交给调度器到点触发；一次性任务创建后立即丢后台跑
+        if (!schedule) window.ingrid.taskRun(ticket.id).then(load);
+        else load();
+      }).catch(function (e) {
+        goBtn.disabled = false;
+        alert('创建失败：' + ((e && e.message) || e));
+      });
     }).catch(function (e) {
       goBtn.disabled = false;
-      alert('创建失败：' + ((e && e.message) || e));
+      alert(String((e && e.message) || e));
+      scheduleEl.focus();
     });
   }
 

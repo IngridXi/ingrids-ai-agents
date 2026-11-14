@@ -847,9 +847,10 @@
     }
     if (caps.db) {
       tools.push('db_query：查询本地知识库 / 文献库（Zotero、Obsidian 等），参数 {"query":"关键词"}');
-      tools.push('db_obsidian_write：写一篇整理笔记到 Obsidian 库（默认 _AI整理/ 目录），参数 {"title":"标题","content":"正文","tags":["标签"],"folder":"可选子目录"}');
+      tools.push('db_obsidian_write：写一篇整理笔记到 Obsidian 库。铁律：只能写进工位库（默认 _AI整理/ 目录），主库（术语库等用户自建目录）只读、绝不写入。参数 {"title":"标题","content":"正文","tags":["标签"],"folder":"可选子目录"}');
       tools.push('db_obsidian_tag：给某篇 Obsidian 笔记打标签，参数 {"path":"相对库路径","tags":["标签1","标签2"]}');
       tools.push('db_obsidian_move：归档/移动 Obsidian 笔记，参数 {"from":"原路径","to":"新路径"}');
+      tools.push('db_obsidian_promote：把工位库某篇「晋升」到主库（仅当用户明确说这条值得留/抄回主库/采纳时调用；判断权归用户，禁止自行晋升），参数 {"path":"相对库路径","folder":"目标目录(可选)","tags":["新标签"]}');
       tools.push('db_obsidian_report：Obsidian 库整理报告（无标签/无 frontmatter 的笔记、目录统计）');
       tools.push('db_zotero_report：Zotero 文献库整理报告（无标签条目、最近添加）');
       tools.push('db_zotero_tag：给 Zotero 文献打标签，参数 {"itemKey":"文献条目key","tags":["标签1","标签2"]}（itemKey 从 db_zotero_report / db_query 结果拿）');
@@ -881,9 +882,10 @@
     }
     if (caps.db) {
       fn('db_query', '查询本地知识库 / 文献库（Zotero、Obsidian、Notion）', { query: { type: 'string', description: '关键词' } });
-      fn('db_obsidian_write', '写一篇整理笔记到 Obsidian 库（默认 _AI整理/ 目录）', { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, folder: { type: 'string' } });
+      fn('db_obsidian_write', '写一篇整理笔记到 Obsidian 库。铁律：只能写进工位库（默认 _AI整理/ 目录），主库只读', { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, folder: { type: 'string' } });
       fn('db_obsidian_tag', '给 Obsidian 笔记打标签', { path: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } });
       fn('db_obsidian_move', '归档/移动 Obsidian 笔记', { from: { type: 'string' }, to: { type: 'string' } });
+      fn('db_obsidian_promote', '把工位库某篇晋升到主库（仅用户确认值得留才调用，判断权归用户）', { path: { type: 'string' }, folder: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } });
       fn('db_obsidian_report', 'Obsidian 库整理报告', {});
       fn('db_zotero_report', 'Zotero 文献库整理报告', {});
       fn('db_zotero_tag', '给 Zotero 文献打标签', { itemKey: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } });
@@ -921,11 +923,12 @@
         return window.ingrid.toolFsDelete(call.args);
       });
     }
-    if (caps.db && (n === 'db_obsidian_write' || n === 'db_obsidian_tag' || n === 'db_obsidian_move')) {
+    if (caps.db && (n === 'db_obsidian_write' || n === 'db_obsidian_tag' || n === 'db_obsidian_move' || n === 'db_obsidian_promote')) {
       return requestWriteApproval(n, call.args).then(function (ok) {
         if (!ok) return { ok: false, error: '已由用户拒绝，未执行' };
         if (n === 'db_obsidian_write') return window.ingrid.toolDbObsidianWrite(call.args);
         if (n === 'db_obsidian_tag') return window.ingrid.toolDbObsidianTag(call.args);
+        if (n === 'db_obsidian_promote') return window.ingrid.toolDbObsidianPromote(call.args);
         return window.ingrid.toolDbObsidianMove(call.args);
       });
     }
@@ -948,6 +951,7 @@
     if (kind === 'db_obsidian_write') return { icon: '📝', title: '写入 Obsidian 整理笔记', body: String((args && args.title) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') + '\n\n' + String((args && args.content) || '').slice(0, 200) };
     if (kind === 'db_obsidian_tag') return { icon: '🏷️', title: '给 Obsidian 笔记打标签', body: String((args && args.path) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') };
     if (kind === 'db_obsidian_move') return { icon: '📦', title: '归档 Obsidian 笔记', body: String((args && args.from) || '') + '  →  ' + String((args && args.to) || ''), extra: '' };
+    if (kind === 'db_obsidian_promote') return { icon: '⬆️', title: '晋升到主库（你已确认值得留）', body: String((args && args.path) || ''), extra: '目标：' + String((args && args.folder) || '主库根目录') };
     if (kind === 'db_zotero_tag') return { icon: '🏷️', title: '给 Zotero 文献打标签', body: String((args && args.itemKey) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') + '\n\n首次执行会弹 Zotero 授权框，请点「始终允许」' };
     if (kind === 'db_zotero_collection') return { icon: '📁', title: '归档到 Zotero 集合', body: ((args && args.itemKeys) || []).length + ' 篇 → 「' + String((args && args.collectionName) || (args && args.collectionKey) || '') + '」', extra: '首次执行会弹 Zotero 授权框，请点「始终允许」' };
     return { icon: '❓', title: kind, body: '', extra: '' };
@@ -1011,6 +1015,7 @@
       else if (call.name === 'db_obsidian_write') body = '已写入 Obsidian 笔记：' + res.path + '（标签：' + (res.tags || []).join('、') + '）';
       else if (call.name === 'db_obsidian_tag') body = '已打标签：' + res.path + '（' + (res.tags || []).join('、') + '）';
       else if (call.name === 'db_obsidian_move') body = '已归档：' + res.from + ' → ' + res.to;
+      else if (call.name === 'db_obsidian_promote') body = '已晋升到主库：' + res.to + '（标签：' + (res.tags || []).join('、') + '）';
       else if (call.name === 'db_obsidian_report') body = 'Obsidian 库共 ' + res.total + ' 篇笔记：' + res.withFm + ' 篇有 frontmatter、' + res.withoutFm + ' 篇无；' + res.withTags + ' 篇有标签、' + res.withoutTags.length + ' 篇无标签。无标签笔记：' + (res.withoutTags.slice(0, 20).join('、') || '无');
       else if (call.name === 'db_zotero_report') body = 'Zotero 共 ' + res.total + ' 篇文献：' + res.withTags + ' 篇有标签、' + res.withoutTags + ' 篇无标签。';
       else if (call.name === 'db_zotero_tag') body = '已给「' + (res.title || res.itemKey) + '」打标签：' + (res.tags || []).join('、');

@@ -131,6 +131,14 @@
     }
   };
 
+  /** 清除某任务的定时计划（一次性定时到点触发后调用，避免重复） */
+  TaskQueue.prototype.clearSchedule = function (id) {
+    if (this.tickets[id]) {
+      this.tickets[id].schedule = null;
+      this._save();
+    }
+  };
+
   /**
    * 创建一个任务单并入队。
    * @param {object} t   { title, goal, agent, engine, model, messages }
@@ -152,7 +160,8 @@
       question: '',
       result: '',
       error: '',
-      schedule: t.schedule || null,   // 定时任务："HH:MM" 每天触发；null = 一次性
+      schedule: t.schedule || null,   // 定时任务："HH:MM" 每天 / "YYYY-MM-DD HH:MM" 一次性；null = 立即跑
+      category: t.category || '',     // 自动分拣出的任务类型标签（如「文献综述」）
       lastRunDate: t.lastRunDate || '', // 定时任务上次触发的日期（YYYY-MM-DD），避免同日重复触发
       createdAt: now,
       updatedAt: now,

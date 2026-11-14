@@ -29,6 +29,10 @@ const SecretaryCore = globalThis.SecretaryCore;
 const NotionEngine = require('./notion-engine.js');
 const TermsEngine = require('./terms-engine.js');
 const TaskQueue = require('./task-queue.js');
+require('./task-router.js');
+const TaskRouter = globalThis.TaskRouter;
+require('./session-log-core.js');
+const SessionLogCore = globalThis.SessionLogCore;
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -64,6 +68,45 @@ function usageDir() {
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+/* ---------------- 会话回放：append-only 事件日志（借鉴 DSH Replayable Sessions） ---------------- */
+function sessionsDir() {
+  const dir = path.join(dataDir(), 'sessions');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function sessionFileFor(id) {
+  const safe = String(id || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  return path.join(sessionsDir(), safe + '.jsonl');
+}
+const sessionLogStorage = {
+  append: (sessionId, ev) => {
+    fs.appendFileSync(sessionFileFor(sessionId), JSON.stringify(ev) + '\n', 'utf8');
+  },
+  list: (sessionId) => {
+    try {
+      return fs.readFileSync(sessionFileFor(sessionId), 'utf8').split('\n')
+        .filter((l) => l.trim())
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .filter(Boolean);
+    } catch { return []; }
+  },
+  listSessions: () => {
+    try {
+      return fs.readdirSync(sessionsDir()).filter((f) => f.endsWith('.jsonl')).map((f) => {
+        const id = f.replace(/\.jsonl$/, '');
+        const evs = sessionLogStorage.list(id);
+        const first = evs[0] || {}, last = evs[evs.length - 1] || {};
+        const title = (first.data && (first.data.title || first.data.text)) || (last.data && last.data.title) || id;
+        return { id: id, count: evs.length, firstAt: first.at || 0, lastAt: last.at || 0, title: String(title).slice(0, 80) };
+      }).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+    } catch { return []; }
+  },
+  fork: (fromId, toId) => {
+    try { fs.copyFileSync(sessionFileFor(fromId), sessionFileFor(toId)); } catch { /* 源不存在则忽略 */ }
+  },
+};
+const sessionLog = new SessionLogCore.SessionLog(sessionLogStorage);
 
 /* ---------------- 后台任务队列（吸收 dsh Ticket 思想） ---------------- */
 let taskQueue = null;
@@ -279,13 +322,14 @@ function ensureMeetingAudioBackend() {
 }
 
 /* ---------------- 本机 CLI（bring-your-own-agent） ---------------- */
-const CLI_CMDS = { 'claude-code': 'claude', codex: 'codex', grok: 'grok' };
+const CLI_CMDS = { 'claude-code': 'claude', codex: 'codex', grok: 'grok', dsh: 'dsh' };
 
 // 每种 CLI 的非交互调用方式。只用数组参数 spawn，绝不拼 shell 字符串。
 const CLI_ADAPTERS = {
   'claude-code': { cmd: 'claude', args: (p) => ['-p', p], timeout: 90000 },
   codex:         { cmd: 'codex', args: (p) => ['exec', p], timeout: 90000 },
   grok:          { cmd: 'grok',  args: (p) => ['-p', p], timeout: 90000 },
+  dsh:           { cmd: 'dsh',   args: (p) => ['--profile', 'headless', p], timeout: 300000 },
 };
 
 // OpenAI 兼容端点（用户填 Key 后可真实调用）
@@ -807,6 +851,7 @@ function setBudget(usd) {
 /* ---------------- 价格表（与 agents-core.js ENGINES 对齐） ---------------- */
 const PRICES = {
   'claude-code': { in: 3, out: 15 }, codex: { in: 2, out: 10 }, grok: { in: 2, out: 6 },
+  dsh: { in: 0.28, out: 0.42 },
   deepseek: { in: 0.28, out: 0.42 }, gpt: { in: 2, out: 10 }, qwen: { in: 0.4, out: 1.2 },
   'local-llm': { in: 0, out: 0 }, funasr: { in: 0, out: 0 },
 };
@@ -1081,24 +1126,44 @@ ipcMain.handle('usage:clear', () => clearUsage());
 ipcMain.on('budget:get-sync', (e) => { e.returnValue = getBudget(); });
 ipcMain.on('budget:set-sync', (e, usd) => { e.returnValue = setBudget(usd); });
 
+/* ---------------- IPC：会话回放（append-only 事件日志） ---------------- */
+ipcMain.handle('session:log:list', () => sessionLog ? sessionLog.listSessions() : []);
+ipcMain.handle('session:log:replay', (_e, id) => sessionLog ? sessionLog.replay(id) : []);
+ipcMain.handle('session:log:fork', (_e, id) => sessionLog ? sessionLog.fork(id) : '');
+ipcMain.handle('session:log:resume', (_e, id, opts) => sessionLog ? sessionLog.resumeContext(id, opts) : null);
+
 /* ---------------- IPC：执行一个 Agent ---------------- */
 ipcMain.handle('agent:run', async (_e, payload) => {
   const p = payload || {};
   const prompt = String(p.prompt || '').slice(0, 20000);
   const engine = String(p.engine || 'local-llm');
   const soul = String(p.soul || '');
-  if (!prompt.trim()) return dryRunResult(engine, prompt, '任务内容为空', soul);
-  if (!PRICES[engine]) return dryRunResult(engine, prompt, '未知引擎：' + engine, soul);
+  const sessionId = String(p.sessionId || '').trim() || SessionLogCore.uid('s');
 
-  const settings = decryptSettings(readSettingsRaw());
-  if (p.dryRun === true) return dryRunResult(engine, prompt, '本次为演练模式', soul);
-  if (!settings.allowRealRuns) {
-    return dryRunResult(engine, prompt, '真实执行未开启（引擎设置里可打开；需先装 CLI 或填 API Key）', soul);
+  // 会话回放：先把「用户消息 + 注入上下文 + 启动」写进 append-only 事件流
+  if (sessionLog && sessionId) {
+    sessionLog.record(sessionId, 'user', { text: prompt, agent: String(p.agentName || ''), skills: p.skillIds || [] });
+    if (soul) sessionLog.record(sessionId, 'system', { text: soul.slice(0, 4000) });
+    sessionLog.record(sessionId, 'agent_started', { task: prompt.slice(0, 200), engine: engine, dryRun: !!p.dryRun });
   }
 
-  if (CLI_ADAPTERS[engine]) return runCliAgent(engine, prompt, soul);
-  if (API_ENDPOINTS[engine]) return runApiAgent(engine, prompt, soul, settings[engine]);
-  return dryRunResult(engine, prompt, '本地引擎需自行接入推理服务（如 ollama / FunASR）', soul);
+  let result;
+  if (!prompt.trim()) result = dryRunResult(engine, prompt, '任务内容为空', soul);
+  else if (!PRICES[engine]) result = dryRunResult(engine, prompt, '未知引擎：' + engine, soul);
+  else {
+    const settings = decryptSettings(readSettingsRaw());
+    if (p.dryRun === true) result = dryRunResult(engine, prompt, '本次为演练模式', soul);
+    else if (!settings.allowRealRuns) result = dryRunResult(engine, prompt, '真实执行未开启（引擎设置里可打开；需先装 CLI 或填 API Key）', soul);
+    else if (CLI_ADAPTERS[engine]) result = await runCliAgent(engine, prompt, soul);
+    else if (API_ENDPOINTS[engine]) result = await runApiAgent(engine, prompt, soul, settings[engine]);
+    else result = dryRunResult(engine, prompt, '本地引擎需自行接入推理服务（如 ollama / FunASR）', soul);
+  }
+
+  if (sessionLog && sessionId) {
+    sessionLog.record(sessionId, 'agent_output', { text: String((result && result.text) || '').slice(0, 20000), engine: (result && result.engine) || engine });
+    sessionLog.record(sessionId, 'turn_end', { status: result && result.status, error: result && result.error, cost: result && result.cost });
+  }
+  return Object.assign({}, result, { sessionId: sessionId });
 });
 
 /* ---------------- IPC：研究助手聊天（流式） ---------------- */
@@ -1480,8 +1545,132 @@ function startTaskWatchdog() {
   }, 60 * 1000);
 }
 
+/* ---------------- 灵感目录：每日调研 DSH 插件生态（eco-radar） ---------------- */
+function runEcoRadar() {
+  const prev = readJson('eco-radar.json', { seen: [], lastRun: 0, entries: [] });
+  const seen = Array.isArray(prev.seen) ? prev.seen : [];
+  return EcoRadar.runEcoRadar({ seen: seen }).then((result) => {
+    if (!result.ok) return { ok: false, error: result.error };
+    const entry = { at: Date.now(), newCount: result.newCount, newPlugins: result.newPlugins, report: result.report };
+    const entries = (Array.isArray(prev.entries) ? prev.entries : []).concat([entry]).slice(-30);
+    const allSeen = Array.from(new Set(seen.concat(result.newPlugins.map((p) => p.full_name)))).slice(-5000);
+    writeJson('eco-radar.json', { seen: allSeen, lastRun: Date.now(), entries: entries });
+    const matchedBoards = Object.keys(result.matches || {}).filter((k) => (result.matches[k] || []).length);
+    const summary = result.newCount
+      ? '灵感目录 · 发现 ' + result.newCount + ' 个新 DSH 插件' + (matchedBoards.length ? '，' + matchedBoards.length + ' 个板块有匹配' : '')
+      : '灵感目录 · 今日无新增 DSH 插件';
+    const body = matchedBoards.length
+      ? '匹配板块：' + matchedBoards.map((k) => (EcoRadar.boardMeta(k) || {}).label || k).join('、')
+      : '打开工作台查看调研详情';
+    try { if (Notification.isSupported()) new Notification({ title: summary, body: body }).show(); } catch { /* 通知失败不阻断 */ }
+    broadcast('eco-radar:updated', { entry: entry, summary: summary });
+    return { ok: true, newCount: result.newCount, summary: summary, report: result.report };
+  });
+}
+
+// 首次启动：确保「灵感目录」Agent 与每日调研计划存在（幂等）
+function ensureEcoRadar() {
+  let agents = readJson('agents.json', []);
+  if (!Array.isArray(agents)) agents = [];
+  const has = agents.some((a) => a.id === 'eco-radar' || a.tag === '生态雷达');
+  if (!has) {
+    agents.push({
+      id: 'eco-radar', name: '灵感目录', title: '生态雷达 · 每日调研 DSH 插件', emoji: '📡',
+      tag: '生态雷达',
+      soul: '你是「灵感目录」生态雷达：每天调研 DeepSeek Harness（DSH）插件生态，从 GitHub 的 dsh-plugin 话题里找新插件，并按用户的用途板块（学术研究 / 设计配色 / 写作 / 文档 / 浏览器 / 图像 / 代码 / 音乐）筛选出可能适合用户的功能，产出可解释的简报并推送。只依据真实抓到的仓库信息，不臆造插件名。',
+      description: '每日调研 DSH 插件生态，按用途板块筛选新功能并推送简报。',
+      engine: 'local-llm', fallbacks: [], memory: {}, skills: [], routines: [],
+      tools: [], approvalMode: 'ask', computer: 'off', caps: {}, visibility: 'private',
+      role: 'worker', canControl: false, status: 'active', href: '', engineLabel: '调研引擎 · GitHub API',
+      detail: '无需 API Key，直接读 GitHub dsh-plugin 话题，本地关键词匹配，免费可解释。',
+    });
+    writeJson('agents.json', agents);
+  }
+  const q = getTaskQueue();
+  const hasTask = q.list().some((t) => t.agent === 'eco-radar' && t.schedule);
+  if (!hasTask) {
+    q.enqueue({
+      title: '灵感目录 · 每日 DSH 生态调研',
+      goal: '调研 DeepSeek Harness（DSH）插件生态，找到新插件并按用途板块分类推荐',
+      agent: 'eco-radar', engine: 'deepseek', model: '',
+      schedule: '09:00',
+    });
+    broadcastTasks();
+  }
+}
+
 /* ---------------- 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想） ---------------- */
 let taskSchedulerTimer = null;
+
+/* 自然语言定时解析：把「明天下午3点 / 每天9点 / 下周一上午10点」等转成 schedule 字符串。
+   schedule 语义：'HH:MM' = 每天到点；'YYYY-MM-DD HH:MM' = 一次性到点（触发后自动清除）。 */
+function parseNaturalSchedule(text) {
+  const s = String(text || '').trim();
+  if (!s) return { ok: false, error: '空输入' };
+  // 1) 纯 HH:MM → 每天
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(s)) {
+    return { ok: true, schedule: s, type: 'daily', label: '每天 ' + s };
+  }
+  // 2) 'YYYY-MM-DD HH:MM' → 一次性
+  const dm = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (dm) {
+    const y = dm[1], mo = ('0' + dm[2]).slice(-2), d = ('0' + dm[3]).slice(-2), h = ('0' + dm[4]).slice(-2), mi = dm[5];
+    const sch = y + '-' + mo + '-' + d + ' ' + h + ':' + mi;
+    return { ok: true, schedule: sch, type: 'once', label: sch };
+  }
+  // 3) 自然语言
+  const t = s.replace(/\s+/g, '');
+  let type = 'once';
+
+  let hour = null, min = 0;
+  const ampm = t.match(/(\d{1,2})\s*(am|pm)/i);
+  const cn = t.match(/(早上|早晨|上午|中午|下午|晚上|傍晚|凌晨)?(\d{1,2})[点:：](半|(\d{1,2})分?)?/);
+  if (ampm) {
+    hour = parseInt(ampm[1], 10) % 12;
+    if (/pm/i.test(ampm[2])) hour += 12;
+    else if (hour === 12) hour = 0;
+  } else if (cn) {
+    hour = parseInt(cn[2], 10);
+    const p = cn[1] || '';
+    if ((p === '下午' || p === '晚上' || p === '傍晚' || p === '中午') && hour < 12) hour += 12;
+    if (p === '凌晨' && hour === 12) hour = 0;
+    if (cn[3] === '半') min = 30;
+    else if (cn[4]) min = parseInt(cn[4], 10);
+  }
+  if (hour == null) return { ok: false, error: '没解析出时间，试试「9点」「下午3点」「3pm」或「09:00」' };
+  if (hour < 0 || hour > 23 || min < 0 || min > 59) return { ok: false, error: '时间超出范围' };
+  const hhmm = ('0' + hour).slice(-2) + ':' + ('0' + min).slice(-2);
+
+  const now = new Date();
+  let dayOffset = null;
+  if (/每天|每日|天天|工作日/.test(t)) type = 'daily';
+  else if (/明天|明日/.test(t)) dayOffset = 1;
+  else if (/后天/.test(t)) dayOffset = 2;
+  else if (/大后天/.test(t)) dayOffset = 3;
+  else if (/今天|今日/.test(t)) dayOffset = 0;
+  else {
+    const nd = t.match(/(\d+)\s*天[后之]?/);
+    if (nd) dayOffset = parseInt(nd[1], 10);
+    else {
+      const wk = t.match(/(下|本|这)?(周|星期|礼拜)([一二三四五六日天])/);
+      if (wk) {
+        const map = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
+        const target = map[wk[3]];
+        const diff = (target - now.getDay() + 7) % 7;
+        dayOffset = (wk[1] === '下') ? 7 + diff : diff;
+      }
+    }
+  }
+
+  if (type === 'daily') return { ok: true, schedule: hhmm, type: 'daily', label: '每天 ' + hhmm };
+  if (dayOffset == null) dayOffset = 0;
+  const dd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset);
+  const dateStr = dd.getFullYear() + '-' + ('0' + (dd.getMonth() + 1)).slice(-2) + '-' + ('0' + dd.getDate()).slice(-2);
+  const schedule = dateStr + ' ' + hhmm;
+  return { ok: true, schedule: schedule, type: 'once', label: schedule };
+}
+ipcMain.handle('schedule:parse', (_e, text) => parseNaturalSchedule(text));
+
 function startTaskScheduler() {
   if (taskSchedulerTimer) return;
   // 每 60 秒检查一次：带 schedule 的任务到点触发（复制成一次性任务入队并后台跑）
@@ -1492,15 +1681,18 @@ function startTaskScheduler() {
       const hhmm = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
       const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
       q.listScheduled().forEach((t) => {
-        if (t.schedule === hhmm && t.lastRunDate !== today) {
-          q.markScheduledRun(t.id, today);
-          const copy = q.enqueue({ title: t.title, goal: t.goal, agent: t.agent, engine: t.engine, model: t.model });
+        const sch = String(t.schedule || '');
+        const isOnce = sch.indexOf(' ') >= 0; // 'YYYY-MM-DD HH:MM' 一次性
+        const due = isOnce ? (sch === today + ' ' + hhmm) : (sch === hhmm && t.lastRunDate !== today);
+        if (!due) return;
+        if (isOnce) q.clearSchedule(t.id);
+        else q.markScheduledRun(t.id, today);
+        const copy = q.enqueue({ title: t.title, goal: t.goal, agent: t.agent, engine: t.engine, model: t.model });
+        broadcastTasks();
+        runBackgroundTask(copy).catch((e) => {
+          getTaskQueue().fail(copy.id, String((e && e.message) || e));
           broadcastTasks();
-          runBackgroundTask(copy).catch((e) => {
-            getTaskQueue().fail(copy.id, String((e && e.message) || e));
-            broadcastTasks();
-          });
-        }
+        });
       });
     } catch { /* 忽略调度异常 */ }
   }, 60 * 1000);
@@ -1509,6 +1701,14 @@ function startTaskScheduler() {
 ipcMain.handle('task:list', () => {
   const q = getTaskQueue();
   return { tickets: q.list(), counts: q.counts() };
+});
+// 自动分拣：用 task-router 的规则分类器判断任务类型 + 默认引擎（零 AI 调用，即时返回）
+ipcMain.handle('task:classify', (_e, text) => {
+  try {
+    const c = TaskRouter.classifyTask(text);
+    const tt = TaskRouter.typeById(c.type);
+    return { type: c.type, label: c.label, score: c.score, engine: tt.engine, boardHint: tt.boardHint };
+  } catch (e) { return { type: 'general', label: '通用', score: 0, engine: 'deepseek', boardHint: '' }; }
 });
 ipcMain.handle('task:create', (_e, t) => {
   const ticket = getTaskQueue().enqueue(t || {});
@@ -1547,6 +1747,129 @@ ipcMain.handle('task:stop', (_e, id) => {
   if (t && (t.status === 'running' || t.status === 'queued')) q.cancel(id);
   broadcastTasks();
   return true;
+});
+
+/* ---------------- IPC：灵感目录（生态雷达） ---------------- */
+ipcMain.handle('eco:radar:run', async () => {
+  try { return await runEcoRadar(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('eco:radar:status', () => readJson('eco-radar.json', { seen: [], lastRun: 0, entries: [] }));
+
+/* ---------------- 数据仪表盘：聚合本地多源数据（笔记 / 聊天 / 任务 / 日历 / 术语） ---------------- */
+function localDateStr(d) {
+  const x = d || new Date();
+  return x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2);
+}
+
+function buildDashboard() {
+  const out = {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    notes: { total: 0, withFm: 0, withTags: 0, totalChars: 0, dirs: {} },
+    chat: { agents: [], totalSessions: 0, totalMessages: 0, totalChars: 0 },
+    tasks: { counts: { queued: 0, running: 0, waiting: 0, done: 0, failed: 0, cancelled: 0 }, scheduled: 0 },
+    calendar: { total: 0, upcoming7: 0, upcoming30: 0, categories: {} },
+    terms: { total: 0 },
+    heat: {},
+  };
+  const bump = (ts) => {
+    if (!ts) return;
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return;
+    const k = localDateStr(d);
+    out.heat[k] = (out.heat[k] || 0) + 1;
+  };
+
+  // 1) Obsidian 笔记（walk vault：数量 / frontmatter / 标签 / 字数 / 目录分布 / mtime 热力）
+  const vp = vaultPath();
+  if (vp) {
+    const skip = new Set(['.obsidian', '.trash', '.git', 'node_modules']);
+    const walk = (dir) => {
+      let es; try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const ent of es) {
+        if (ent.isDirectory()) { if (!skip.has(ent.name)) walk(path.join(dir, ent.name)); continue; }
+        if (!/\.md$/i.test(ent.name)) continue;
+        const full = path.join(dir, ent.name);
+        let content, st;
+        try { content = fs.readFileSync(full, 'utf8'); st = fs.statSync(full); } catch { continue; }
+        out.notes.total++;
+        const fm = parseFrontmatter(content);
+        if (fm.has) out.notes.withFm++;
+        if (fm.tags.length) out.notes.withTags++;
+        out.notes.totalChars += (fm.body || content).length;
+        const rel = path.relative(vp, full).split(path.sep).join('/');
+        const d0 = path.dirname(rel) || '(根目录)';
+        out.notes.dirs[d0] = (out.notes.dirs[d0] || 0) + 1;
+        bump(st.mtime);
+      }
+    };
+    walk(vp);
+  }
+
+  // 2) 聊天历史（chat-history/*.json，按 Agent 聚合会话 / 消息 / 字数 / 最近活跃）
+  const chatDir = path.join(dataDir(), 'chat-history');
+  try {
+    for (const f of fs.readdirSync(chatDir)) {
+      if (!f.endsWith('.json')) continue;
+      let d; try { d = JSON.parse(fs.readFileSync(path.join(chatDir, f), 'utf8')); } catch { continue; }
+      const sessions = Array.isArray(d) ? d : (d && d.sessions) || [];
+      let msgs = 0, chars = 0, last = 0;
+      for (const s of sessions) {
+        const mm = (s && s.messages) || [];
+        msgs += mm.length;
+        for (const m of mm) chars += String((m && m.content) || '').length;
+        if (s.updatedAt) last = Math.max(last, Number(s.updatedAt) || 0);
+        bump(s.createdAt);
+        bump(s.updatedAt);
+      }
+      out.chat.agents.push({ name: f.replace(/\.json$/, ''), sessions: sessions.length, messages: msgs, chars: chars, lastActive: last || null });
+      out.chat.totalSessions += sessions.length;
+      out.chat.totalMessages += msgs;
+      out.chat.totalChars += chars;
+    }
+  } catch { /* chat-history 目录不存在 */ }
+
+  // 3) 后台任务队列（状态计数 + 定时任务数 + 创建时间热力）
+  try {
+    const q = getTaskQueue();
+    out.tasks.counts = q.counts();
+    out.tasks.scheduled = q.listScheduled().length;
+    q.list().forEach((t) => bump(t.createdAt));
+  } catch { /* ignore */ }
+
+  // 4) 日历事件（secretary.json：总数 / 未来 7·30 天 / 分类分布）
+  const sec = readJson('secretary.json', { events: [] });
+  const now = Date.now();
+  for (const ev of (sec.events || [])) {
+    out.calendar.total++;
+    const c = ev.category || 'other';
+    out.calendar.categories[c] = (out.calendar.categories[c] || 0) + 1;
+    const t = new Date(ev.at || ev.end || '').getTime();
+    if (!isNaN(t)) {
+      const diff = t - now;
+      if (diff >= 0 && diff <= 7 * 864e5) out.calendar.upcoming7++;
+      if (diff >= 0 && diff <= 30 * 864e5) out.calendar.upcoming30++;
+      bump(ev.at);
+    }
+  }
+
+  // 5) 术语库条目数
+  const terms = readJson('terms-state.json', { terms: {} });
+  out.terms.total = Object.keys(terms.terms || {}).length;
+
+  // 6) 热力图：近 84 天连续序列（GitHub 式），按天计数
+  const days = [];
+  for (let i = 83; i >= 0; i--) {
+    const k = localDateStr(new Date(now - i * 864e5));
+    days.push({ date: k, count: out.heat[k] || 0 });
+  }
+  out.heatmap = days;
+
+  return out;
+}
+ipcMain.handle('dashboard:get', () => {
+  try { return buildDashboard(); }
+  catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 });
 
 /* ---------------- IPC：研究助手「审稿闭环」（跨模型对抗式） ---------------- */
@@ -2504,7 +2827,10 @@ function toolDbObsidianWrite(payload) {
   if (!vp) return { ok: false, error: '未检测到 Obsidian 库（请先安装 Obsidian 并创建 vault）' };
   const title = String((payload && payload.title) || '').trim();
   const content = String((payload && payload.content) || '');
-  const tags = Array.isArray(payload && payload.tags) ? payload.tags : [];
+  const tags = Array.isArray(payload && payload.tags) ? payload.tags.map((x) => String(x).trim()).filter(Boolean) : [];
+  // 双库分离：AI 写入的笔记默认标记来源「AI生成」，与用户自己敲的笔记区分；
+  // AI 一律落工位库 _AI整理/（除非用户显式指定 folder），主库只读。
+  if (!tags.includes('AI生成')) tags.push('AI生成');
   const folder = String((payload && payload.folder) || '_AI整理').trim();
   if (!title) return { ok: false, error: '缺少标题' };
   const dir = resolveInVault(folder);
@@ -2559,6 +2885,38 @@ function toolDbObsidianMove(payload) {
     fs.renameSync(from, to);
     return { ok: true, from: from, to: to };
   } catch (e) { return { ok: false, error: '移动失败：' + String(e && e.message || e) }; }
+}
+// 晋升：用户确认某篇「值得留」后，从工位库搬到主库，并把「AI生成」标签换成人工标签，
+// 标志「判断权已由人收回」——这是双库分离的最后一步，必须人来做，不让 AI 自行晋升。
+function toolDbObsidianPromote(payload) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
+  const from = resolveInVault((payload && payload.path) || '');
+  if (!from) return { ok: false, error: '路径超出 Obsidian 库范围' };
+  if (!fs.existsSync(from)) return { ok: false, error: '笔记不存在：' + String((payload && payload.path) || '') };
+  const toDir = resolveInVault(String((payload && payload.folder) || '').trim());
+  if (!toDir) return { ok: false, error: '目标目录超出 Obsidian 库范围' };
+  const target = path.join(toDir, path.basename(from));
+  try {
+    fs.mkdirSync(toDir, { recursive: true });
+    fs.renameSync(from, target);
+    const tags = (Array.isArray(payload && payload.tags) && payload.tags.length)
+      ? payload.tags.map((x) => String(x).trim()).filter(Boolean)
+      : ['已采纳'];
+    let content = fs.readFileSync(target, 'utf8');
+    const fm = parseFrontmatter(content);
+    if (fm.has) {
+      const inner = fm.header.replace(/^---\r?\n/, '').replace(/\r?\n---\r?\n?$/, '');
+      const cleaned = inner
+        .replace(/^tags\s*:\s*\r?\n(?:\s+-\s+.*\r?\n?)+/m, '')
+        .replace(/^tags\s*:.*$/m, '')
+        .replace(/\n{2,}/g, '\n').trim();
+      const tagBlock = 'tags:\n' + tags.map((t) => '  - ' + JSON.stringify(t)).join('\n');
+      content = '---\n' + (cleaned ? cleaned + '\n' + tagBlock : tagBlock) + '\n---\n' + fm.body;
+      fs.writeFileSync(target, content, 'utf8');
+    }
+    return { ok: true, from: from, to: target, tags: tags };
+  } catch (e) { return { ok: false, error: '晋升失败：' + String(e && e.message || e) }; }
 }
 function toolDbObsidianReport() {
   const vp = vaultPath();
@@ -2727,6 +3085,7 @@ async function toolDbZoteroCollection(payload) {
 ipcMain.handle('tool:db:obsidian:write', (_e, p) => toolDbObsidianWrite(p));
 ipcMain.handle('tool:db:obsidian:tag', (_e, p) => toolDbObsidianTag(p));
 ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
+ipcMain.handle('tool:db:obsidian:promote', (_e, p) => toolDbObsidianPromote(p));
 ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));
@@ -2756,6 +3115,8 @@ if (gotSingleInstanceLock) {
     startTaskWatchdog();
     // 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想）
     startTaskScheduler();
+    // 灵感目录：确保内置调研 Agent 与每日调研计划存在
+    ensureEcoRadar();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });
