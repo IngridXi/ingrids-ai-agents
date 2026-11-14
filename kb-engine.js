@@ -52,6 +52,12 @@ function detectObsidianVaults(home) {
   return out;
 }
 
+// 判断一个 vault 是否为「工位库」（AI 的凌乱库），主库之外的独立库按名字识别
+function isWorkspaceVault(p) {
+  const base = path.basename(String(p || '')).toLowerCase();
+  return /工位库|ai.?工位|workspace|scratch|staging|messy/.test(base);
+}
+
 function detectZoteroDir(home) {
   const p = path.join(home || os.homedir(), 'Zotero');
   return fs.existsSync(p) ? p : null;
@@ -98,6 +104,7 @@ class KbEngine {
   autoDetectSources() {
     const srcs = [];
     for (const p of detectObsidianVaults()) {
+      if (isWorkspaceVault(p)) continue; // 工位库（AI 草稿）不进用户知识库索引
       srcs.push({ id: 'src-' + md5('obsidian:' + p).slice(0, 8), type: 'markdown', label: 'Obsidian', path: p, enabled: true });
     }
     const z = detectZoteroDir();
@@ -465,4 +472,4 @@ class KbEngine {
   }
 }
 
-module.exports = { KbEngine, cosine, md5, detectObsidianVaults, detectZoteroDir };
+module.exports = { KbEngine, cosine, md5, detectObsidianVaults, detectZoteroDir, isWorkspaceVault };

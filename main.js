@@ -22,7 +22,7 @@ const net = require('net');
 const http = require('http');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
-const { KbEngine, detectObsidianVaults, detectZoteroDir } = require('./kb-engine.js');
+const { KbEngine, detectObsidianVaults, detectZoteroDir, isWorkspaceVault } = require('./kb-engine.js');
 const syncEngine = require('./sync-engine.js');
 require('./secretary-core.js');
 const SecretaryCore = globalThis.SecretaryCore;
@@ -33,6 +33,10 @@ require('./task-router.js');
 const TaskRouter = globalThis.TaskRouter;
 require('./session-log-core.js');
 const SessionLogCore = globalThis.SessionLogCore;
+require('./eco-radar.js');
+const EcoRadar = globalThis.EcoRadar;
+require('./permission-core.js');
+const PermissionCore = globalThis.PermissionCore;
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -107,6 +111,22 @@ const sessionLogStorage = {
   },
 };
 const sessionLog = new SessionLogCore.SessionLog(sessionLogStorage);
+
+/* ---------------- 授权门：有副作用操作前的显式授权 + 审计（借鉴 DSH permission policy） ---------------- */
+const permissionGateStorage = {
+  load: () => readJson('permissions.json', []),
+  save: (grants) => writeJson('permissions.json', Array.isArray(grants) ? grants : []),
+  appendAudit: (entry) => {
+    try { fs.appendFileSync(path.join(dataDir(), 'permissions-audit.jsonl'), JSON.stringify(entry) + '\n', 'utf8'); } catch { /* 忽略 */ }
+  },
+  listAudit: () => {
+    try {
+      return fs.readFileSync(path.join(dataDir(), 'permissions-audit.jsonl'), 'utf8').split('\n')
+        .filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    } catch { return []; }
+  },
+};
+const permissionGate = new PermissionCore.PermissionGate(permissionGateStorage);
 
 /* ---------------- 后台任务队列（吸收 dsh Ticket 思想） ---------------- */
 let taskQueue = null;
@@ -1047,6 +1067,15 @@ ipcMain.handle('computer:start', (e, payload) => {
   if (!task) { send({ type: 'error', message: '请先填写任务内容' }); return false; }
   if (computerUseProc) { send({ type: 'error', message: '已有任务在执行，请先停止' }); return false; }
 
+  // 授权门：真实操作电脑（非演练）前，必须有显式授权（deny by default）
+  if (!dryRun && permissionGate) {
+    const auth = permissionGate.check('computer:use', { detail: task.slice(0, 80) });
+    if (!auth.allowed) {
+      send({ type: 'error', message: '电脑操作未授权：' + auth.reason + '。请先在工作台授权（一次性或永久）后再试。' });
+      return false;
+    }
+  }
+
   const args = [path.join(__dirname, 'computer-use.py'), '--task', task, '--max-steps', String(maxSteps)];
   if (dryRun) args.push('--dry-run');
 
@@ -1089,6 +1118,13 @@ ipcMain.handle('computer:stop', () => {
   }
   return true;
 });
+
+/* ---------------- IPC：授权门（有副作用操作前显式授权 + 审计） ---------------- */
+ipcMain.handle('permission:list', () => permissionGate.list());
+ipcMain.handle('permission:grant', (_e, action, opts) => permissionGate.grant(action, opts));
+ipcMain.handle('permission:revoke', (_e, idOrAction) => permissionGate.revoke(idOrAction));
+ipcMain.handle('permission:check', (_e, action, opts) => permissionGate.check(action, opts));
+ipcMain.handle('permission:audit', () => permissionGate.audit());
 
 /* ---------------- IPC：CLI 检测 / 启动 ---------------- */
 ipcMain.handle('cli:detect', (_e, engineId) => {
@@ -1689,6 +1725,18 @@ function startTaskScheduler() {
         else q.markScheduledRun(t.id, today);
         const copy = q.enqueue({ title: t.title, goal: t.goal, agent: t.agent, engine: t.engine, model: t.model });
         broadcastTasks();
+        if (t.agent === 'eco-radar') {
+          // 灵感目录走专用调研引擎（GitHub API，免费、可解释），不走 LLM
+          runEcoRadar().then((r) => {
+            if (r && r.ok) q.complete(copy.id, r.report || r.summary || '');
+            else q.fail(copy.id, (r && r.error) || '调研失败');
+            broadcastTasks();
+          }).catch((e) => {
+            getTaskQueue().fail(copy.id, String((e && e.message) || e));
+            broadcastTasks();
+          });
+          return;
+        }
         runBackgroundTask(copy).catch((e) => {
           getTaskQueue().fail(copy.id, String((e && e.message) || e));
           broadcastTasks();
@@ -2777,9 +2825,16 @@ ipcMain.handle('tool:db:query', async (_e, p) => {
 });
 
 /* ---------------- 整理数据库工具（Obsidian 写 / Zotero 只读报告） ---------------- */
+// 主库：排除工位库后的第一个 vault（你自己敲的字，AI 只读）
 function vaultPath() {
   const vaults = detectObsidianVaults();
-  return (vaults && vaults.length) ? vaults[0] : null;
+  const main = vaults.filter((p) => !isWorkspaceVault(p));
+  return (main.length ? main : vaults)[0] || null;
+}
+// 工位库：AI 专用的凌乱库（AI 只在这里写）
+function workspaceVaultPath() {
+  const vaults = detectObsidianVaults();
+  return vaults.find((p) => isWorkspaceVault(p)) || null;
 }
 function parseFrontmatter(content) {
   const m = String(content || '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
@@ -2810,31 +2865,35 @@ function buildFrontmatter(title, tags, content) {
   lines.push('---');
   return lines.join('\n') + '\n\n' + String(content || '').trim() + '\n';
 }
-function resolveInVault(relPath) {
-  const vp = vaultPath();
+function resolveIn(vp, relPath) {
   if (!vp) return null;
   const p = String(relPath || '').trim();
   if (!p) return vp;
   const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(vp, p);
   return abs.startsWith(vp + path.sep) ? abs : null;
 }
+function resolveInVault(relPath) { return resolveIn(vaultPath(), relPath); }
+function resolveInWorkspace(relPath) { return resolveIn(workspaceVaultPath(), relPath); }
 function safeFileName(name) {
   return String(name || '未命名').replace(/[\\/:*?"<>|]/g, '-').replace(/^\.+/, '').trim() || '未命名';
 }
 
 function toolDbObsidianWrite(payload) {
-  const vp = vaultPath();
+  const ws = workspaceVaultPath();
+  const vp = ws || vaultPath();
   if (!vp) return { ok: false, error: '未检测到 Obsidian 库（请先安装 Obsidian 并创建 vault）' };
   const title = String((payload && payload.title) || '').trim();
   const content = String((payload && payload.content) || '');
   const tags = Array.isArray(payload && payload.tags) ? payload.tags.map((x) => String(x).trim()).filter(Boolean) : [];
   // 双库分离：AI 写入的笔记默认标记来源「AI生成」，与用户自己敲的笔记区分；
-  // AI 一律落工位库 _AI整理/（除非用户显式指定 folder），主库只读。
+  // 有工位库时 AI 一律写工位库（整个库都是 AI 的，默认落根目录）；没有工位库才退回主库 _AI整理/。
   if (!tags.includes('AI生成')) tags.push('AI生成');
-  const folder = String((payload && payload.folder) || '_AI整理').trim();
+  const folder = ws
+    ? String((payload && payload.folder) || '').trim()
+    : String((payload && payload.folder) || '_AI整理').trim();
   if (!title) return { ok: false, error: '缺少标题' };
-  const dir = resolveInVault(folder);
-  if (!dir) return { ok: false, error: '目录超出 Obsidian 库范围：' + folder };
+  const dir = folder ? path.resolve(vp, folder) : vp;
+  if (dir !== vp && !dir.startsWith(vp + path.sep)) return { ok: false, error: '目录超出 Obsidian 库范围：' + folder };
   try {
     fs.mkdirSync(dir, { recursive: true });
     const base = safeFileName(title);
@@ -2846,9 +2905,9 @@ function toolDbObsidianWrite(payload) {
   } catch (e) { return { ok: false, error: '写入失败：' + String(e && e.message || e) }; }
 }
 function toolDbObsidianTag(payload) {
-  const vp = vaultPath();
+  const vp = workspaceVaultPath() || vaultPath();
   if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
-  const target = resolveInVault((payload && payload.path) || '');
+  const target = resolveIn(vp, (payload && payload.path) || '');
   if (!target) return { ok: false, error: '路径超出 Obsidian 库范围' };
   if (!fs.existsSync(target)) return { ok: false, error: '笔记不存在：' + String((payload && payload.path) || '') };
   const tags = Array.isArray(payload && payload.tags) ? payload.tags.map((x) => String(x).trim()).filter(Boolean) : [];
@@ -2874,10 +2933,10 @@ function toolDbObsidianTag(payload) {
   } catch (e) { return { ok: false, error: '打标签失败：' + String(e && e.message || e) }; }
 }
 function toolDbObsidianMove(payload) {
-  const vp = vaultPath();
+  const vp = workspaceVaultPath() || vaultPath();
   if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
-  const from = resolveInVault((payload && payload.from) || '');
-  const to = resolveInVault((payload && payload.to) || '');
+  const from = resolveIn(vp, (payload && payload.from) || '');
+  const to = resolveIn(vp, (payload && payload.to) || '');
   if (!from || !to) return { ok: false, error: '来源或目标超出 Obsidian 库范围' };
   try {
     if (!fs.existsSync(from)) return { ok: false, error: '来源不存在：' + String((payload && payload.from) || '') };
@@ -2889,13 +2948,15 @@ function toolDbObsidianMove(payload) {
 // 晋升：用户确认某篇「值得留」后，从工位库搬到主库，并把「AI生成」标签换成人工标签，
 // 标志「判断权已由人收回」——这是双库分离的最后一步，必须人来做，不让 AI 自行晋升。
 function toolDbObsidianPromote(payload) {
-  const vp = vaultPath();
-  if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
-  const from = resolveInVault((payload && payload.path) || '');
-  if (!from) return { ok: false, error: '路径超出 Obsidian 库范围' };
+  const main = vaultPath();
+  if (!main) return { ok: false, error: '未检测到 Obsidian 主库' };
+  const ws = workspaceVaultPath();
+  // from 优先在工位库解析；没有工位库（旧数据）时退回主库解析
+  const from = resolveIn(ws || main, (payload && payload.path) || '');
+  if (!from) return { ok: false, error: '来源路径超出 Obsidian 库范围' };
   if (!fs.existsSync(from)) return { ok: false, error: '笔记不存在：' + String((payload && payload.path) || '') };
-  const toDir = resolveInVault(String((payload && payload.folder) || '').trim());
-  if (!toDir) return { ok: false, error: '目标目录超出 Obsidian 库范围' };
+  const toDir = resolveIn(main, String((payload && payload.folder) || '').trim());
+  if (!toDir) return { ok: false, error: '目标目录超出主库范围' };
   const target = path.join(toDir, path.basename(from));
   try {
     fs.mkdirSync(toDir, { recursive: true });

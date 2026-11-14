@@ -1017,7 +1017,7 @@
     }
     if (caps.db) {
       tools.push('db_query：查询本地知识库 / 文献库（Zotero、Obsidian、Notion），参数 {"query":"关键词"}');
-      tools.push('db_obsidian_write：写一篇整理笔记到 Obsidian 库。铁律：只能写进工位库（默认 _AI整理/ 目录），主库（术语库等用户自建目录）只读、绝不写入。参数 {"title":"标题","content":"正文","tags":["标签"],"folder":"可选子目录"}');
+      tools.push('db_obsidian_write：写一篇整理笔记到 Obsidian 库。铁律：只能写进工位库（独立的 Obsidian AI 工位库 vault），主库（术语库等用户自建目录）只读、绝不写入。参数 {"title":"标题","content":"正文","tags":["标签"],"folder":"可选子目录"}');
       tools.push('db_obsidian_tag：给某篇 Obsidian 笔记打标签，参数 {"path":"相对库路径","tags":["标签1","标签2"]}');
       tools.push('db_obsidian_move：归档/移动 Obsidian 笔记，参数 {"from":"原路径","to":"新路径"}');
       tools.push('db_obsidian_promote：把工位库某篇「晋升」到主库（仅当用户明确说这条值得留/抄回主库/采纳时调用；判断权归用户，禁止自行晋升），参数 {"path":"相对库路径","folder":"目标目录(可选)","tags":["新标签"]}');
@@ -1053,7 +1053,7 @@
     }
     if (caps.db) {
       fn('db_query', '查询本地知识库 / 文献库（Zotero、Obsidian、Notion）', { query: { type: 'string', description: '关键词' } });
-      fn('db_obsidian_write', '写一篇整理笔记到 Obsidian 库。铁律：只能写进工位库（默认 _AI整理/ 目录），主库只读', { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, folder: { type: 'string' } });
+      fn('db_obsidian_write', '写一篇整理笔记到 Obsidian 库。铁律：只能写进工位库（独立的 Obsidian AI 工位库 vault），主库只读', { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, folder: { type: 'string' } });
       fn('db_obsidian_tag', '给 Obsidian 笔记打标签', { path: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } });
       fn('db_obsidian_move', '归档/移动 Obsidian 笔记', { from: { type: 'string' }, to: { type: 'string' } });
       fn('db_obsidian_promote', '把工位库某篇晋升到主库（仅用户确认值得留才调用，判断权归用户）', { path: { type: 'string' }, folder: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } });
