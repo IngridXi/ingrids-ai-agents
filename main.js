@@ -2366,6 +2366,40 @@ ipcMain.handle('fs:perm-check', () => {
   return result;
 });
 
+/* ---------------- Notion 自动同步（定时拉取全文 → 增量索引 → 变化通知） ---------------- */
+async function runNotionSync() {
+  const t = notionToken();
+  if (!t) return { skipped: true, reason: 'no-token' };
+  const cachePath = path.join(dataDir(), 'kb', 'notion-cache.json');
+  let before = [];
+  try { const c = JSON.parse(fs.readFileSync(cachePath, 'utf8')); before = Array.isArray(c.docs) ? c.docs : []; } catch {}
+  const beforeIds = new Set(before.map((d) => d.id));
+  const beforeTitle = {};
+  before.forEach((d) => { beforeTitle[d.id] = d.title; });
+
+  await kbEngine.scan({ force: true });
+
+  let after = [];
+  try { const c = JSON.parse(fs.readFileSync(cachePath, 'utf8')); after = Array.isArray(c.docs) ? c.docs : []; } catch {}
+  const afterIds = new Set(after.map((d) => d.id));
+  let added = 0, removed = 0, updated = 0;
+  after.forEach((d) => { if (!beforeIds.has(d.id)) added++; else if ((beforeTitle[d.id] || '') !== (d.title || '')) updated++; });
+  beforeIds.forEach((id) => { if (!afterIds.has(id)) removed++; });
+
+  const changed = added + removed + updated;
+  const summary = { ok: true, total: after.length, added: added, removed: removed, updated: updated, syncedAt: Date.now() };
+  if (changed > 0) {
+    const parts = [];
+    if (added) parts.push('新增 ' + added);
+    if (updated) parts.push('更新 ' + updated);
+    if (removed) parts.push('移除 ' + removed);
+    try { if (Notification.isSupported()) new Notification({ title: 'Notion 已同步', body: '共 ' + after.length + ' 篇（' + parts.join('、') + '）' }).show(); } catch { /* 通知失败不阻断 */ }
+  }
+  broadcast('notion:synced', summary);
+  return summary;
+}
+ipcMain.handle('notion:sync', () => runNotionSync());
+
 /* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
 const OAUTH_PORT = 18888;
 const OAUTH_REDIRECT = 'http://localhost:' + OAUTH_PORT;
@@ -3229,6 +3263,8 @@ if (gotSingleInstanceLock) {
     // 邮箱自动同步：Outlook 邮箱同样每 30 分钟拉取一次
     runMailSync().catch(() => {});
     setInterval(() => { runMailSync().catch(() => {}); }, 30 * 60 * 1000);
+    // Notion 自动同步：每 30 分钟重新拉取全文并增量索引（token 未配置则自动跳过）
+    setInterval(() => { runNotionSync().catch(() => {}); }, 30 * 60 * 1000);
     // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
     runReminderCheck();
     setInterval(() => { runReminderCheck(); }, 60 * 1000);

@@ -457,8 +457,12 @@
       '<div class="f"><label>Notion Token</label><input type="password" id="notionToken" placeholder="ntn_... 或 secret_..."></div>' +
       '<div class="sec-row"><button class="sec-btn" id="notionSave">' + iconSvg('check') + ' 保存 token</button></div>' +
       '<div class="sec-bout" id="notionResult" hidden></div>' +
-      '<div class="sec-row"><button class="sec-btn ghost" id="notionTest">' + iconSvg('search') + ' 测试连接</button></div>' +
+      '<div class="sec-row">' +
+        '<button class="sec-btn ghost" id="notionTest">' + iconSvg('search') + ' 测试连接</button>' +
+        '<button class="sec-btn ghost" id="notionSyncBtn" style="flex:1">' + iconSvg('zap') + ' 立即同步</button>' +
+      '</div>' +
       '<div class="sec-bout" id="notionTestResult" hidden></div>' +
+      '<div class="sec-bout" id="notionSyncOut" hidden></div>' +
       '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
       '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('search') + ' 验证 / 搜索你的页面</div>' +
       '<div class="sec-bhint">保存 token 后，还要在 Notion 里给要读的页面 / 数据库授权这个集成（页面右上角 ··· → Connections → 勾选），否则搜不到内容。</div>' +
@@ -496,6 +500,23 @@
             '到「知识库」面板点「重建索引」，即可把 Notion 内容纳入本地检索。';
         }
       }).catch(function (e) { box.textContent = '测试失败：' + (e && e.message || e); });
+    });
+    modalMask.querySelector('#notionSyncBtn').addEventListener('click', function () {
+      var box = modalMask.querySelector('#notionSyncOut');
+      box.hidden = false; box.textContent = '同步中（拉取 Notion 全文 + 增量索引，可能需要几秒到几十秒）…';
+      window.ingrid.notionSync().then(function (r) {
+        if (!r) { box.textContent = '同步失败：无返回'; return; }
+        if (r.skipped) { box.textContent = '尚未保存 Notion token，无法同步。请先在上方粘贴并保存。'; return; }
+        if (!r.ok) { box.innerHTML = '<b style="color:#d33">同步失败</b>：' + esc(r.error || ''); return; }
+        var t = new Date(r.syncedAt).toLocaleTimeString();
+        var parts = [];
+        if (r.added) parts.push('新增 ' + r.added);
+        if (r.updated) parts.push('更新 ' + r.updated);
+        if (r.removed) parts.push('移除 ' + r.removed);
+        var change = parts.length ? '（' + parts.join('、') + '）' : '（无变化）';
+        box.innerHTML = '<b style="color:#2a7d2f">同步完成</b>：当前 ' + r.total + ' 篇' + change + '。<br>' +
+          '<span style="color:var(--ink-faint)">' + t + ' · 之后每 30 分钟自动同步一次。</span>';
+      }).catch(function (e) { box.textContent = '同步失败：' + (e && e.message || e); });
     });
     modalMask.querySelector('#notionSearch').addEventListener('click', function () {
       var q = modalMask.querySelector('#notionQuery').value.trim();

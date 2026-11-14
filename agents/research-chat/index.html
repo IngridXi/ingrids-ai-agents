@@ -180,6 +180,9 @@
   .msg.assistant .bubble .mermaid { margin: 10px 0; text-align: center; overflow-x: auto; }
   .msg.assistant .bubble .mermaid svg { max-width: 100%; height: auto; }
   .msg.assistant .bubble .mmd-err { color: var(--danger); font-size: 12px; }
+  .msg.assistant .bubble .mmd-fallback { margin: 10px 0; }
+  .msg.assistant .bubble .mmd-fallback summary { cursor: pointer; color: var(--ink-faint); font-size: 12px; }
+  .msg.assistant .bubble .mmd-fallback pre { overflow-x: auto; font-size: 11px; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; }
   .msg .bubble.err { border-color: #f3c2c0; background: #fdf2f2; color: #b3261e; }
   .msg .bubble .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; margin-left: 1px; border-radius: 2px; animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -450,6 +453,19 @@
     });
     return html;
   }
+  // 保守净化：修复 LLM 生成 mermaid 的常见语法错误（非法箭头、<br/> 等）
+  function cleanMermaid(src) {
+    var s = String(src || '');
+    var out = s
+      .replace(/-->>/g, '-->')
+      .replace(/<<--/g, '-->')
+      .replace(/<-->/g, '<-->')
+      .replace(/<br\s*\/?>/gi, ' ');
+    return out;
+  }
+  function mmdFallback(src) {
+    return '<details class="mmd-fallback"><summary>图表源码（自动渲染未成功，内容仍完整）</summary><pre>' + esc(src) + '</pre></details>';
+  }
   function renderMermaidIn(container) {
     if (!container || typeof mermaid === 'undefined') return;
     var nodes = container.querySelectorAll('.mermaid[data-mmd]');
@@ -463,8 +479,17 @@
         mermaid.render(uniq, src).then(function (res) {
           node.innerHTML = res.svg;
           node.classList.add('rendered');
-        }).catch(function (err) {
-          node.innerHTML = '<pre class="mmd-err">图表渲染失败：' + esc(String((err && err.message) || err)) + '</pre>';
+        }).catch(function () {
+          // 兜底：先做保守净化重试一次，仍失败则降级为可读源码（不再显示生硬报错）
+          var cleaned = cleanMermaid(src);
+          if (cleaned !== src) {
+            mermaid.render(uniq + '-c', cleaned).then(function (res2) {
+              node.innerHTML = res2.svg;
+              node.classList.add('rendered');
+            }).catch(function () { node.innerHTML = mmdFallback(src); });
+          } else {
+            node.innerHTML = mmdFallback(src);
+          }
         });
       })(nodes[i]);
     }
@@ -1357,6 +1382,7 @@
       s += '\n\n【监事 · 本次任务核心目标（必须始终对齐，不要跑偏、不要答非所问）】\n' + liveTaskGoal;
     }
     s += '\n\n【输出格式】用 Markdown 排版：标题用 # / ##，重点加粗，善用列表、表格、引用；需要展示关系、流程或数据对比时，用 ```mermaid 代码块输出图表（flowchart 流程图、sequenceDiagram 时序图、pie 饼图、xychart-beta 柱状/折线图），不要用纯文字描述本可图示的内容。';
+    s += '\n\n【Mermaid 语法规范 · 生成图表必须逐条遵守，否则图表会渲染失败】① 节点标签一律用英文双引号包裹，中文写进引号里，如 A["新瓶旧酒"]、R1["实证失守"]；② 标签内严禁出现 | 竖线、<> 尖括号、{} 花括号、() 圆括号这些 mermaid 保留字符，需要分隔改用 、或空格或换行；③ 严禁用 <br/> 换行，长标签拆成短句，确需换行用 \\n；④ 箭头只用标准写法 -->、-->|文字|、==>、-.->、---，严禁 -->>、<<--、-->> 这类非法写法；⑤ 节点 id 只用简短英文/数字（A、B、R1、R2），中文一律放引号标签里。';
     return s;
   }
 
