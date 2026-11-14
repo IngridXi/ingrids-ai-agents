@@ -243,6 +243,20 @@ async function exportAll(token) {
   return docs;
 }
 
+/** 连接诊断：验证 token 是否有效、能看到多少页面/数据库。
+ *  返回 { ok, total, databases, pages } 或 { ok:false, error }。
+ *  用于「连接 Notion」面板快速定位：token 有效但 total=0 → 集成未被授权访问任何页面。 */
+async function diagnose(token) {
+  try {
+    const objects = await listAll(token);
+    let databases = 0, pages = 0;
+    for (const o of objects) { if (o.object === 'database') databases++; else pages++; }
+    return { ok: true, total: objects.length, databases: databases, pages: pages };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
 module.exports = {
   search: search,
   readPage: readPage,
@@ -250,4 +264,5 @@ module.exports = {
   queryDatabaseRows: queryDatabaseRows,
   listAll: listAll,
   exportAll: exportAll,
+  diagnose: diagnose,
 };

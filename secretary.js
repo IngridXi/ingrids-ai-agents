@@ -115,9 +115,11 @@
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook 邮箱</button></div></div>' +
-      '<div class="sec-sec"><label>知识库 · Notion</label>' +
+      '<div class="sec-sec"><label>知识库 · Notion · 权限</label>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('link') + ' 连接 Notion</button></div>' +
-        '<div class="sec-bout" id="secNotionOut" hidden></div></div>' +
+        '<div class="sec-bout" id="secNotionOut" hidden></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secPerm" style="flex:1">' + iconSvg('lock') + ' 系统权限自检</button></div>' +
+        '<div class="sec-bout" id="secPermOut" hidden></div></div>' +
       '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
         '<div class="sec-row"><input type="text" id="secUrl" placeholder="粘贴网址，如 https://arxiv.org/abs/..." style="flex:1">' +
         '<button class="sec-btn" id="secBrowse">打开</button></div>' +
@@ -455,6 +457,8 @@
       '<div class="f"><label>Notion Token</label><input type="password" id="notionToken" placeholder="ntn_... 或 secret_..."></div>' +
       '<div class="sec-row"><button class="sec-btn" id="notionSave">' + iconSvg('check') + ' 保存 token</button></div>' +
       '<div class="sec-bout" id="notionResult" hidden></div>' +
+      '<div class="sec-row"><button class="sec-btn ghost" id="notionTest">' + iconSvg('search') + ' 测试连接</button></div>' +
+      '<div class="sec-bout" id="notionTestResult" hidden></div>' +
       '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
       '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('search') + ' 验证 / 搜索你的页面</div>' +
       '<div class="sec-bhint">保存 token 后，还要在 Notion 里给要读的页面 / 数据库授权这个集成（页面右上角 ··· → Connections → 勾选），否则搜不到内容。</div>' +
@@ -472,6 +476,27 @@
         box.hidden = false; box.textContent = '✓ Notion token 已保存（加密存本机）。';
       }).catch(function (e) { alert(String(e && e.message || e)); });
     });
+    modalMask.querySelector('#notionTest').addEventListener('click', function () {
+      var box = modalMask.querySelector('#notionTestResult');
+      box.hidden = false; box.textContent = '测试中…';
+      window.ingrid.notionTest().then(function (r) {
+        if (!r) { box.textContent = '测试失败：无返回'; return; }
+        if (!r.configured) { box.textContent = '尚未保存 token，请先在上方粘贴并「保存 token」。'; return; }
+        if (!r.ok) {
+          box.innerHTML = '<b style="color:#d33">token 无效</b>：' + esc(r.error || '未知错误') +
+            '<br>请回到 notion.so/my-integrations 重新复制 token，再粘贴保存。';
+          return;
+        }
+        if (r.total === 0) {
+          box.innerHTML = '<b style="color:#d33">token 有效，但看不到任何页面</b>：集成还没被授权访问内容。<br>' +
+            '去 Notion 里打开你要同步的页面 / 数据库，点右上角 <b>··· → Connections（连接）</b>，勾选你的集成，' +
+            '然后到「知识库」面板点「重建索引」。';
+        } else {
+          box.innerHTML = '<b style="color:#2a7d2f">连接正常</b>：能看到 ' + r.total + ' 个对象（页面 ' + r.pages + '、数据库 ' + r.databases + '）。<br>' +
+            '到「知识库」面板点「重建索引」，即可把 Notion 内容纳入本地检索。';
+        }
+      }).catch(function (e) { box.textContent = '测试失败：' + (e && e.message || e); });
+    });
     modalMask.querySelector('#notionSearch').addEventListener('click', function () {
       var q = modalMask.querySelector('#notionQuery').value.trim();
       if (!q) { alert('请先输入要搜索的关键词'); return; }
@@ -488,6 +513,33 @@
     });
   }
   document.getElementById('secNotion').addEventListener('click', openNotionModal);
+
+  /* 系统权限自检：检测 macOS 受保护目录（桌面/文稿/下载）可读性 */
+  document.getElementById('secPerm').addEventListener('click', function () {
+    if (!DESKTOP || !window.ingrid.fsPermCheck) { alert('权限自检需要在桌面版使用'); return; }
+    var box = document.getElementById('secPermOut');
+    box.hidden = false; box.textContent = '检测中…';
+    window.ingrid.fsPermCheck().then(function (r) {
+      if (!r) { box.textContent = '检测失败：无返回'; return; }
+      var rows = [], anyFail = false;
+      for (var k in r) {
+        if (k.charAt(0) === '_') continue;
+        var it = r[k];
+        if (it.ok) rows.push('✅ ' + it.label + ' 可读');
+        else { anyFail = true; rows.push('❌ ' + it.label + ' 不可读' + (it.code === 'EPERM' ? '（macOS 隐私保护）' : '')); }
+      }
+      var html = rows.join('<br>');
+      if (anyFail) {
+        html += '<br><b style="color:#d33">有目录读不到</b>：研究助手会因此「找不到你电脑的文件」。<br>' +
+          '去 <b>系统设置 → 隐私与安全性 → 完全磁盘访问</b>，点 + 添加这个应用：<br>' +
+          '<code style="font-size:10px;word-break:break-all">' + esc(r._electronApp || '(路径未知)') + '</code><br>' +
+          '勾选后完全退出应用（⌘Q）再重启。';
+      } else {
+        html += '<br><b style="color:#2a7d2f">全部可读</b>，研究助手可以正常访问你电脑的文件。';
+      }
+      box.innerHTML = html;
+    }).catch(function (e) { box.textContent = '检测失败：' + (e && e.message || e); });
+  });
 
   /* 同步 Outlook 邮箱（Microsoft Graph Mail） */
   document.getElementById('secSyncMail').addEventListener('click', function () {

@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   notionStatus: () => ipcRenderer.invoke('notion:status'),
   notionSearch: (query) => ipcRenderer.invoke('notion:search', query),
   notionRead: (id) => ipcRenderer.invoke('notion:read', id),
+  notionTest: () => ipcRenderer.invoke('notion:test'),
+  fsPermCheck: () => ipcRenderer.invoke('fs:perm-check'),
 
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
   kbScan: (force) => ipcRenderer.invoke('kb:scan', !!force),

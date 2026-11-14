@@ -2341,6 +2341,30 @@ ipcMain.handle('notion:read', async (_e, id) => {
   try { return { ok: true, page: await NotionEngine.readPage(t, id) }; }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
+ipcMain.handle('notion:test', async () => {
+  const t = notionToken();
+  if (!t) return { configured: false, ok: false, error: '尚未配置 Notion token' };
+  const r = await NotionEngine.diagnose(t);
+  return Object.assign({ configured: true }, r);
+});
+
+/* ---------------- 系统权限自检（macOS 受保护目录可读性） ---------------- */
+ipcMain.handle('fs:perm-check', () => {
+  const dirs = [
+    { key: 'desktop', label: '桌面', path: app.getPath('desktop') },
+    { key: 'documents', label: '文稿', path: app.getPath('documents') },
+    { key: 'downloads', label: '下载', path: app.getPath('downloads') },
+    { key: 'home', label: '主目录', path: app.getPath('home') },
+  ];
+  const result = {};
+  for (const d of dirs) {
+    try { fs.readdirSync(d.path); result[d.key] = { ok: true, path: d.path, label: d.label }; }
+    catch (e) { result[d.key] = { ok: false, path: d.path, label: d.label, code: (e && e.code) || '' }; }
+  }
+  // 授权「完全磁盘访问」时要在系统设置里选择这个 Electron 应用（.app bundle）
+  result._electronApp = path.resolve(process.execPath, '..', '..', '..');
+  return result;
+});
 
 /* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
 const OAUTH_PORT = 18888;
