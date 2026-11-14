@@ -16,7 +16,7 @@
 const { app, BrowserWindow, BrowserView, ipcMain, safeStorage, shell, Notification, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const os = require('os');
 const net = require('net');
 const http = require('http');
@@ -2400,6 +2400,85 @@ async function runNotionSync() {
 }
 ipcMain.handle('notion:sync', () => runNotionSync());
 
+/* ---------------- 研究同步官：本地 latest 目录 → Notion 页面（增量推送） ---------------- */
+function researchSyncDir() {
+  const s = decryptSettings(readSettingsRaw());
+  if (s.researchSyncDir) return s.researchSyncDir;
+  return path.join(app.getPath('desktop'), 'PhD', '++Cambridge', '2026', 'New Direction', '中国参访后调整', 'latest');
+}
+function researchSyncParentId() { return decryptSettings(readSettingsRaw()).researchSyncParentId || ''; }
+function researchMapPath() { return path.join(dataDir(), 'research-sync-map.json'); }
+function loadResearchMap() { try { return JSON.parse(fs.readFileSync(researchMapPath(), 'utf8')); } catch { return {}; } }
+function saveResearchMap(m) { fs.writeFileSync(researchMapPath(), JSON.stringify(m, null, 2), 'utf8'); }
+
+/** 把 latest 目录里的 .md / .docx 推送到 Notion 父页面下（md 直读，docx 用 textutil 提取文本）。
+ *  增量：新文件建页；mtime 变化则归档旧页重建；未变化跳过。返回 summary 并广播。 */
+async function runResearchSync() {
+  const t = notionToken();
+  if (!t) return { ok: false, error: '尚未配置 Notion token' };
+  const parentId = researchSyncParentId();
+  if (!parentId) return { ok: false, error: '尚未配置 Notion 目标页面 ID（在研究同步官面板填写）' };
+  const dir = researchSyncDir();
+  if (!fs.existsSync(dir)) return { ok: false, error: '同步目录不存在：' + dir };
+
+  const files = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith('.') || name.startsWith('~$')) continue;      // 跳过隐藏/Word 临时文件
+    if (!/\.(md|docx)$/i.test(name)) continue;
+    const full = path.join(dir, name);
+    let st; try { st = fs.statSync(full); } catch { continue; }
+    if (!st.isFile()) continue;
+    files.push({ name: name, full: full, mtime: st.mtimeMs });
+  }
+
+  const map = loadResearchMap();
+  let created = 0, updated = 0, unchanged = 0, failed = 0;
+  const errors = [];
+  for (const f of files) {
+    try {
+      let text = '';
+      if (/\.md$/i.test(f.name)) text = fs.readFileSync(f.full, 'utf8');
+      else text = execFileSync('textutil', ['-convert', 'txt', '-stdout', f.full], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+      if (!String(text || '').trim()) { unchanged++; continue; }
+
+      const key = f.name;
+      const existing = map[key];
+      if (existing && existing.pageId && Math.abs((existing.mtime || 0) - f.mtime) < 1000) { unchanged++; continue; }
+
+      if (existing && existing.pageId) {
+        try { await NotionEngine.archivePage(t, existing.pageId); } catch { /* 归档失败不阻断重建 */ }
+      }
+      const title = f.name.replace(/\.(md|docx)$/i, '');
+      const page = await NotionEngine.createPage(t, parentId, title, text);
+      map[key] = { pageId: page.id, title: title, mtime: f.mtime, syncedAt: Date.now() };
+      if (existing && existing.pageId) updated++; else created++;
+    } catch (e) {
+      failed++;
+      errors.push(f.name + '：' + String((e && e.message) || e));
+    }
+  }
+
+  saveResearchMap(map);
+  const summary = { ok: true, total: files.length, created: created, updated: updated, unchanged: unchanged, failed: failed, errors: errors, syncedAt: Date.now() };
+  if (created + updated > 0) {
+    try {
+      if (Notification.isSupported()) new Notification({ title: '研究同步官', body: '已同步 ' + (created + updated) + ' 篇到 Notion（新增 ' + created + '、更新 ' + updated + '）' }).show();
+    } catch { /* 通知失败不阻断 */ }
+  }
+  broadcast('research:synced', summary);
+  return summary;
+}
+ipcMain.handle('notion:research-sync', () => runResearchSync());
+ipcMain.handle('notion:research-config', (_e, cfg) => {
+  if (cfg && typeof cfg === 'object') {
+    const patch = {};
+    if (cfg.parentId !== undefined) patch.researchSyncParentId = String(cfg.parentId || '');
+    if (cfg.dir !== undefined) patch.researchSyncDir = String(cfg.dir || '');
+    if (Object.keys(patch).length) writeSettings(patch);
+  }
+  return { parentId: researchSyncParentId(), dir: researchSyncDir() };
+});
+
 /* ---------------- OAuth 授权（Google / Microsoft 日历） ---------------- */
 const OAUTH_PORT = 18888;
 const OAUTH_REDIRECT = 'http://localhost:' + OAUTH_PORT;
@@ -3265,6 +3344,8 @@ if (gotSingleInstanceLock) {
     setInterval(() => { runMailSync().catch(() => {}); }, 30 * 60 * 1000);
     // Notion 自动同步：每 30 分钟重新拉取全文并增量索引（token 未配置则自动跳过）
     setInterval(() => { runNotionSync().catch(() => {}); }, 30 * 60 * 1000);
+    // 研究同步官：每 30 分钟检查 latest 目录，把新增/更新的 md+docx 推送到 Notion（未配置则自动跳过）
+    setInterval(() => { runResearchSync().catch(() => {}); }, 30 * 60 * 1000);
     // 研究日历到期自动提醒：启动即查一次 + 每 60 秒轮询（发系统通知 + 广播给面板）
     runReminderCheck();
     setInterval(() => { runReminderCheck(); }, 60 * 1000);

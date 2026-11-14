@@ -257,6 +257,61 @@ async function diagnose(token) {
   }
 }
 
+/** 把 Markdown 文本转成 Notion block 数组（支持 # 标题、- 列表、1. 列表、--- 分隔线）。
+ *  每个 rich_text 截断到 1990 字符（Notion 单 text 上限 2000），分批写入时由调用方按 100 块切。 */
+function markdownToBlocks(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const blocks = [];
+  for (let line of lines) {
+    const raw = line.replace(/\s+$/, '');
+    if (!raw.trim()) continue;
+    let type = 'paragraph';
+    let content = raw;
+    let m;
+    if ((m = raw.match(/^(#{1,3})\s+(.*)$/))) {
+      type = 'heading_' + m[1].length;
+      content = m[2];
+    } else if ((m = raw.match(/^\s*[-*]\s+(.*)$/))) {
+      type = 'bulleted_list_item';
+      content = m[1];
+    } else if ((m = raw.match(/^\s*\d+[.、)]\s+(.*)$/))) {
+      type = 'numbered_list_item';
+      content = m[1];
+    } else if (/^(-{3,}|\*{3,}|_{3,})$/.test(raw.trim())) {
+      blocks.push({ object: 'block', type: 'divider', divider: {} });
+      continue;
+    }
+    content = String(content || '').slice(0, 1990);
+    const body = {};
+    body[type] = { rich_text: [{ type: 'text', text: { content: content } }] };
+    blocks.push(Object.assign({ object: 'block', type: type }, body));
+  }
+  if (!blocks.length) {
+    blocks.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: '(空文档)' } }] } });
+  }
+  return blocks;
+}
+
+/** 在指定父页面下创建子页面，并写入正文。
+ *  返回 { id, title }。失败抛错（由调用方处理）。 */
+async function createPage(token, parentPageId, title, text) {
+  const page = await notionRequest(token, 'POST', '/pages', {
+    parent: { page_id: parentPageId },
+    properties: { title: { title: [{ type: 'text', text: { content: String(title || '未命名').slice(0, 1990) } }] } },
+  });
+  const blocks = markdownToBlocks(text);
+  for (let i = 0; i < blocks.length; i += 100) {
+    await notionRequest(token, 'PATCH', '/blocks/' + page.id + '/children', { children: blocks.slice(i, i + 100) });
+  }
+  return { id: page.id, title: title };
+}
+
+/** 归档页面（移入 Notion 回收站）。用于「研究同步官」更新文件时替换旧页。 */
+async function archivePage(token, pageId) {
+  await notionRequest(token, 'PATCH', '/pages/' + pageId, { archived: true });
+  return true;
+}
+
 module.exports = {
   search: search,
   readPage: readPage,
@@ -265,4 +320,7 @@ module.exports = {
   listAll: listAll,
   exportAll: exportAll,
   diagnose: diagnose,
+  markdownToBlocks: markdownToBlocks,
+  createPage: createPage,
+  archivePage: archivePage,
 };

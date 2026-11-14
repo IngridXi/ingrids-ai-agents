@@ -464,6 +464,16 @@
       '<div class="sec-bout" id="notionTestResult" hidden></div>' +
       '<div class="sec-bout" id="notionSyncOut" hidden></div>' +
       '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
+      '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('arrowUp') + ' 研究同步官（本地 latest → Notion）</div>' +
+      '<div class="sec-bhint">把电脑 <b>latest</b> 目录里的 .md / .docx 自动推成 Notion 子页面（docx 自动提取正文）。需先在 Notion 建一个「研究进展」父页面并授权集成，再把页面 ID 填到下面。</div>' +
+      '<div class="f"><label>Notion 父页面 ID（32 位）</label><input id="researchParentId" placeholder="从页面 URL 复制，例如 1a2b3c4d5e6f..."></div>' +
+      '<div class="f"><label>本地同步目录</label><input id="researchDir" placeholder="latest 目录绝对路径（留空用默认）"></div>' +
+      '<div class="sec-row">' +
+        '<button class="sec-btn ghost" id="researchConfigBtn">' + iconSvg('check') + ' 保存配置</button>' +
+        '<button class="sec-btn" id="researchSyncBtn" style="flex:1">' + iconSvg('arrowUp') + ' 立即推送</button>' +
+      '</div>' +
+      '<div class="sec-bout" id="researchSyncOut" hidden></div>' +
+      '<hr style="margin:16px 0 12px;border:none;border-top:1px solid var(--line)">' +
       '<div class="sub" style="font-weight:700;color:var(--ink);margin-bottom:6px">' + iconSvg('search') + ' 验证 / 搜索你的页面</div>' +
       '<div class="sec-bhint">保存 token 后，还要在 Notion 里给要读的页面 / 数据库授权这个集成（页面右上角 ··· → Connections → 勾选），否则搜不到内容。</div>' +
       '<div class="f"><label>搜索页面 / 数据库</label><input id="notionQuery" placeholder="例如：文献综述"></div>' +
@@ -531,6 +541,34 @@
             '<div style="color:var(--ink-faint);font-size:10px">' + esc(it.id) + '</div></div>';
         }).join('');
       }).catch(function (e) { box.textContent = '搜索失败：' + (e && e.message || e); });
+    });
+
+    // 研究同步官：回填已保存配置
+    window.ingrid.notionResearchConfig(null).then(function (c) {
+      if (!c) return;
+      if (c.parentId && modalMask.querySelector('#researchParentId')) modalMask.querySelector('#researchParentId').value = c.parentId;
+      if (c.dir && modalMask.querySelector('#researchDir')) modalMask.querySelector('#researchDir').value = c.dir;
+    }).catch(function () {});
+    modalMask.querySelector('#researchConfigBtn').addEventListener('click', function () {
+      var pid = modalMask.querySelector('#researchParentId').value.trim();
+      var dir = modalMask.querySelector('#researchDir').value.trim();
+      window.ingrid.notionResearchConfig({ parentId: pid, dir: dir }).then(function () {
+        alert('研究同步官配置已保存。');
+      }).catch(function (e) { alert(String(e && e.message || e)); });
+    });
+    modalMask.querySelector('#researchSyncBtn').addEventListener('click', function () {
+      var box = modalMask.querySelector('#researchSyncOut');
+      box.hidden = false; box.textContent = '推送中（读取 latest 目录 + 提取 docx 正文 + 写入 Notion）…';
+      window.ingrid.notionResearchSync().then(function (r) {
+        if (!r) { box.textContent = '推送失败：无返回'; return; }
+        if (!r.ok) { box.innerHTML = '<b style="color:#d33">推送失败</b>：' + esc(r.error || ''); return; }
+        var t = new Date(r.syncedAt).toLocaleTimeString();
+        var html = '<b style="color:#2a7d2f">推送完成</b>：共 ' + r.total + ' 个文件（新增 ' + r.created + '、更新 ' + r.updated + '、跳过 ' + r.unchanged + '）';
+        if (r.failed) html += '<br><span style="color:#d33">失败 ' + r.failed + ' 个</span>';
+        if (r.errors && r.errors.length) html += '<br><span style="font-size:10px;color:var(--ink-faint)">' + esc(r.errors.slice(0, 5).join('；')) + '</span>';
+        html += '<br><span style="color:var(--ink-faint)">' + t + ' · 之后每 30 分钟自动检查推送。</span>';
+        box.innerHTML = html;
+      }).catch(function (e) { box.textContent = '推送失败：' + (e && e.message || e); });
     });
   }
   document.getElementById('secNotion').addEventListener('click', openNotionModal);

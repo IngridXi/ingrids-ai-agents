@@ -126,6 +126,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   notionTest: () => ipcRenderer.invoke('notion:test'),
   notionSync: () => ipcRenderer.invoke('notion:sync'),
   onNotionSynced: (cb) => ipcRenderer.on('notion:synced', (_e, d) => { if (cb) cb(d || {}); }),
+  notionResearchSync: () => ipcRenderer.invoke('notion:research-sync'),
+  notionResearchConfig: (cfg) => ipcRenderer.invoke('notion:research-config', cfg),
+  onResearchSynced: (cb) => ipcRenderer.on('research:synced', (_e, d) => { if (cb) cb(d || {}); }),
   fsPermCheck: () => ipcRenderer.invoke('fs:perm-check'),
 
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
