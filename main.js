@@ -1309,7 +1309,7 @@ ipcMain.handle('chat:start', (e, payload) => {
 
 const BG_TOOLS = [
   { type: 'function', function: { name: 'fs_list', description: '列出目录内容（文件名、是否目录、大小）', parameters: { type: 'object', properties: { dir: { type: 'string', description: '目录绝对路径，默认主目录' } } } } },
-  { type: 'function', function: { name: 'fs_read', description: '读取文本文件内容（<200KB）', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'fs_read', description: '读取文件内容：txt/md 等文本直接读；docx/doc/rtf/odt 自动提取正文；其他二进制会报错提示', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'fs_search', description: '按文件名搜索文件', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, root: { type: 'string', description: '搜索根目录，默认主目录' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'fs_write', description: '写入文本文件（覆盖前自动备份，仅主目录内）', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
   { type: 'function', function: { name: 'web_search', description: '联网搜索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
@@ -2812,10 +2812,21 @@ function toolFsRead(payload) {
   if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在：' + String((payload && payload.path) || '') };
   let st; try { st = fs.statSync(target); } catch { return { ok: false, error: '无法访问：' + String((payload && payload.path) || '') }; }
   if (st.isDirectory()) return { ok: false, error: '是目录，请用 list 查看' };
+  const ext = path.extname(target).toLowerCase();
+  // Office 文档（docx/doc/rtf/odt）：用 macOS 自带 textutil 提取正文，让研究助手能直接读「原文」
+  if (ext === '.docx' || ext === '.doc' || ext === '.rtf' || ext === '.odt') {
+    try {
+      const text = execFileSync('textutil', ['-convert', 'txt', '-stdout', target], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+      return { ok: true, path: target, size: st.size, format: ext.slice(1), content: text };
+    } catch (e) {
+      if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
+      return { ok: false, error: '提取文档正文失败：' + String(e && e.message || e) };
+    }
+  }
   if (st.size > 200 * 1024) return { ok: false, error: '文件过大（>200KB），暂不支持读取' };
   try {
     const buf = fs.readFileSync(target);
-    if (buf.includes(0)) return { ok: false, error: '疑似二进制文件，暂不支持读取' };
+    if (buf.includes(0)) return { ok: false, error: '疑似二进制文件（' + ext + '），暂不支持读取正文。Word 请转成 txt/md 后读取，或直接读同名的 .txt/.md 版本。' };
     return { ok: true, path: target, size: st.size, content: buf.toString('utf8') };
   } catch (e) {
     if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
