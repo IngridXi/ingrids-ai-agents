@@ -2593,7 +2593,7 @@ function startKbWatcher() {
     const cfg = kbEngine.ensureConfig();
     for (const w of kbWatchers) { try { w.close(); } catch { /* 忽略 */ } }
     kbWatchers = [];
-    for (const src of (cfg.sources || []).filter((s) => s.enabled && s.path && s.type === 'markdown')) {
+    for (const src of (cfg.sources || []).filter((s) => s.enabled && s.path && (s.type === 'markdown' || s.type === 'reference'))) {
       if (!fs.existsSync(src.path)) continue;
       try {
         const w = fs.watch(src.path, { recursive: true }, () => {
@@ -2620,6 +2620,35 @@ ipcMain.handle('kb:configure', (_e, patch) => {
   kbEngine.saveConfig(cfg);
   startKbWatcher();
   return kbEngine.status();
+});
+// 添加参考库源（共享文件夹里的 pptx/pdf/docx 作为格式/风格参考）
+ipcMain.handle('kb:add-source', async (_e, src) => {
+  const s = src || {};
+  let p = String(s.path || '').trim();
+  if (p === '~') p = os.homedir();
+  else if (p.startsWith('~/')) p = path.join(os.homedir(), p.slice(2));
+  if (!p) return { ok: false, error: '路径为空' };
+  if (!fs.existsSync(p)) return { ok: false, error: '文件夹不存在：' + p };
+  if (!fs.statSync(p).isDirectory()) return { ok: false, error: '不是文件夹：' + p };
+  const type = String(s.type || 'reference');
+  const crypto = require('crypto');
+  const id = 'src-' + crypto.createHash('md5').update(type + ':' + p).digest('hex').slice(0, 8);
+  const cfg = kbEngine.loadConfig();
+  if ((cfg.sources || []).some((x) => x.id === id)) return { ok: false, error: '该文件夹已在参考库中' };
+  cfg.sources = (cfg.sources || []).concat([{ id, type, label: String(s.label || '参考库'), path: p, enabled: true }]);
+  kbEngine.saveConfig(cfg);
+  startKbWatcher();
+  try { await kbEngine.scan(); } catch { /* 扫描失败不阻断添加 */ }
+  return { ok: true, status: kbEngine.status() };
+});
+// 移除参考库源（按 id）
+ipcMain.handle('kb:remove-source', async (_e, id) => {
+  const cfg = kbEngine.loadConfig();
+  cfg.sources = (cfg.sources || []).filter((x) => x.id !== id);
+  kbEngine.saveConfig(cfg);
+  startKbWatcher();
+  try { await kbEngine.scan(); } catch { /* 忽略 */ }
+  return { ok: true, status: kbEngine.status() };
 });
 
 /* 打开知识库来源（Notion 网页 / Zotero / Obsidian 应用与本地目录） */

@@ -137,6 +137,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),
   kbStatus: () => ipcRenderer.invoke('kb:status'),
   kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),
+  kbAddSource: (src) => ipcRenderer.invoke('kb:add-source', src),
+  kbRemoveSource: (id) => ipcRenderer.invoke('kb:remove-source', id),
   kbOpen: (kind) => ipcRenderer.invoke('kb:open', kind),
   kbTermsBuild: (opts) => ipcRenderer.invoke('kb:terms:build', opts),
   onKbTermsProgress: (cb) => ipcRenderer.on('kb:terms:progress', (_e, d) => { if (cb) cb(d || {}); }),

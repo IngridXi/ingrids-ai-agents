@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 function md5(s) {
   return crypto.createHash('md5').update(s).digest('hex');
@@ -61,6 +61,85 @@ function isWorkspaceVault(p) {
 function detectZoteroDir(home) {
   const p = path.join(home || os.homedir(), 'Zotero');
   return fs.existsSync(p) ? p : null;
+}
+
+/* ---------------- 参考库提取：pptx / pdf / docx → markdown（内容 + 风格画像） ---------------- */
+function decodeXml(s) {
+  return String(s || '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+// 提取 .pptx 的逐页文字 + 主题字体/配色。pptx 本质是 zip，用 macOS 自带 ditto 解压后正则解析 XML，
+// 不依赖任何第三方库。产出 { pages: [{title, body}], fonts: {latin, ea}, colors: [] }
+function extractPptx(filePath) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-pptx-'));
+  try {
+    execFileSync('ditto', ['-x', '-k', filePath, tmp], { stdio: 'ignore' });
+    const slidesDir = path.join(tmp, 'ppt', 'slides');
+    let slideFiles = [];
+    try {
+      slideFiles = fs.readdirSync(slidesDir).filter((f) => /^slide\d+\.xml$/.test(f))
+        .sort((a, b) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b.replace(/\D/g, ''), 10) || 0));
+    } catch { /* 无 slides 目录 */ }
+
+    const pages = [];
+    for (const sf of slideFiles) {
+      const xml = fs.readFileSync(path.join(slidesDir, sf), 'utf8');
+      const texts = [];
+      const re = /<a:t>([\s\S]*?)<\/a:t>/g;
+      let m;
+      while ((m = re.exec(xml))) {
+        const t = decodeXml(m[1]).trim();
+        if (t) texts.push(t);
+      }
+      if (texts.length) pages.push({ title: texts[0], body: texts.slice(1) });
+    }
+
+    let fonts = { latin: '', ea: '' };
+    const colors = [];
+    try {
+      const themeXml = fs.readFileSync(path.join(tmp, 'ppt', 'theme', 'theme1.xml'), 'utf8');
+      const latin = themeXml.match(/<a:latin[^>]*typeface="([^"]+)"/);
+      const ea = themeXml.match(/<a:ea[^>]*typeface="([^"]+)"/);
+      if (latin) fonts.latin = latin[1];
+      if (ea) fonts.ea = ea[1];
+      const cRe = /<a:srgbClr val="([0-9A-Fa-f]{6})"/g;
+      let cm;
+      while ((cm = cRe.exec(themeXml))) colors.push('#' + cm[1].toUpperCase());
+    } catch { /* 无主题文件 */ }
+
+    return { pages, fonts, colors };
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  }
+}
+
+// 提取 .pdf 全文（用系统 python3 + pypdf，零额外依赖）
+function extractPdfText(filePath) {
+  const py = [
+    'import sys, json',
+    'try:',
+    ' from pypdf import PdfReader',
+    ' r = PdfReader(sys.argv[1])',
+    " t = [p.extract_text() or '' for p in r.pages]",
+    " print(json.dumps({'text': chr(10).join(t)}, ensure_ascii=False))",
+    'except Exception as e:',
+    " print(json.dumps({'error': str(e)}, ensure_ascii=False))",
+  ].join('\n');
+  try {
+    const so = execFileSync('python3', ['-c', py, filePath], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+    const j = JSON.parse(so);
+    return String(j.text || '').trim();
+  } catch (e) { return ''; }
+}
+
+// 提取 .docx/.doc/.rtf/.odt 正文（macOS 自带 textutil）
+function extractDocxText(filePath) {
+  try {
+    return String(execFileSync('textutil', ['-convert', 'txt', '-stdout', filePath], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 })).trim();
+  } catch (e) { return ''; }
 }
 
 class KbEngine {
@@ -310,6 +389,55 @@ class KbEngine {
     return out;
   }
 
+  /* ---------------- 参考库源遍历（pptx/pdf/docx → markdown 内容 + 风格画像） ---------------- */
+  _walkReference(src) {
+    if (!src.path || !fs.existsSync(src.path)) return [];
+    const self = this;
+    const out = [];
+    const exts = /\.(pptx|pdf|docx|doc|rtf|odt)$/i;
+    const skipDirs = new Set(['.git', '.DS_Store']);
+    function walk(dir) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) { if (!skipDirs.has(ent.name)) walk(full); }
+        else if (ent.isFile() && exts.test(ent.name)) {
+          const ext = path.extname(ent.name).toLowerCase();
+          let content = '';
+          if (ext === '.pptx') content = self._pptxToMarkdown(ent.name, extractPptx(full));
+          else if (ext === '.pdf') { const t = extractPdfText(full); if (t) content = '# ' + ent.name + '\n\n' + t; }
+          else { const t = extractDocxText(full); if (t) content = '# ' + ent.name + '\n\n' + t; }
+          if (!content.trim()) continue;
+          const rel = path.relative(src.path, full).split(path.sep).join('/');
+          out.push({ rel, path: full, md5: md5(content), content, sourceId: src.id, sourceLabel: src.label || src.type, type: 'reference' });
+        }
+      }
+    }
+    walk(src.path);
+    return out;
+  }
+
+  _pptxToMarkdown(name, r) {
+    const lines = ['# ' + name.replace(/\.pptx$/i, '')];
+    lines.push('');
+    lines.push('【参考库 · 风格画像】');
+    lines.push('- 格式: PowerPoint 演示文稿');
+    lines.push('- 页数: ' + (r.pages.length || 1) + ' 页');
+    if (r.fonts.latin) lines.push('- 西文字体: ' + r.fonts.latin);
+    if (r.fonts.ea) lines.push('- 中文字体: ' + r.fonts.ea);
+    if (r.colors.length) lines.push('- 主题色: ' + r.colors.slice(0, 8).join(' '));
+    lines.push('');
+    lines.push('【逐页内容】');
+    r.pages.forEach(function (p, i) {
+      lines.push('## 第 ' + (i + 1) + ' 页' + (p.title ? ' · ' + p.title : ''));
+      if (p.body && p.body.length) p.body.forEach(function (b) { lines.push('- ' + b); });
+      else if (!p.title) lines.push('（本页无文字）');
+      lines.push('');
+    });
+    return lines.join('\n');
+  }
+
   /* ---------------- Ollama embedding ---------------- */
   async embedModelReady() {
     try {
@@ -352,6 +480,7 @@ class KbEngine {
     for (const src of sources) {
       const files = src.type === 'zotero' ? await this._walkZotero(src)
         : src.type === 'notion' ? await this._walkNotion(src, opts.force)
+        : src.type === 'reference' ? this._walkReference(src)
         : this._walkSource(src);
       for (const f of files) {
         seen.add(f.rel);
@@ -472,4 +601,4 @@ class KbEngine {
   }
 }
 
-module.exports = { KbEngine, cosine, md5, detectObsidianVaults, detectZoteroDir, isWorkspaceVault };
+module.exports = { KbEngine, cosine, md5, detectObsidianVaults, detectZoteroDir, isWorkspaceVault, extractPptx, extractPdfText, extractDocxText };

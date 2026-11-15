@@ -342,6 +342,16 @@
     width: 100%; box-sizing: border-box; padding: 7px 10px; margin-bottom: 11px;
     border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: var(--ink); background: var(--card);
   }
+  .kb-ref { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 11px; }
+  .kb-ref-head { font-size: 12.5px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+  .kb-ref-sources { margin-bottom: 8px; }
+  .kb-ref-item { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 5px 8px; border-radius: 7px; background: var(--bg); margin-bottom: 5px; }
+  .kb-ref-label { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .kb-ref-path { flex: 1; min-width: 0; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kb-ref-del { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: #c0392b; font-size: 11px; cursor: pointer; }
+  .kb-ref-del:hover { background: #fbecec; }
+  .kb-ref-add { display: flex; align-items: center; gap: 7px; }
+  .kb-ref-add .kb-input { flex: 1; min-width: 0; margin-bottom: 0; }
 
   /* 审稿闭环 */
   .review-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
@@ -407,6 +417,15 @@
   <div class="kb-title">本地知识库 · 文献支持</div>
   <div class="kb-row"><label><input type="checkbox" id="kbToggle" checked> 引用本地知识库（每次提问自动检索注入）</label></div>
   <div class="kb-row kb-status" id="kbStatus">加载中…</div>
+  <div class="kb-ref">
+    <div class="kb-ref-head">🎨 参考库 · 组内共享格式参考</div>
+    <div class="kb-ref-sources" id="kbRefSources"></div>
+    <div class="kb-ref-add">
+      <input class="kb-input" id="refPath" type="text" placeholder="粘贴本地文件夹路径（支持 ~ 开头）">
+      <button class="kb-btn" id="refAddBtn">添加参考库</button>
+    </div>
+    <div class="kb-hint">支持 .pptx / .pdf / .docx，自动提取文字 + 格式风格（字体/配色/版式）供生成时参考</div>
+  </div>
   <div class="kb-actions">
     <button class="kb-btn" id="kbRescan">重建索引</button>
     <span class="kb-hint">笔记保存后约 3 秒自动增量更新</span>
@@ -1536,6 +1555,32 @@
       lines.push('源：' + s.sources.map(function (x) { return x.label; }).join('、'));
     }
     statusEl.innerHTML = lines.join('<br>');
+    renderRefSources(s.sources);
+  }
+
+  function renderRefSources(sources) {
+    var box = el('kbRefSources');
+    if (!box) return;
+    var refs = (sources || []).filter(function (x) { return x.type === 'reference'; });
+    if (!refs.length) {
+      box.innerHTML = '<div class="kb-hint">尚未添加参考库（组的共享文件夹）</div>';
+      return;
+    }
+    box.innerHTML = refs.map(function (x) {
+      return '<div class="kb-ref-item"><span class="kb-ref-label">' + esc(x.label || '参考库') + '</span>'
+        + '<span class="kb-ref-path" title="' + esc(x.path) + '">' + esc(x.path) + '</span>'
+        + '<button class="kb-ref-del" data-id="' + esc(x.id) + '">移除</button></div>';
+    }).join('');
+    box.querySelectorAll('.kb-ref-del').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-id');
+        btn.disabled = true; btn.textContent = '…';
+        window.ingrid.kbRemoveSource(id).then(function (res) {
+          if (res && res.ok) renderKbStatus(res.status);
+          else { btn.disabled = false; btn.textContent = '移除'; alert('移除失败：' + ((res && res.error) || '未知错误')); }
+        }).catch(function (e) { btn.disabled = false; btn.textContent = '移除'; alert('移除失败：' + String(e && e.message || e)); });
+      });
+    });
   }
 
   function loadKbStatus() {
@@ -2310,6 +2355,19 @@
       btn.disabled = false; btn.textContent = '重建索引';
       loadKbStatus();
     }).catch(function () { btn.disabled = false; btn.textContent = '重建索引'; });
+  });
+  // 添加参考库（组的共享文件夹，pptx/pdf/docx 作为格式/风格参考）
+  el('refAddBtn').addEventListener('click', function () {
+    var p = el('refPath').value.trim();
+    if (!p) { alert('请先粘贴文件夹路径'); return; }
+    var btn = el('refAddBtn');
+    btn.disabled = true; btn.textContent = '索引中…';
+    var label = p.split('/').filter(Boolean).pop() || '参考库';
+    window.ingrid.kbAddSource({ type: 'reference', path: p, label: label }).then(function (res) {
+      btn.disabled = false; btn.textContent = '添加参考库';
+      if (res && res.ok) { el('refPath').value = ''; renderKbStatus(res.status); }
+      else alert('添加失败：' + ((res && res.error) || '未知错误'));
+    }).catch(function (e) { btn.disabled = false; btn.textContent = '添加参考库'; alert('添加失败：' + String(e && e.message || e)); });
   });
 
   /* ---------- 启动 ---------- */
