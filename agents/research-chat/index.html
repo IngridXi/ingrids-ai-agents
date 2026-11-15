@@ -92,38 +92,43 @@
   }
   .msg.assistant:hover .copy-btn { opacity: 1; }
   .msg .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 
   /* 会话内检索高亮 */
   mark.search-hit { background: #ffe08a; color: #4a3200; border-radius: 2px; padding: 0 1px; }
   .msg.search-active .bubble { box-shadow: 0 0 0 2px #f5b942; }
 
-  /* 顶栏 */
+  /* 顶栏（两行：第一行标题+引擎选择，第二行功能工具条） */
   header {
-    flex: none; display: flex; align-items: center; gap: 12px;
-    padding: 14px 20px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
+    flex: none; display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 20px 14px; background: linear-gradient(120deg, var(--accent), var(--deep)); color: #fff;
     box-shadow: 0 2px 12px rgba(74,63,140,.18); position: relative;
   }
+  header .top-row { display: flex; align-items: center; gap: 12px; }
+  header .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  header .toolbar .tb-sep { width: 1px; height: 18px; background: rgba(255,255,255,.28); margin: 0 2px; flex: none; }
   header .logo {
     width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,.18);
     display: grid; place-items: center; flex: none;
   }
   header .logo svg { width: 20px; height: 20px; }
-  header .title { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  header .title { font-size: 16px; font-weight: 700; line-height: 1.2; white-space: nowrap; }
   header .title .sub { font-size: 11.5px; font-weight: 400; opacity: .82; }
   header .spacer { flex: 1; }
   header select {
     padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,.35);
-    background: rgba(255,255,255,.16); color: #fff; font-size: 13px; cursor: pointer; outline: none;
+    background: rgba(255,255,255,.16); color: #fff; font-size: 13px; cursor: pointer; outline: none; flex: none;
   }
   header select option { color: var(--ink); background: #fff; }
   #modelHint {
-    max-width: 220px; min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis;
+    max-width: 260px; min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; font-size: 10.5px; opacity: .82; color: #fff; line-height: 1.2;
   }
   header .clear-btn {
-    padding: 7px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,.35);
-    background: rgba(255,255,255,.14); color: #fff; font-size: 13px; cursor: pointer;
+    position: relative; min-width: 70px; padding: 7px 13px; border-radius: 9px;
+    border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.14); color: #fff;
+    font-size: 13px; cursor: pointer; white-space: nowrap; line-height: 1.2; flex: none;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   }
   header .clear-btn:hover { background: rgba(255,255,255,.24); }
   header .clear-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
@@ -314,9 +319,9 @@
   .foot-note { text-align: center; font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
 
   /* 知识库面板 */
-  .kb-badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: rgba(255,255,255,.22); color: #fff; }
+  header .clear-btn .kb-badge { position: absolute; top: -7px; right: -5px; font-size: 10px; line-height: 1.4; padding: 0 5px; border-radius: 8px; background: #fff; color: var(--accent); font-weight: 700; }
   .kb-panel {
-    position: absolute; top: 60px; right: 20px; width: 340px; z-index: 30;
+    position: absolute; top: 8px; right: 20px; width: 340px; z-index: 30;
     background: var(--card); border: 1px solid var(--line); border-radius: 14px;
     box-shadow: 0 10px 34px rgba(30,26,50,.18); padding: 15px; text-align: left;
   }
@@ -333,6 +338,10 @@
   .kb-btn:hover { background: var(--accent-2); }
   .kb-btn:disabled { background: #c9c4e0; cursor: wait; }
   .kb-hint { font-size: 11px; color: var(--ink-faint); }
+  .kb-panel .kb-input {
+    width: 100%; box-sizing: border-box; padding: 7px 10px; margin-bottom: 11px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: var(--ink); background: var(--card);
+  }
 
   /* 审稿闭环 */
   .review-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
@@ -369,22 +378,29 @@
   </aside>
   <div class="main-col">
 <header>
-  <div class="logo" id="logo"></div>
-  <div class="title">
-    研究助手
-    <div class="sub">Research RA · 读博日常主力</div>
+  <div class="top-row">
+    <div class="logo" id="logo"></div>
+    <div class="title">
+      研究助手
+      <div class="sub">Research RA · 读博日常主力</div>
+    </div>
+    <div class="spacer"></div>
+    <select id="engineSelect" title="选择聊天引擎"></select>
+    <select id="modelSelect" title="选择模型"></select>
+    <span id="modelHint" title=""></span>
   </div>
-  <div class="spacer"></div>
-  <select id="engineSelect" title="选择聊天引擎"></select>
-  <select id="modelSelect" title="选择模型"></select>
-  <span id="modelHint" title=""></span>
-  <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge">–</span></button>
-  <button class="clear-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息，研究助手默认关以保持「只依据证据」）">联网</button>
-  <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
-  <button class="clear-btn" id="grillBtn" title="追问挑战：不直接给答案，连环追问逼你理清假设、变量与边界">追问挑战</button>
-  <button class="clear-btn" id="mdBtn" title="把当前对话导出为 Markdown 文件">导出 MD</button>
-  <button class="clear-btn" id="batchAuthBtn" title="批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复">🔓 批量授权</button>
-  <button class="clear-btn" id="clearBtn" title="开启一个新对话">新对话</button>
+  <div class="toolbar">
+    <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge" style="display:none"></span></button>
+    <button class="clear-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息，研究助手默认关以保持「只依据证据」）">联网</button>
+    <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
+    <button class="clear-btn" id="grillBtn" title="追问挑战：不直接给答案，连环追问逼你理清假设、变量与边界">追问挑战</button>
+    <span class="tb-sep"></span>
+    <button class="clear-btn" id="slidesBtn" title="把当前研究/主题生成一份结构完整的学术演示文稿（.pptx 文件）">🎓 学术 PPT</button>
+    <button class="clear-btn" id="mdBtn" title="把当前对话导出为 Markdown 文件">导出 MD</button>
+    <span class="tb-sep"></span>
+    <button class="clear-btn" id="batchAuthBtn" title="批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复">🔓 批量授权</button>
+    <button class="clear-btn" id="clearBtn" title="开启一个新对话">新对话</button>
+  </div>
 </header>
 
 <div class="kb-panel" id="kbPanel" hidden>
@@ -394,6 +410,15 @@
   <div class="kb-actions">
     <button class="kb-btn" id="kbRescan">重建索引</button>
     <span class="kb-hint">笔记保存后约 3 秒自动增量更新</span>
+  </div>
+</div>
+
+<div class="kb-panel" id="slidesPanel" hidden>
+  <div class="kb-title">🎓 学术 PPT · 演示文稿生成</div>
+  <input class="kb-input" id="slidesTopic" type="text" placeholder="主题 / 研究题目（留空则基于当前对话提炼）">
+  <div class="kb-row">生成一份 8~14 页的学术演示文稿（组会汇报 / 学术会议 / 论文答辩），直接产出 .pptx 文件。</div>
+  <div class="kb-actions">
+    <button class="kb-btn" id="slidesGoBtn">生成演示文稿</button>
   </div>
 </div>
 
@@ -1496,7 +1521,8 @@
   function renderKbStatus(s) {
     var badge = el('kbBadge'), statusEl = el('kbStatus');
     if (!s) return;
-    badge.textContent = s.totalChunks ? (s.totalChunks + ' 片段') : '–';
+    badge.textContent = s.totalChunks ? String(s.totalChunks) : '';
+    badge.style.display = s.totalChunks ? '' : 'none';
     var lines = [];
     if (s.totalChunks) {
       lines.push('已索引 ' + s.totalFiles + ' 篇笔记 / ' + s.totalChunks + ' 个片段');
@@ -2184,11 +2210,97 @@
   }
   el('mdBtn').addEventListener('click', exportMarkdown);
 
+  // 学术 PPT：把当前研究/主题生成一份结构化演示文稿（.pptx）
+  el('slidesBtn').addEventListener('click', function () {
+    var p = el('slidesPanel');
+    p.hidden = !p.hidden;
+    if (!p.hidden) { el('kbPanel').hidden = true; el('slidesTopic').focus(); }
+  });
+  el('slidesGoBtn').addEventListener('click', generateAcademicSlides);
+  function generateAcademicSlides() {
+    var topic = el('slidesTopic').value.trim();
+    var srcText = topic;
+    if (!srcText) {
+      var s = currentSession();
+      var msgs = (s && s.messages) ? s.messages.filter(function (m) { return m.content && String(m.content).trim(); }) : [];
+      if (!msgs.length) { alert('请先输入一个主题，或先进行一段对话'); return; }
+      srcText = '以下是我的研究对话，请据此提炼学术演示内容：\n\n' + msgs.slice(-8).map(function (m) {
+        return (m.role === 'user' ? '【我】' : '【助手】') + '\n' + stripToolMarkers(m.content || '').slice(0, 2000);
+      }).join('\n\n');
+    }
+    el('slidesPanel').hidden = true;
+    el('slidesTopic').value = '';
+
+    addBubble('user', '🎓 生成学术 PPT' + (topic ? '：' + esc(topic) : '（基于当前对话）'));
+    var bubble = addBubble('assistant', '<div class="status-line">正在设计演示结构…<span class="dots"><i></i><i></i><i></i></span></div>');
+    messages.scrollTop = messages.scrollHeight;
+    streaming = true; setSendBtnState(true);
+
+    var sys = '你是资深学术演讲教练。请把用户给的研究内容设计成一份结构完整的学术演示文稿（用于组会汇报 / 学术会议 / 论文答辩）。\n'
+      + '必须只输出一个 JSON 对象（不要任何解释、不要 markdown 代码围栏），结构为：\n'
+      + '{"title":"总标题","slides":[{"title":"本页标题","bullets":["要点1","要点2"]}]}\n'
+      + '要求：\n1) 共 8~14 页，按顺序覆盖：标题页（title 用研究题目本身）/ 研究背景 / 研究问题 / 方法与数据 / 关键结果 / 讨论 / 结论 / 展望或致谢；\n'
+      + '2) 每页 3~5 条要点，每条 ≤30 字，用短语不用整句；\n'
+      + '3) 严格输出合法 JSON，字符串内不要有未转义的引号或换行。';
+
+    var reqMessages = [{ role: 'system', content: sys }].concat([{ role: 'user', content: srcText }]);
+    var acc = '';
+    window.ingrid.chatStream({ engine: engineSelect.value || 'ollama', model: currentModelId(), messages: reqMessages }, {
+      onDelta: function (chunk) { if (chunk && chunk.text) acc += chunk.text; },
+      onDone: function (d) {
+        streaming = false; setSendBtnState(false);
+        if (!d || !d.ok) { bubble.innerHTML = '生成失败：' + esc((d && d.error) || '未知错误'); return; }
+        var parsed = parseSlidesJson(acc);
+        if (!parsed) {
+          bubble.innerHTML = '模型返回的内容无法解析成结构化演示文稿，请重试或换一个模型。原始输出：\n\n<pre>' + esc(acc.slice(0, 1500)) + '</pre>';
+          return;
+        }
+        var title = parsed.title || '学术演示';
+        bubble.innerHTML = mdToHtml(slidesToMarkdown(parsed));
+        renderMermaidIn(bubble);
+        window.ingrid.docGenerate({ type: 'pptx', title: title, slides: parsed.slides }).then(function (r) {
+          var st = document.createElement('div');
+          st.className = 'loop-status';
+          st.textContent = (r && r.ok) ? '🎓 已生成演示文稿：' + r.path : '⚠ 文件生成失败：' + ((r && r.error) || '未知错误') + '（大纲已在上方展示，可点「导出 MD」保存）';
+          messages.appendChild(st);
+          messages.scrollTop = messages.scrollHeight;
+        }).catch(function (e) {
+          var st = document.createElement('div');
+          st.className = 'loop-status';
+          st.textContent = '⚠ 文件生成失败：' + String(e && e.message || e);
+          messages.appendChild(st);
+          messages.scrollTop = messages.scrollHeight;
+        });
+      }
+    });
+  }
+  function parseSlidesJson(text) {
+    var t = String(text || '').trim();
+    var m = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (m) t = m[1].trim();
+    var a = t.indexOf('{'), b = t.lastIndexOf('}');
+    if (a < 0 || b <= a) return null;
+    try {
+      var obj = JSON.parse(t.slice(a, b + 1));
+      if (obj && Array.isArray(obj.slides) && obj.slides.length) return obj;
+    } catch (e) { return null; }
+    return null;
+  }
+  function slidesToMarkdown(parsed) {
+    var lines = ['# ' + (parsed.title || '学术演示'), ''];
+    (parsed.slides || []).forEach(function (s, i) {
+      lines.push('## 第 ' + (i + 1) + ' 页 · ' + (s.title || ''), '');
+      (s.bullets || []).forEach(function (b) { lines.push('- ' + b); });
+      lines.push('');
+    });
+    return lines.join('\n');
+  }
+
   // 知识库交互
   el('kbBtn').addEventListener('click', function () {
     var p = el('kbPanel');
     p.hidden = !p.hidden;
-    if (!p.hidden) loadKbStatus();
+    if (!p.hidden) { el('slidesPanel').hidden = true; loadKbStatus(); }
   });
   el('kbToggle').addEventListener('change', function () { kbEnabled = el('kbToggle').checked; });
   el('kbRescan').addEventListener('click', function () {
