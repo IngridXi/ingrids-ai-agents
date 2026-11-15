@@ -42,6 +42,33 @@ function isValidTimeZone(tz) {
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch (e) { return false; }
 }
 
+/** Windows 时区名 → IANA 时区名映射（Outlook/Exchange 发布的 .ics 常带 Windows 名，
+ *  Intl 无法识别会 fallback 到「本地浮动」导致时间差数小时；这里补齐常用映射） */
+const WINDOWS_TZ_MAP = {
+  'GMT Standard Time': 'Europe/London',
+  'W. Europe Standard Time': 'Europe/Berlin',
+  'Romance Standard Time': 'Europe/Paris',
+  'Central Europe Standard Time': 'Europe/Budapest',
+  'Central European Standard Time': 'Europe/Budapest',
+  'E. Europe Standard Time': 'Europe/Bucharest',
+  'GTB Standard Time': 'Europe/Bucharest',
+  'FLE Standard Time': 'Europe/Helsinki',
+  'Russian Standard Time': 'Europe/Moscow',
+  'Turkey Standard Time': 'Europe/Istanbul',
+  'China Standard Time': 'Asia/Shanghai',
+  'Taipei Standard Time': 'Asia/Taipei',
+  'Singapore Standard Time': 'Asia/Singapore',
+  'Tokyo Standard Time': 'Asia/Tokyo',
+  'Korea Standard Time': 'Asia/Seoul',
+  'India Standard Time': 'Asia/Kolkata',
+  'Eastern Standard Time': 'America/New_York',
+  'Central Standard Time': 'America/Chicago',
+  'Mountain Standard Time': 'America/Denver',
+  'Pacific Standard Time': 'America/Los_Angeles',
+  'Atlantic Standard Time': 'America/Halifax',
+  'AUS Eastern Standard Time': 'Australia/Sydney',
+};
+
 /** 返回某时区在 utcMs 时刻相对 UTC 的偏移（毫秒，东正西负）；无效时区返回 null */
 function tzOffsetMs(tz, utcMs) {
   try {
@@ -92,7 +119,10 @@ function parseCalDate(raw) {
     value = s.slice(ci + 1);
     if (/VALUE=DATE/i.test(paramPart)) isDate = true;
     const tm = paramPart.match(/TZID=([^;:]+)/i);
-    if (tm) tzid = tm[1].trim().replace(/^"|"$/g, '');
+    if (tm) {
+      tzid = tm[1].trim().replace(/^"|"$/g, '');
+      if (WINDOWS_TZ_MAP[tzid]) tzid = WINDOWS_TZ_MAP[tzid];   // Windows 名 → IANA 名
+    }
   }
   const m = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?(Z?)/);
   if (!m) return '';

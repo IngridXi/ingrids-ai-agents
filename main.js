@@ -149,6 +149,24 @@ function writeJson(name, data) {
   fs.writeFileSync(path.join(dataDir(), name), JSON.stringify(data, null, 2), 'utf8');
 }
 
+/* ---------------- 秘书状态串行化写入 ----------------
+ * 根因：runCalendarSync / runIcsSync / runMailSync / runReminderCheck / saveSecretary 等多个
+ * async 任务并发「读 secretary.json → 改 → 写」，read-modify-write 非原子，后写者用旧快照
+ * 覆盖先写者，导致日历事件 / 邮件 / 手动日程互相覆盖丢失（症状：日历突然没任务）。
+ * 修复：用 promise 队列串行化所有对 secretary.json 的读-改-写，杜绝并发覆盖。
+ */
+let secretaryQueue = Promise.resolve();
+function updateSecretary(mutator) {
+  const run = secretaryQueue.then(function () {
+    const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
+    const next = mutator(state) || state;
+    writeJson('secretary.json', next);
+    return next;
+  });
+  secretaryQueue = run.then(function () {}, function () {});
+  return run;
+}
+
 /* ---------------- 技能板块（Board）与 Skill 索引 ----------------
  * 只读扫描三类来源：
  *   builtin : 仓库自带 skills/ 下的 .md 文件（随 git 走，默认启用）
@@ -559,28 +577,30 @@ async function runCalendarSync() {
     results.push({ id: acct.id, name: acct.name, type: acct.type, ok: r.ok, count: (r.events || []).length, error: r.error || '' });
     if (r.ok && r.events) allEvents = allEvents.concat(r.events);
   }
-  // 合并进 secretary.json：移除旧的同步事件（id 以 cal- 开头），写入新事件，保留手动事件
-  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
-  const all = Array.isArray(state.events) ? state.events : [];
-  const oldCal = all.filter(function (e) { return String(e.id).startsWith('cal-'); });
-  const oldMap = {};
-  oldCal.forEach(function (e) { oldMap[e.id] = e; });
-  const manual = all.filter(function (e) { return !String(e.id).startsWith('cal-'); });
-  const synced = allEvents.map(function (e) {
-    const old = oldMap[e.id];
-    return {
-      id: e.id, title: e.title, at: e.at, end: e.end || '',
-      location: e.location || '', source: e.source || '', note: e.note || '',
-      reminderMin: e.allDay ? 0 : 30,
-      reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
-      createdAt: old ? old.createdAt : Date.now(),
-      category: SecretaryCore.classifyEvent(e.title, e.source),
-    };
+  // 合并进 secretary.json：移除旧的同步事件（id 以 cal- 开头），写入新事件，保留手动事件。
+  // 用串行化队列写入，避免与 ICS/邮件同步并发覆盖（根因修复：日历突然没任务的元凶）
+  await updateSecretary(function (state) {
+    const all = Array.isArray(state.events) ? state.events : [];
+    const oldCal = all.filter(function (e) { return String(e.id).startsWith('cal-'); });
+    const oldMap = {};
+    oldCal.forEach(function (e) { oldMap[e.id] = e; });
+    const manual = all.filter(function (e) { return !String(e.id).startsWith('cal-'); });
+    const synced = allEvents.map(function (e) {
+      const old = oldMap[e.id];
+      return {
+        id: e.id, title: e.title, at: e.at, end: e.end || '',
+        location: e.location || '', source: e.source || '', note: e.note || '',
+        reminderMin: e.allDay ? 0 : 30,
+        reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
+        createdAt: old ? old.createdAt : Date.now(),
+        category: SecretaryCore.classifyEvent(e.title, e.source),
+      };
+    });
+    const merged = manual.concat(synced);
+    merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+    return { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] };
   });
-  const merged = manual.concat(synced);
-  merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
-  writeJson('secretary.json', { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] });
-  const summary = { results: results, total: synced.length, syncedAt: Date.now() };
+  const summary = { results: results, total: allEvents.length, syncedAt: Date.now() };
   broadcast('calendar:synced', summary);
   return summary;
 }
@@ -610,10 +630,11 @@ function removeIcsFeed(id) {
   const raw = readIcsFeedsRaw();
   const feeds = Array.isArray(raw.feeds) ? raw.feeds.filter(function (f) { return String(f.id) !== String(id); }) : [];
   writeJson('ics-feeds.json', { feeds: feeds });
-  // 顺带清掉该订阅同步进来的日程
-  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
-  const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-' + id + '-'); });
-  writeJson('secretary.json', { events: others, emails: state.emails || [], thoughts: state.thoughts || [] });
+  // 顺带清掉该订阅同步进来的日程（串行化写入，避免并发覆盖）
+  updateSecretary(function (state) {
+    const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-' + id + '-'); });
+    return { events: others, emails: state.emails || [], thoughts: state.thoughts || [] };
+  });
   return listIcsFeeds();
 }
 
@@ -670,34 +691,38 @@ async function runIcsSync() {
     }
   });
 
-  // 合并：移除旧的 ics- 订阅事件，写入新事件；保留 cal-/手动/导入事件；继承 reminded/done 防重复提醒
-  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
-  const oldIcs = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return String(e.id).startsWith('ics-'); });
-  const oldMap = {};
-  oldIcs.forEach(function (e) { oldMap[e.id] = e; });
-  const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-'); });
-  const synced = [];
-  const seenIds = new Set();
-  expanded.forEach(function (ev, i) {
-    var uidKey = ev.uid ? hashStr(String(ev.uid)) : ('n' + i);
-    var atKey = String(ev.at || '').replace(/[^0-9]/g, '');
-    var id = 'ics-' + ev._feedId + '-' + uidKey + '-' + atKey;
-    if (seenIds.has(id)) return;  // 同 uid 同时刻的去重（重复系列的「例外实例」与展开实例重叠）
-    seenIds.add(id);
-    var old = oldMap[id];
-    synced.push({
-      id: id, title: ev.title, at: ev.at, end: ev.end || '',
-      location: ev.location || '', source: ev._feedName || 'ICS 订阅', note: ev.description || '',
-      reminderMin: ev.allDay ? 0 : 30,
-      reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
-      createdAt: old ? old.createdAt : Date.now(),
-      category: SecretaryCore.classifyEvent(ev.title, ev._feedName),
+  // 合并：移除旧的 ics- 订阅事件，写入新事件；保留 cal-/手动/导入事件；继承 reminded/done 防重复提醒。
+  // 用串行化队列写入，避免与账户日历同步并发覆盖（根因修复）
+  let syncedCount = 0;
+  await updateSecretary(function (state) {
+    const oldIcs = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return String(e.id).startsWith('ics-'); });
+    const oldMap = {};
+    oldIcs.forEach(function (e) { oldMap[e.id] = e; });
+    const others = (Array.isArray(state.events) ? state.events : []).filter(function (e) { return !String(e.id).startsWith('ics-'); });
+    const synced = [];
+    const seenIds = new Set();
+    expanded.forEach(function (ev, i) {
+      var uidKey = ev.uid ? hashStr(String(ev.uid)) : ('n' + i);
+      var atKey = String(ev.at || '').replace(/[^0-9]/g, '');
+      var id = 'ics-' + ev._feedId + '-' + uidKey + '-' + atKey;
+      if (seenIds.has(id)) return;  // 同 uid 同时刻的去重（重复系列的「例外实例」与展开实例重叠）
+      seenIds.add(id);
+      var old = oldMap[id];
+      synced.push({
+        id: id, title: ev.title, at: ev.at, end: ev.end || '',
+        location: ev.location || '', source: ev._feedName || 'ICS 订阅', note: ev.description || '',
+        reminderMin: ev.allDay ? 0 : 30,
+        reminded: old ? !!old.reminded : false, done: old ? !!old.done : false,
+        createdAt: old ? old.createdAt : Date.now(),
+        category: SecretaryCore.classifyEvent(ev.title, ev._feedName),
+      });
     });
+    syncedCount = synced.length;
+    const merged = others.concat(synced);
+    merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+    return { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] };
   });
-  const merged = others.concat(synced);
-  merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
-  writeJson('secretary.json', { events: merged, emails: state.emails || [], thoughts: state.thoughts || [] });
-  const summary = { results: results, total: synced.length, syncedAt: Date.now() };
+  const summary = { results: results, total: syncedCount, syncedAt: Date.now() };
   broadcast('calendar:synced', summary);
   return summary;
 }
@@ -710,19 +735,20 @@ async function importIcsFile() {
     const text = fs.readFileSync(r.filePaths[0], 'utf8');
     const events = syncEngine.parseICalendar(text);
     if (!events.length) return { ok: false, error: '该文件里没有解析到日程' };
-    const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
-    const list = Array.isArray(state.events) ? state.events.slice() : [];
-    const stamp = Date.now().toString(36);
-    events.forEach(function (ev, i) {
-      list.push({
-        id: 'icsimp-' + stamp + '-' + i, title: ev.title, at: ev.at, end: ev.end || '',
-        location: ev.location || '', source: '导入 · ' + path.basename(r.filePaths[0]), note: ev.description || '',
-        reminderMin: ev.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
-        category: SecretaryCore.classifyEvent(ev.title),
+    await updateSecretary(function (state) {
+      const list = Array.isArray(state.events) ? state.events.slice() : [];
+      const stamp = Date.now().toString(36);
+      events.forEach(function (ev, i) {
+        list.push({
+          id: 'icsimp-' + stamp + '-' + i, title: ev.title, at: ev.at, end: ev.end || '',
+          location: ev.location || '', source: '导入 · ' + path.basename(r.filePaths[0]), note: ev.description || '',
+          reminderMin: ev.allDay ? 0 : 30, reminded: false, done: false, createdAt: Date.now(),
+          category: SecretaryCore.classifyEvent(ev.title),
+        });
       });
+      list.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+      return { events: list, emails: state.emails || [], thoughts: state.thoughts || [] };
     });
-    list.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
-    writeJson('secretary.json', { events: list, emails: state.emails || [], thoughts: state.thoughts || [] });
     broadcast('calendar:synced', { total: events.length, syncedAt: Date.now() });
     return { ok: true, count: events.length };
   } catch (e) {
@@ -746,30 +772,35 @@ function categoryOf(cat) { return (SecretaryCore && SecretaryCore.categoryOf) ? 
 
 /** 扫描秘书日程，对「到点且未提醒」的事件发系统通知并标记已提醒 */
 function runReminderCheck() {
-  let state;
-  try { state = readJson('secretary.json', { events: [], emails: [], thoughts: [] }); }
-  catch (e) { return []; }
-  const events = Array.isArray(state.events) ? state.events : [];
-  const now = Date.now();
   const fired = [];
-  let changed = false;
-  for (const ev of events) {
-    if (ev.done || ev.reminded || !ev.at) continue;
-    const lead = Number(ev.reminderMin) || 0;
-    const at = new Date(ev.at).getTime();
-    if (!isFinite(at)) continue;
-    // 到点：now >= at - lead（lead=0 表示到了当天/当时才提醒）
-    if (now < at - lead * 60000) continue;
-    ev.reminded = true; changed = true;
-    fired.push(ev);
-    const c = categoryOf(ev.category);
-    const title = c.emoji + ' ' + (ev.title || '研究日程提醒');
-    const body = fmtDateTime(at) + ' · ' + c.label + (lead > 0 ? '（' + fmtLead(lead) + '提醒）' : '') +
-      (ev.location ? ' · 📍 ' + ev.location : '');
-    try { if (Notification.isSupported()) new Notification({ title: title, body: body }).show(); } catch (e) { /* 通知失败不阻断 */ }
-  }
-  if (changed) { try { writeJson('secretary.json', state); } catch (e) {} }
-  if (fired.length) broadcast('calendar:reminder', fired);
+  // 用串行化队列读-改-写，避免与日历/邮件同步并发覆盖（根因修复）
+  updateSecretary(function (state) {
+    const events = Array.isArray(state.events) ? state.events : [];
+    const now = Date.now();
+    for (const ev of events) {
+      if (ev.done || ev.reminded || !ev.at) continue;
+      const lead = Number(ev.reminderMin) || 0;
+      const at = new Date(ev.at).getTime();
+      if (!isFinite(at)) continue;
+      // 到点：now >= at - lead（lead=0 表示到了当天/当时才提醒）
+      if (now < at - lead * 60000) continue;
+      ev.reminded = true;
+      fired.push(ev);
+    }
+    return state;  // 已原地标记 reminded
+  }).then(function () {
+    // 通知展示放队列外，避免阻塞后续写入
+    fired.forEach(function (ev) {
+      const c = categoryOf(ev.category);
+      const lead = Number(ev.reminderMin) || 0;
+      const at = new Date(ev.at).getTime();
+      const title = c.emoji + ' ' + (ev.title || '研究日程提醒');
+      const body = fmtDateTime(at) + ' · ' + c.label + (lead > 0 ? '（' + fmtLead(lead) + '提醒）' : '') +
+        (ev.location ? ' · 📍 ' + ev.location : '');
+      try { if (Notification.isSupported()) new Notification({ title: title, body: body }).show(); } catch (e) { /* 通知失败不阻断 */ }
+    });
+    if (fired.length) broadcast('calendar:reminder', fired);
+  }).catch(function () {});
   return fired;
 }
 
@@ -812,17 +843,20 @@ async function runMailSync() {
     results.push({ id: acct.id, name: acct.name, ok: r.ok, count: (r.emails || []).length, error: r.error || '' });
     if (r.ok && r.emails) allEmails = allEmails.concat(r.emails);
   }
-  // 合并进 secretary.json：移除旧的同步邮件（id 以 msmail- 开头），写入新邮件（自动分类），保留手动导入
-  const state = readJson('secretary.json', { events: [], emails: [], thoughts: [] });
-  const manual = (Array.isArray(state.emails) ? state.emails : []).filter(function (m) { return !String(m.id).startsWith('msmail-'); });
-  const classified = allEmails.map(function (m) {
-    const c = (SecretaryCore && SecretaryCore.classifyEmail) ? SecretaryCore.classifyEmail(m) : { category: 'general', importance: 1, important: false };
-    return Object.assign({}, m, { category: c.category, importance: c.importance, important: c.important });
+  // 合并进 secretary.json：移除旧的同步邮件（id 以 msmail- 开头），写入新邮件（自动分类），保留手动导入。
+  // 用串行化队列写入，避免与日历同步并发覆盖（根因修复）
+  const totalEmails = allEmails.length;
+  await updateSecretary(function (state) {
+    const manual = (Array.isArray(state.emails) ? state.emails : []).filter(function (m) { return !String(m.id).startsWith('msmail-'); });
+    const classified = allEmails.map(function (m) {
+      const c = (SecretaryCore && SecretaryCore.classifyEmail) ? SecretaryCore.classifyEmail(m) : { category: 'general', importance: 1, important: false };
+      return Object.assign({}, m, { category: c.category, importance: c.importance, important: c.important });
+    });
+    const merged = manual.concat(classified);
+    merged.sort(function (a, b) { return String(b.at || '').localeCompare(String(a.at || '')); });
+    return { events: state.events || [], emails: merged, thoughts: state.thoughts || [] };
   });
-  const merged = manual.concat(classified);
-  merged.sort(function (a, b) { return String(b.at || '').localeCompare(String(a.at || '')); });
-  writeJson('secretary.json', { events: state.events || [], emails: merged, thoughts: state.thoughts || [] });
-  const summary = { results: results, total: classified.length, syncedAt: Date.now() };
+  const summary = { results: results, total: totalEmails, syncedAt: Date.now() };
   broadcast('mail:synced', summary);
   return summary;
 }
@@ -2291,8 +2325,7 @@ ipcMain.handle('secretary:save', (_e, state) => {
     emails: Array.isArray(state.emails) ? state.emails : [],
     thoughts: Array.isArray(state.thoughts) ? state.thoughts : [],
   };
-  writeJson('secretary.json', clean);
-  return true;
+  return updateSecretary(function () { return clean; }).then(function () { return true; });
 });
 
 /* ---------------- IPC：邮箱 / 日历同步 ---------------- */
