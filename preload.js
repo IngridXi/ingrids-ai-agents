@@ -188,6 +188,17 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),
   toolDbZoteroCollection: (payload) => ipcRenderer.invoke('tool:db:zotero:collection', payload),
 
+  // 软件工程 agent 工具（逆向 / 编译 / 补丁 / 反编译）
+  toolBinInfo: (payload) => ipcRenderer.invoke('tool:bin:info', payload),
+  toolBinStrings: (payload) => ipcRenderer.invoke('tool:bin:strings', payload),
+  toolBinSymbols: (payload) => ipcRenderer.invoke('tool:bin:symbols', payload),
+  toolBinDisasm: (payload) => ipcRenderer.invoke('tool:bin:disasm', payload),
+  toolBinDeps: (payload) => ipcRenderer.invoke('tool:bin:deps', payload),
+  toolBinHex: (payload) => ipcRenderer.invoke('tool:bin:hex', payload),
+  toolRunShell: (payload) => ipcRenderer.invoke('tool:run:shell', payload),
+  toolBinPatch: (payload) => ipcRenderer.invoke('tool:bin:patch', payload),
+  toolPyDecompile: (payload) => ipcRenderer.invoke('tool:py:decompile', payload),
+
   // 聊天记忆持久化（按 Agent 名隔离）
   chatHistoryLoad: (name) => ipcRenderer.invoke('chat:history:load', name),
   chatHistorySave: (name, history) => ipcRenderer.invoke('chat:history:save', name, history),

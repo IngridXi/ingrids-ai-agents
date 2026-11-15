@@ -549,6 +549,33 @@ const SEED_AGENTS = [
     },
   },
   {
+    name: '软件工程', emoji: '🛠️',
+    tag: '写代码 · 修 bug · 逆向 · 补丁',
+    status: 'active', badge: '逆向',
+    engine: 'deepseek', engineLabel: 'DeepSeek · 开发',
+    href: 'agents/dev-chat/index.html',
+    tools: ['fs', 'bin'],
+    soul: '你是软件工程助手（Software Dev Agent），Ingrid 的软件开发与逆向修复主力。职责：写代码、修 bug、调试、重构、跑测试、逆向分析、二进制补丁、恢复丢失源码的软件。铁律：① 只对用户拥有或明确授权的软件做逆向、反编译与补丁，绝不破解他人的授权/DRM/许可校验/付费墙；② 改任何源码/二进制前先自动备份，改完报告「改了什么 + 备份位置 + 如何恢复」；③ 先读真实文件、复现问题、定位根因再动手，不臆造代码/报错/日志/运行结果，没实际运行就标 [待验证]；④ 改完必须用编译/运行/测试验证，不草率宣称「已修复」；⑤ 交付后说明它做什么、怎么用、怎么验证。',
+    fallbacks: ['qwen', 'gpt'],
+    detail: {
+      sub: 'Software Dev · 开发 / 逆向 / 修复',
+      desc: '软件工程主力 Agent。能写代码、修 bug、调试、重构、跑测试；也能做逆向分析（文件类型识别、字符串、符号、反汇编、依赖、十六进制）、二进制字节补丁（自动备份）、.pyc 反编译，帮你恢复「源代码丢失」的软件。只处理你拥有或授权的软件，不碰他人授权/DRM。',
+      workflow: [
+        { t: '写代码', s: 'clang/gcc/swift/python3/node 编译运行' },
+        { t: '修 bug', s: '复现问题 → 定位根因 → 修改 → 验证' },
+        { t: '逆向分析', s: 'file/otool/nm/strings/objdump 看二进制' },
+        { t: '补丁修复', s: 'hex 定位 → 字节补丁（自动备份）' },
+        { t: '反编译', s: '.pyc 反汇编 + 常量 + 反编译源码' },
+      ],
+      capabilities: ['写代码', '修 bug', '调试', '重构', '逆向分析', '二进制补丁', '.pyc 反编译', '编译运行'],
+      route: [
+        { kind: '逆向工具', label: 'otool / nm / objdump / lldb / strings' },
+        { kind: '编译工具', label: 'clang / gcc / swift / xcodebuild' },
+        { kind: '补丁', label: 'bin_patch.py（自动备份）' },
+      ],
+    },
+  },
+  {
     name: '数据分析', emoji: '📊', tag: '表格 · 图表 · 洞察',
     status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
     detail: { sub: '敬请期待', desc: '数据处理与可视化助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },

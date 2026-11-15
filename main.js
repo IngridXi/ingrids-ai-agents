@@ -3030,6 +3030,127 @@ async function toolFsDelete(payload) {
   } catch (e) { return { ok: false, error: '删除失败：' + String(e && e.message || e) }; }
 }
 
+/* ---------------- 软件工程 agent 工具：逆向 / 编译 / 补丁 ----------------
+ * 只读分析（bin_*）不需审批；run_shell / bin_patch 有副作用，需前端审批。
+ * 合规边界（配合前端 soul）：只分析用户指定/授权的文件；拒绝破解他人授权、DRM、许可校验。
+ */
+const DEV_TIMEOUT = 45000;
+const DEV_MAXBUF = 30 * 1024 * 1024;
+
+function execDevTool(bin, args) {
+  try {
+    const out = execFileSync(bin, args, { encoding: 'utf8', maxBuffer: DEV_MAXBUF, timeout: DEV_TIMEOUT });
+    return { ok: true, output: String(out).slice(0, 300000) };
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: false, error: '工具未安装：' + bin };
+    return {
+      ok: false,
+      error: String((e && e.message) || e),
+      stdout: e && e.stdout ? String(e.stdout).slice(0, 80000) : '',
+      stderr: e && e.stderr ? String(e.stderr).slice(0, 80000) : '',
+    };
+  }
+}
+function devPathOf(payload) {
+  const f = path.resolve(String((payload && payload.path) || ''));
+  if (!f || !fs.existsSync(f)) return { err: '文件不存在：' + String((payload && payload.path) || '') };
+  return { file: f };
+}
+
+function toolBinInfo(p) {
+  const r = devPathOf(p); if (r.err) return { ok: false, error: r.err };
+  const fileOut = execDevTool('file', [r.file]);
+  const lipoOut = execDevTool('lipo', ['-info', r.file]);
+  const signOut = execDevTool('codesign', ['-dv', r.file]);
+  return {
+    ok: true, path: r.file,
+    file: fileOut.ok ? fileOut.output.trim() : '(file 失败)',
+    arch: lipoOut.ok ? lipoOut.output.trim() : '(非胖二进制 / lipo 不可用)',
+    codesign: signOut.ok ? signOut.output.trim() : '(未签名或 codesign 不可用)',
+  };
+}
+function toolBinStrings(p) {
+  const r = devPathOf(p); if (r.err) return { ok: false, error: r.err };
+  const min = Math.min(Math.max(Number((p && p.minLen) || 4) || 4, 2), 16);
+  return execDevTool('strings', ['-n', String(min), r.file]);
+}
+function toolBinSymbols(p) {
+  const r = devPathOf(p); if (r.err) return { ok: false, error: r.err };
+  return execDevTool('nm', [r.file]);
+}
+function toolBinDisasm(p) {
+  const r = devPathOf(p); if (r.err) return { ok: false, error: r.err };
+  const o = execDevTool('otool', ['-tvV', r.file]);
+  if (o.ok) return o;
+  return execDevTool('objdump', ['-d', r.file]);
+}
+function toolBinDeps(p) {
+  const r = devPathOf(p); if (r.err) return { ok: false, error: r.err };
+  return execDevTool('otool', ['-L', r.file]);
+}
+function toolBinHex(p) {
+  const r = devPathOf(p); if (r.err) return { ok: false, error: r.err };
+  const offset = Math.max(Number((p && p.offset) || 0) || 0, 0);
+  const len = Math.min(Math.max(Number((p && p.length) || 256) || 16, 16), 4096);
+  return execDevTool('xxd', ['-s', String(offset), '-l', String(len), r.file]);
+}
+
+// 编译/运行/分析类命令白名单（execFile 直连，不经 shell，防注入）
+const DEV_SHELL_ALLOW = new Set([
+  'python3', 'python', 'node', 'npm', 'npx', 'pip3', 'pip',
+  'clang', 'clang++', 'gcc', 'g++', 'cc', 'c++', 'swift', 'swiftc',
+  'make', 'cmake', 'xcodebuild', 'rustc', 'cargo', 'go', 'javac', 'java',
+  'git', 'file', 'strings', 'otool', 'nm', 'objdump', 'lipo', 'codesign', 'plutil', 'xxd', 'hexdump',
+]);
+function toolRunShell(p) {
+  const cmd = String((p && p.cmd) || '').trim();
+  if (!DEV_SHELL_ALLOW.has(cmd)) return { ok: false, error: '命令不在白名单：' + cmd + '（仅允许编译 / 运行 / 分析类命令）' };
+  const args = Array.isArray(p && p.args) ? p.args.map(String) : [];
+  for (const a of args) if (/[`$;&|<>(){}\n]/.test(a)) return { ok: false, error: '参数含非法字符：' + a };
+  const home = app.getPath('home');
+  let cwd = path.resolve(String((p && p.cwd) || home));
+  if (cwd !== home && !cwd.startsWith(home + path.sep)) cwd = home;
+  try {
+    const out = execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: DEV_MAXBUF, timeout: DEV_TIMEOUT, cwd: cwd });
+    return { ok: true, cmd: cmd, output: String(out).slice(0, 300000) };
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: false, error: '命令未安装：' + cmd };
+    return { ok: false, error: String((e && e.message) || e), stdout: e && e.stdout ? String(e.stdout).slice(0, 80000) : '', stderr: e && e.stderr ? String(e.stderr).slice(0, 80000) : '' };
+  }
+}
+
+function toolBinPatch(p) {
+  const target = path.resolve(String((p && p.path) || ''));
+  if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在' };
+  if (!isSafeWritePath(target)) return { ok: false, error: '拒绝补丁该位置（仅允许主目录内的文件，可先把目标复制到主目录再补）' };
+  const script = path.join(__dirname, 'scripts', 'bin_patch.py');
+  if (!fs.existsSync(script)) return { ok: false, error: '缺少补丁脚本 scripts/bin_patch.py' };
+  try {
+    const out = execFileSync('python3', [script, JSON.stringify({ path: target, offset: p && p.offset, bytes: p && p.bytes })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    return JSON.parse(out);
+  } catch (e) { return { ok: false, error: '补丁失败：' + String((e && e.message) || e) }; }
+}
+function toolPyDecompile(p) {
+  const target = path.resolve(String((p && p.path) || ''));
+  if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在' };
+  const script = path.join(__dirname, 'scripts', 'pyc_decompile.py');
+  if (!fs.existsSync(script)) return { ok: false, error: '缺少反编译脚本 scripts/pyc_decompile.py' };
+  try {
+    const out = execFileSync('python3', [script, target], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024 });
+    return JSON.parse(out);
+  } catch (e) { return { ok: false, error: '反编译失败：' + String((e && e.message) || e) }; }
+}
+
+ipcMain.handle('tool:bin:info', (_e, p) => toolBinInfo(p));
+ipcMain.handle('tool:bin:strings', (_e, p) => toolBinStrings(p));
+ipcMain.handle('tool:bin:symbols', (_e, p) => toolBinSymbols(p));
+ipcMain.handle('tool:bin:disasm', (_e, p) => toolBinDisasm(p));
+ipcMain.handle('tool:bin:deps', (_e, p) => toolBinDeps(p));
+ipcMain.handle('tool:bin:hex', (_e, p) => toolBinHex(p));
+ipcMain.handle('tool:run:shell', (_e, p) => toolRunShell(p));
+ipcMain.handle('tool:bin:patch', (_e, p) => toolBinPatch(p));
+ipcMain.handle('tool:py:decompile', (_e, p) => toolPyDecompile(p));
+
 ipcMain.handle('tool:fs:list', (_e, p) => toolFsList(p));
 ipcMain.handle('tool:fs:search', (_e, p) => toolFsSearch(p));
 ipcMain.handle('tool:fs:read', (_e, p) => toolFsRead(p));
