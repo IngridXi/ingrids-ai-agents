@@ -41,6 +41,32 @@ const PermissionCore = globalThis.PermissionCore;
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
 
+/* ---------------- 清理上次异常退出残留的坏单例锁 ----------------
+ * 根因：应用崩溃 / 被强杀 / 系统重启后，Chromium 的 SingletonLock 会残留。
+ * 若残留锁损坏（非 symlink、symlink 目标损坏）或指向的进程已死，
+ * requestSingleInstanceLock() 会因「File exists + 无法解析 pid」直接返回 false，
+ * 主进程随即 app.quit()，表现为「双击图标打不开、窗口一闪而过」。
+ * 修复：加锁前先探测 SingletonLock，只有确认「锁指向的进程确实还活着」才保留，
+ * 否则删除坏锁，让 requestSingleInstanceLock() 能正常重建。
+ */
+function clearStaleSingletonLock() {
+  try {
+    const lockPath = path.join(app.getPath('userData'), 'SingletonLock');
+    const st = fs.lstatSync(lockPath);
+    let alive = false;
+    if (st.isSymbolicLink()) {
+      const target = fs.readlinkSync(lockPath);
+      const m = /(\d+)$/.exec(target || '');
+      if (m) {
+        const pid = Number(m[1]);
+        try { process.kill(pid, 0); alive = true; } catch (e) { alive = false; }
+      }
+    }
+    if (!alive) fs.unlinkSync(lockPath);
+  } catch (e) { /* 锁不存在或无法访问，无需清理 */ }
+}
+clearStaleSingletonLock();
+
 /* ---------------- 单实例锁：避免重复启动产生多个主窗口（Dock 出现多个相同图标） ---------------- */
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
