@@ -1312,6 +1312,7 @@ const BG_TOOLS = [
   { type: 'function', function: { name: 'fs_read', description: '读取文件内容：txt/md 等文本直接读；docx/doc/rtf/odt 自动提取正文；其他二进制会报错提示', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'fs_search', description: '按文件名搜索文件', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, root: { type: 'string', description: '搜索根目录，默认主目录' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'fs_write', description: '写入文本文件（覆盖前自动备份，仅主目录内）', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
+  { type: 'function', function: { name: 'fs_edit', description: '替换文件中的一段文字（原文须唯一）。Word .docx/.doc 也能直接改（自动用 python-docx 精确替换并备份）', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' }, old: { type: 'string', description: '要替换的原文' }, new: { type: 'string', description: '替换成的新文' } }, required: ['path', 'old', 'new'] } } },
   { type: 'function', function: { name: 'web_search', description: '联网搜索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'web_fetch', description: '抓取网页正文', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'kb_search', description: '在本地知识库（Obsidian/Notion 索引）里检索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
@@ -1362,6 +1363,7 @@ async function executeBgTool(name, argsStr) {
       case 'fs_read': return toolFsRead(args);
       case 'fs_search': return await toolFsSearch(args);
       case 'fs_write': return toolFsWrite(args);
+      case 'fs_edit': return toolFsEdit(args);
       case 'kb_search': return kbEngine.search(String(args.query || ''), 5);
       case 'web_search': return await bgWebSearch(String(args.query || ''));
       case 'web_fetch': return await bgWebFetch(String(args.url || ''));
@@ -2904,6 +2906,16 @@ function toolFsAppend(payload) {
     return { ok: true, path: target, appended: content.length };
   } catch (e) { return { ok: false, error: '追加失败：' + String(e && e.message || e) }; }
 }
+function docEditFindReplace(target, oldStr, newStr) {
+  const script = path.join(__dirname, 'scripts', 'doc_edit.py');
+  if (!fs.existsSync(script)) return { ok: false, error: '缺少 docx 编辑脚本 scripts/doc_edit.py' };
+  try {
+    const out = execFileSync('python3', [script, JSON.stringify({ path: target, old: oldStr, new: newStr })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    return JSON.parse(out);
+  } catch (e) {
+    return { ok: false, error: 'docx 编辑失败：' + String(e && e.message || e) };
+  }
+}
 function toolFsEdit(payload) {
   const target = path.resolve(String((payload && payload.path) || ''));
   const oldStr = String((payload && payload.old) == null ? '' : payload.old);
@@ -2911,6 +2923,9 @@ function toolFsEdit(payload) {
   if (!target) return { ok: false, error: '路径为空' };
   if (!isSafeWritePath(target)) return { ok: false, error: '拒绝修改该位置（仅允许主目录内的普通文件/目录）' };
   if (!oldStr) return { ok: false, error: '要替换的原文（old）不能为空' };
+  // Word 文件（.docx/.doc）：二进制，交给 python-docx 做精确查找替换，研究助手即可「直接改 Word」
+  const ext = path.extname(target).toLowerCase();
+  if (ext === '.docx' || ext === '.doc') return docEditFindReplace(target, oldStr, newStr);
   try {
     if (!fs.existsSync(target)) return { ok: false, error: '文件不存在：' + target };
     const orig = fs.readFileSync(target, 'utf8');

@@ -182,8 +182,12 @@
   .msg.assistant .bubble th { background: var(--accent-soft); font-weight: 600; }
   .msg.assistant .bubble hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
   .msg.assistant .bubble a { color: var(--accent-2); text-decoration: underline; }
-  .msg.assistant .bubble .mermaid { margin: 10px 0; text-align: center; overflow-x: auto; }
-  .msg.assistant .bubble .mermaid svg { max-width: 100%; height: auto; }
+  .msg.assistant .bubble .mermaid { margin: 12px 0; text-align: center; overflow-x: auto; }
+  .msg.assistant .bubble .mermaid svg { max-width: 100%; height: auto; overflow: visible; }
+  /* Mermaid 中文标签用 foreignObject 渲染，对 CJK 换行高度测量常偏小导致文字被节点边框裁掉；
+     强制让 foreignObject 内容不被裁剪，保证长中文标签完整显示 */
+  .msg.assistant .bubble .mermaid svg foreignObject { overflow: visible; }
+  .msg.assistant .bubble .mermaid svg .nodeLabel, .msg.assistant .bubble .mermaid svg .edgeLabel { line-height: 1.4; }
   .msg.assistant .bubble .mmd-err { color: var(--danger); font-size: 12px; }
   .msg.assistant .bubble .mmd-fallback { margin: 10px 0; }
   .msg.assistant .bubble .mmd-fallback summary { cursor: pointer; color: var(--ink-faint); font-size: 12px; }
@@ -472,7 +476,7 @@
     marked.setOptions({ gfm: true, breaks: true });
   }
   if (typeof mermaid !== 'undefined') {
-    try { mermaid.initialize({ startOnLoad: false, theme: 'base', securityLevel: 'loose', flowchart: { htmlLabels: true, useMaxWidth: false, wrappingWidth: 180, nodeSpacing: 40, rankSpacing: 40, padding: 10 } }); } catch (e) {}
+    try { mermaid.initialize({ startOnLoad: false, theme: 'base', securityLevel: 'loose', themeVariables: { nodePadding: 14, fontSize: '14px', lineHeight: '1.5' }, flowchart: { htmlLabels: true, useMaxWidth: true, wrappingWidth: 200, nodeSpacing: 45, rankSpacing: 50, padding: 12 } }); } catch (e) {}
   }
   var __mmdSeq = 0;
   var __mmdMap = {};
@@ -1080,7 +1084,7 @@
       tools.push('fs_read：读取文件内容，参数 {"path":"/绝对路径"}。txt/md 等文本直接读；docx/doc/rtf/odt 会自动提取正文（可读 Word 原文）；pdf/pptx 等二进制读不了正文');
       tools.push('fs_write：写入/覆盖文件，参数 {"path":"/绝对路径","content":"完整内容"}（覆盖前自动备份原文件）');
       tools.push('fs_append：向文件末尾追加内容，参数 {"path":"/绝对路径","content":"内容"}');
-      tools.push('fs_edit：替换文件中的一段文字，参数 {"path":"/绝对路径","old":"原文","new":"新文"}（原文须唯一）');
+      tools.push('fs_edit：替换文件中的一段文字，参数 {"path":"/绝对路径","old":"原文","new":"新文"}（原文须唯一；Word .docx/.doc 也能直接改，会自动备份）');
       tools.push('fs_move：移动/重命名，参数 {"from":"/原路径","to":"/新路径"}');
       tools.push('fs_delete：删除到废纸篓（非物理删除），参数 {"path":"/绝对路径"}');
     }
@@ -1116,7 +1120,7 @@
       fn('fs_read', '读取文件内容（txt/md 直读；docx/doc/rtf/odt 自动提取正文；pdf/pptx 读不了）', { path: { type: 'string', description: '绝对路径' } });
       fn('fs_write', '写入/覆盖文件（覆盖前自动备份原文件）', { path: { type: 'string', description: '绝对路径' }, content: { type: 'string', description: '完整内容' } });
       fn('fs_append', '向文件末尾追加内容', { path: { type: 'string' }, content: { type: 'string' } });
-      fn('fs_edit', '替换文件中的一段文字（原文须唯一）', { path: { type: 'string' }, old: { type: 'string', description: '原文' }, new: { type: 'string', description: '新文' } });
+      fn('fs_edit', '替换文件中的一段文字（原文须唯一；Word .docx/.doc 也能直接改）', { path: { type: 'string' }, old: { type: 'string', description: '原文' }, new: { type: 'string', description: '新文' } });
       fn('fs_move', '移动/重命名', { from: { type: 'string' }, to: { type: 'string' } });
       fn('fs_delete', '删除到废纸篓（非物理删除）', { path: { type: 'string' } });
     }
