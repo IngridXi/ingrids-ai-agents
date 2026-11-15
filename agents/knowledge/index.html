@@ -139,17 +139,17 @@
     <div class="main" id="main">
       <!-- 概览 -->
       <section id="tab-overview">
-        <div class="page-head"><h2>概览与检索</h2><div class="desc">三个来源（Zotero / Obsidian / Notion）统一查看，跨库全文检索。</div></div>
+        <div class="page-head"><h2>概览与检索</h2><div class="desc">知识来源（Zotero / Obsidian / Notion / 参考库）统一查看，跨库全文检索。</div></div>
         <div class="panel">
           <div class="p-title">🔍 跨库搜索</div>
           <div class="row">
-            <input type="text" id="kbQuery" placeholder="搜索：文献 / 笔记 / Notion 页面…">
+            <input type="text" id="kbQuery" placeholder="搜索：文献 / 笔记 / Notion 页面 / 参考库 PPT…">
             <button class="btn" id="kbSearchBtn">搜索</button>
           </div>
           <div class="out kb-res" id="kbRes"></div>
         </div>
         <div class="panel">
-          <div class="p-title">📚 三个来源</div>
+          <div class="p-title">📚 知识来源</div>
           <div id="kbSources"><div class="hint">检测中…</div></div>
         </div>
       </section>
@@ -295,6 +295,13 @@
         '已连接', '未连接',
         nt.configured ? '已建立本地索引，页面正文可全文检索；token 加密存本机' : '需在 notion.so/my-integrations 建集成，复制 token 后到「Notion」页配置',
         []);
+      var refs = sources.filter(function (s) { return s.type === 'reference'; });
+      refs.forEach(function (r) {
+        html += srcCard('🎨', r.label || '参考库', !!r.path,
+          '已加入参考库（格式 + 内容）', '未配置',
+          r.path ? '<code>' + esc(r.path) + '</code>' : '',
+          [{ kind: 'ref:' + r.id, label: '打开文件夹' }]);
+      });
       var box = el('kbSources');
       box.innerHTML = html;
       box.querySelectorAll('[data-kind]').forEach(function (b) {
@@ -344,7 +351,7 @@
           html += '</div>';
         });
       });
-      box.innerHTML = total ? html : '<div>没有找到相关内容。若 Notion 未配 token，此处只搜本地知识库（Zotero + Obsidian）。</div>';
+      box.innerHTML = total ? html : '<div>没有找到相关内容。若 Notion 未配 token，此处只搜本地知识库（Zotero + Obsidian + 参考库）。</div>';
     });
   }
   el('kbSearchBtn').addEventListener('click', function () { var q = el('kbQuery').value.trim(); if (q) doSearch(q); });

@@ -2681,6 +2681,14 @@ ipcMain.handle('kb:open', async (_e, kind) => {
       if (!vaults.length) return { ok: false, error: '未检测到 Obsidian 库' };
       await shell.openPath(vaults[0]); return { ok: true };
     }
+    if (kind.indexOf('ref:') === 0) {
+      const id = kind.slice(4);
+      const cfg = kbEngine.loadConfig();
+      const src = (cfg.sources || []).find((s) => s.id === id);
+      if (!src || !src.path) return { ok: false, error: '未找到该参考库' };
+      if (!fs.existsSync(src.path)) return { ok: false, error: '参考库文件夹不存在：' + src.path };
+      await shell.openPath(src.path); return { ok: true };
+    }
     return { ok: false, error: '未知来源：' + kind };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
