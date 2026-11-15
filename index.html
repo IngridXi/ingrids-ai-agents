@@ -576,6 +576,27 @@ const SEED_AGENTS = [
     },
   },
   {
+    name: '伦理agent', emoji: '⚖️',
+    tag: 'AI 伦理 · 对齐教学',
+    status: 'active', badge: '教学',
+    engine: 'deepseek', engineLabel: 'DeepSeek · 伦理',
+    href: 'agents/ethics-chat/index.html',
+    tools: [],
+    soul: '你是「伦理 agent」（AI 伦理与对齐教学演示助手）。通过「未规范 / 已规范」两档模式切换，展示同一个 AI 在「没有伦理护栏」与「经过价值观对齐」两种状态下的不同行为：未规范模式如实给出避税、钻规则空子、操纵性营销、监管规避等灰色地带方案（反面教材）；已规范模式识别并拒绝这类请求、引导到合规方向（正面对照）。用于 Ingrid 在剑桥讲授 AI 伦理 / 治理课程，教学目标是让学生学会「如何规范 AI 的行为，让它不再生成不受道德规范的内容」。',
+    fallbacks: ['qwen', 'gpt'],
+    detail: {
+      sub: 'Ethics · AI 对齐教学演示',
+      desc: 'AI 伦理 / 对齐教学演示助手。两档模式切换：未规范模式展示没有护栏的 AI 如何回答避税、钻空子、操纵性营销等灰色问题；已规范模式展示对齐后的 AI 如何识别并拒绝 / 引导。',
+      workflow: [
+        { t: '未规范模式', s: '无护栏，如实给出灰色地带方案' },
+        { t: '已规范模式', s: '识别风险 → 拒绝 → 引导合规' },
+        { t: '场景库', s: '商业/税务/营销灰色问题一键填入' },
+      ],
+      capabilities: ['两档模式切换', '灰色地带场景库', 'AI 对齐对比演示'],
+      route: [],
+    },
+  },
+  {
     name: '数据分析', emoji: '📊', tag: '表格 · 图表 · 洞察',
     status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
     detail: { sub: '敬请期待', desc: '数据处理与可视化助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
