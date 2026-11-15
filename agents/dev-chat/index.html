@@ -346,6 +346,14 @@
     width: 100%; box-sizing: border-box; padding: 7px 10px; margin-bottom: 11px;
     border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: var(--ink); background: var(--card);
   }
+  /* 逆向工具快捷面板 */
+  .bin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 10px 0 6px; }
+  .bin-grid .kb-btn { width: 100%; }
+  .bin-patch-row { display: flex; gap: 6px; margin: 6px 0 10px; }
+  .bin-patch-row .kb-input { flex: 1; min-width: 0; margin-bottom: 0; }
+  .bin-patch-row .kb-btn { flex: none; white-space: nowrap; }
+  .bin-result-head { font-size: 12px; font-weight: 600; color: var(--accent-2); margin-bottom: 6px; }
+  .bin-result { font-family: "SF Mono", "Menlo", "Monaco", monospace; font-size: 11.5px; line-height: 1.5; background: #f4f2f9; border: 1px solid var(--line); border-radius: 8px; padding: 10px; white-space: pre-wrap; word-break: break-all; max-height: 420px; overflow: auto; color: var(--ink); }
   .kb-ref { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 11px; }
   .kb-ref-head { font-size: 12.5px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
   .kb-ref-sources { margin-bottom: 8px; }
@@ -404,6 +412,8 @@
     <span id="modelHint" title=""></span>
   </div>
   <div class="toolbar">
+    <button class="clear-btn" id="binBtn" title="逆向工具：识别类型 / 字符串 / 符号表 / 反汇编 / 依赖库 / 十六进制 / pyc反编译 / 字节补丁，填入路径点击即用">🛠️ 逆向工具</button>
+    <span class="tb-sep"></span>
     <button class="clear-btn" id="kbBtn" title="本地知识库">知识库 <span class="kb-badge" id="kbBadge" style="display:none"></span></button>
     <button class="clear-btn" id="webBtn" title="联网搜索（提问时自动检索实时信息，研究助手默认关以保持「只依据证据」）">联网</button>
     <button class="clear-btn" id="reviewBtn" title="产出→审稿→返修，对抗式闭环">审稿闭环</button>
@@ -442,6 +452,27 @@
   <div class="kb-row">生成一份 8~14 页的学术演示文稿（组会汇报 / 学术会议 / 论文答辩），直接产出 .pptx 文件。</div>
   <div class="kb-actions">
     <button class="kb-btn" id="slidesGoBtn">生成演示文稿</button>
+  </div>
+</div>
+
+<div class="kb-panel" id="binPanel" hidden>
+  <div class="kb-title">🛠️ 逆向工具 · 点击即用</div>
+  <input class="kb-input" id="binPath" type="text" placeholder="粘贴文件路径，如 /Users/you/软件.app 或 /path/to/x.pyc">
+  <div class="kb-hint">填入二进制 / 脚本路径后，点下面任意按钮直接执行，结果会输出到对话里（供后续继续分析）。</div>
+  <div class="bin-grid">
+    <button class="kb-btn" data-bin="info">识别类型</button>
+    <button class="kb-btn" data-bin="strings">字符串</button>
+    <button class="kb-btn" data-bin="symbols">符号表</button>
+    <button class="kb-btn" data-bin="disasm">反汇编</button>
+    <button class="kb-btn" data-bin="deps">依赖库</button>
+    <button class="kb-btn" data-bin="hex">十六进制</button>
+    <button class="kb-btn" data-bin="pyc">pyc 反编译</button>
+  </div>
+  <div class="kb-row" style="margin-top:10px"><span class="kb-hint" style="font-weight:600">🔧 字节级补丁（自动备份原文件）</span></div>
+  <div class="bin-patch-row">
+    <input class="kb-input" id="binPatchOffset" type="text" placeholder="偏移 offset">
+    <input class="kb-input" id="binPatchBytes" type="text" placeholder="字节 hex，如 90 90">
+    <button class="kb-btn" id="binPatchGo">打补丁</button>
   </div>
 </div>
 
@@ -2300,6 +2331,69 @@
     }).catch(function (e) { alert('导出失败：' + String(e && e.message || e)); });
   }
   el('mdBtn').addEventListener('click', exportMarkdown);
+
+  // 逆向工具：填入路径点击即用（结果输出到对话，供后续继续分析）
+  el('binBtn').addEventListener('click', function () {
+    var p = el('binPanel');
+    p.hidden = !p.hidden;
+    if (!p.hidden) { el('kbPanel').hidden = true; el('slidesPanel').hidden = true; el('binPath').focus(); }
+  });
+  var BIN_QUICK = {
+    info: { name: 'bin_info', label: '识别类型' },
+    strings: { name: 'bin_strings', label: '字符串' },
+    symbols: { name: 'bin_symbols', label: '符号表' },
+    disasm: { name: 'bin_disasm', label: '反汇编' },
+    deps: { name: 'bin_deps', label: '依赖库' },
+    hex: { name: 'bin_hex', label: '十六进制', args: { offset: 0, length: 256 } },
+    pyc: { name: 'py_decompile', label: 'pyc 反编译' }
+  };
+  function renderBinResult(bubble, label, r) {
+    var text = '';
+    if (r && r.error) text = '⚠ ' + r.error;
+    else if (r && r.output != null) text = r.output;
+    else if (r && r.file) text = '类型：' + r.file + '\n架构：' + r.arch + '\n签名：' + r.codesign;
+    else if (typeof r === 'string') text = r;
+    else text = JSON.stringify(r, null, 2);
+    if (text.length > 6000) text = text.slice(0, 6000) + '\n\n…（输出过长，已截断前 6000 字）';
+    var ok = !(r && r.error);
+    bubble.innerHTML = '<div class="bin-result-head">' + (ok ? '✅' : '⚠️') + ' ' + esc(label) + '</div><pre class="bin-result">' + esc(text) + '</pre>';
+    messages.scrollTop = messages.scrollHeight;
+  }
+  function binQuick(key) {
+    var path = el('binPath').value.trim();
+    if (!path) { alert('请先粘贴文件路径'); return; }
+    var spec = BIN_QUICK[key];
+    var args = { path: path };
+    if (spec.args) { for (var k in spec.args) args[k] = spec.args[k]; }
+    var caps = agentCapabilities();
+    addBubble('user', '🛠️ ' + spec.label + '：' + esc(path));
+    var bubble = addBubble('assistant', '<div class="status-line">正在' + spec.label + '…<span class="dots"><i></i><i></i><i></i></span></div>');
+    Promise.resolve(executeTool({ name: spec.name, args: args }, caps)).then(function (r) {
+      renderBinResult(bubble, spec.label, r);
+    }).catch(function (e) {
+      bubble.innerHTML = '执行失败：' + esc(String(e && e.message || e));
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.bin-grid [data-bin]'), function (btn) {
+    btn.addEventListener('click', function () { binQuick(btn.getAttribute('data-bin')); });
+  });
+  el('binPatchGo').addEventListener('click', function () {
+    var path = el('binPath').value.trim();
+    var off = el('binPatchOffset').value.trim();
+    var bytes = el('binPatchBytes').value.trim();
+    if (!path) { alert('请先粘贴文件路径'); return; }
+    if (!off || !bytes) { alert('请填写补丁偏移 offset 和字节 hex（如 90 90）'); return; }
+    var offNum = parseInt(off, 10);
+    if (isNaN(offNum) || offNum < 0) { alert('偏移必须是数字'); return; }
+    addBubble('user', '🔧 字节补丁：' + esc(path) + ' @' + esc(off) + ' ← ' + esc(bytes));
+    var bubble = addBubble('assistant', '<div class="status-line">正在打补丁…<span class="dots"><i></i><i></i><i></i></span></div>');
+    var caps = agentCapabilities();
+    Promise.resolve(executeTool({ name: 'bin_patch', args: { path: path, offset: offNum, bytes: bytes } }, caps)).then(function (r) {
+      renderBinResult(bubble, '字节补丁', r);
+    }).catch(function (e) {
+      bubble.innerHTML = '执行失败：' + esc(String(e && e.message || e));
+    });
+  });
 
   // 学术 PPT：把当前研究/主题生成一份结构化演示文稿（.pptx）
   el('slidesBtn').addEventListener('click', function () {
