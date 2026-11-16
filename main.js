@@ -1927,7 +1927,7 @@ ipcMain.handle('chat:start', (e, payload) => {
 
 const BG_TOOLS = [
   { type: 'function', function: { name: 'fs_list', description: '列出目录内容（文件名、是否目录、大小）', parameters: { type: 'object', properties: { dir: { type: 'string', description: '目录绝对路径，默认主目录' } } } } },
-  { type: 'function', function: { name: 'fs_read', description: '读取文件内容（原文）：txt/md 等文本直接读；docx/doc/rtf/odt 自动提取正文；pdf 自动提取全文；pptx 自动提取每页幻灯片文本；旧版 .ppt 二进制需先转 .pptx', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'fs_read', description: '读取文件内容（原文）：txt/md 等文本直接读；docx/doc/rtf/odt 自动提取正文；pdf 自动提取全文；pptx 自动提取每页幻灯片文本；旧版 .ppt 二进制需先转 .pptx。长文件可用 offset/limit 分段读取，避免一次读全文撑爆上下文。', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' }, offset: { type: 'integer', description: '可选，起始字符位置（从 0 起），用于分段读取长文件后续部分' }, limit: { type: 'integer', description: '可选，最多读取的字符数' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'fs_search', description: '按文件名搜索文件', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, root: { type: 'string', description: '搜索根目录，默认主目录' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'fs_write', description: '写入文本文件（覆盖前自动备份，仅主目录内）', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
   { type: 'function', function: { name: 'fs_edit', description: '替换文件中的一段文字（原文须唯一）。Word .docx/.doc 也能直接改（自动用 python-docx 精确替换并备份）', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' }, old: { type: 'string', description: '要替换的原文' }, new: { type: 'string', description: '替换成的新文' } }, required: ['path', 'old', 'new'] } } },
@@ -3919,7 +3919,24 @@ function toolPptxRead(target, st) {
   }
 }
 
+// fs_read 支持可选分段读取：offset=起始字符(从0起)、limit=最多字符数。长文件一次读全会撑爆上下文，
+// 模型应先读开头、需要时再用 offset/limit 定向读后续（对应社区 spill/预览+检索路径 的上下文治理范式）。
 function toolFsRead(payload) {
+  const off = Number((payload && payload.offset) || 0);
+  const lim = Number((payload && payload.limit) || 0);
+  const r = toolFsReadRaw(payload);
+  if (r && r.ok && typeof r.content === 'string') {
+    const total = r.content.length;
+    r.totalChars = total;
+    if (off > 0 || lim > 0) {
+      const sliced = (lim > 0) ? r.content.slice(off, off + lim) : r.content.slice(off);
+      r.content = sliced;
+      r.offset = off; r.limit = lim;
+    }
+  }
+  return r;
+}
+function toolFsReadRaw(payload) {
   const target = path.resolve(String((payload && payload.path) || ''));
   if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在：' + String((payload && payload.path) || '') };
   let st; try { st = fs.statSync(target); } catch { return { ok: false, error: '无法访问：' + String((payload && payload.path) || '') }; }
