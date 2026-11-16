@@ -417,7 +417,7 @@
     }
   }
 
-  var SOUL_FALLBACK = '你是通用助手（Assistant），Ingrid 的日常主力之一。擅长：日常问答、信息检索与总结、内容创作、文档整理。回答清晰、结构化、直接有用；能给出可执行的建议。需要时可把内容整理成 Word/PPT/Excel 大纲。不确定时如实说明，不编造事实。';
+  var SOUL_FALLBACK = '你是通用助手（Assistant），Ingrid 的日常主力之一。擅长：日常问答、信息检索与总结、内容创作、文档整理。回答清晰、结构化、直接有用；能给出可执行的建议。需要时可把内容直接生成 Word/PPT/Excel 文档（用 doc_generate 工具，PPT 默认分板块 + 智能图形版式，套模板用 pptx_fill_template，图片处理用 image_process、文生图用 image_generate）。不确定时如实说明，不编造事实。';
   var soul = SOUL_FALLBACK;
   var systemPrompt = soul;
   var liveTaskGoal = '';   // 实时监事：当前任务核心目标（本轮用户输入），防目标漂移
@@ -884,6 +884,10 @@
       tools.push('db_zotero_collection：把文献归档到集合（文件夹），参数 {"itemKeys":["key1","key2"],"collectionName":"集合名"}（集合不存在会自动新建）');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
+    tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片 + 智能图形版式 + 剑桥学术配色）。slides 每页可含 title/subtitle/layout/bullets/charts/table/image/notes/blocks；layout 取值 title标题/section章节/content正文/twoCol双栏/blank空白/cards卡片/flow流程/pyramid金字塔/compare对比；blocks 是「板块」数组 [{title,points:[...]}]，有 blocks 时按板块数量自动匹配智能图形版式（2块左右分栏、3块三栏、4块2×2矩阵、更多则网格；配合 flow/pyramid/compare 做流程/金字塔/对比），把文字嵌进图形而非罗列；顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
+    tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}。内置工具，机器已装好依赖，直接调用即可，勿用 shell 手动 pip install');
+    tools.push('image_process：本地图片处理（图片不出本机）。参数 {"action":"remove_bg|resize|convert|info","input":"图片绝对路径","output":"输出路径","width":800,"height":600}。remove_bg 用 rembg 抠图去背景输出透明 PNG（首次会下载 u2net 模型）；resize 缩放；convert 转格式；info 查尺寸');
+    tools.push('image_generate：文生图（通义万相，云端，需已配「Qwen/通义」DashScope Key）。参数 {"prompt":"画面描述(中文效果好)","size":"1024*1024|1280*720|720*1280","n":1,"negative_prompt":"不要出现的元素(可选)"}。生成后自动下载保存到「下载」目录并返回图片绝对路径');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
@@ -919,6 +923,10 @@
       fn('db_zotero_collection', '把文献归档到集合', { itemKeys: { type: 'array', items: { type: 'string' } }, collectionName: { type: 'string' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
+    fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表/表格/图片 + 智能图形版式 + 剑桥学术配色）。slides 每页 {title, subtitle, layout, bullets, blocks, charts, table, image, notes}；layout 取 title/section/content/twoCol/blank/cards/flow/pyramid/compare；blocks 为板块数组 [{title, points:[...]}]，有 blocks 时按数量自动匹配智能图形版式（左右分栏/三栏/2×2矩阵/网格/流程/金字塔/对比），文字嵌进图形而非罗列。type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank/cards/flow/pyramid/compare), bullets:[字符串或{text,sub:[...]}], blocks:[{title,points:[...]}]（板块数组，按数量自动匹配智能图形版式）, charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
+    fn('pptx_fill_template', '把内容套进已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 查看模板每页形状名与占位符，再 action=fill 填空', { action: { type: 'string', description: 'inspect（查看模板结构）或 fill（填空，默认）' }, template: { type: 'string', description: '模板 .pptx 绝对路径' }, output: { type: 'string', description: '输出 .pptx 路径（可选，默认另存为 *_filled_*.pptx）' }, replacements: { type: 'object', description: '全局文本替换 {"{{占位符}}":"新文字"}' }, byName: { type: 'array', description: '按形状名填空 [{name,text}]' } });
+    fn('image_process', '本地图片处理（rembg 抠图去背景 / 缩放 / 格式转换 / 信息查询，图片不出本机）', { action: { type: 'string', description: 'remove_bg / resize / convert / info' }, input: { type: 'string', description: '输入图片绝对路径' }, output: { type: 'string', description: '输出路径（可选）' }, width: { type: 'integer', description: 'resize 目标宽（可选）' }, height: { type: 'integer', description: 'resize 目标高（可选）' } });
+    fn('image_generate', '文生图（通义万相，云端调用，需已配「Qwen/通义」DashScope Key）。生成图片并保存到「下载」目录，返回本地路径', { prompt: { type: 'string', description: '画面描述，中文效果好' }, size: { type: 'string', description: '1024*1024 / 1280*720 / 720*1280（默认 1024*1024）' }, n: { type: 'integer', description: '生成张数 1-4（默认 1）' }, negative_prompt: { type: 'string', description: '负面提示词：不要出现的元素（可选）' } });
     return defs;
   }
   function parseToolArgs(s) {
@@ -939,6 +947,10 @@
     if (n === 'db_obsidian_report' && caps.db) return window.ingrid.toolDbObsidianReport();
     if (n === 'db_zotero_report' && caps.db) return window.ingrid.toolDbZoteroReport();
     if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
+    if (n === 'doc_generate') return window.ingrid.docGenerate(call.args);
+    if (n === 'pptx_fill_template') return window.ingrid.toolPptxFill(call.args);
+    if (n === 'image_process') return window.ingrid.toolImageProcess(call.args);
+    if (n === 'image_generate') return window.ingrid.toolImageGenerate(call.args);
     // 写类操作：先请求用户审批，批准后执行
     if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
       return requestWriteApproval(n, call.args).then(function (ok) {
@@ -1054,6 +1066,10 @@
         body = _np.join('\n\n') || JSON.stringify(res);
       }
       else if (call.name === 'computer') body = res.summary;
+      else if (call.name === 'doc_generate') body = (res && res.ok) ? ('已生成文档：' + res.name + '（' + res.path + '）') : ('生成失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'pptx_fill_template') body = (res && res.ok) ? (res.action === 'inspect' ? ('模板结构：\n' + JSON.stringify(res.pages, null, 2)) : ('已套模板：' + res.output + '（替换 ' + res.replaced + ' 处）')) : ('套模板失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'image_process') body = (res && res.ok) ? ('图片处理完成：' + (res.output || res.path) + (res.width ? '（' + res.width + '×' + res.height + '）' : '')) : ('图片处理失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'image_generate') body = (res && res.ok) ? ('已生成图片：' + (res.path || res.name) + (res.size ? '（' + Math.round(res.size / 1024) + ' KB）' : '')) : ('文生图失败：' + ((res && res.error) || '未知错误'));
       else body = JSON.stringify(res);
     } else {
       body = '工具执行失败：' + ((res && res.error) ? res.error : '未知错误');
@@ -1098,6 +1114,7 @@
     }
     s += '\n\n【输出格式】用 Markdown 排版：标题用 # / ##，重点加粗，善用列表、表格、引用；需要展示关系、流程或数据对比时，用 ```mermaid 代码块输出图表（flowchart 流程图、sequenceDiagram 时序图、pie 饼图、xychart-beta 柱状/折线图），不要用纯文字描述本可图示的内容。';
     s += '\n\n【Mermaid 语法规范 · 生成图表必须逐条遵守，否则图表会渲染失败或文字被截断】① 节点标签一律用英文双引号包裹，中文写进引号里，如 A["新瓶旧酒"]、R1["实证失守"]；② 标签内严禁出现 | 竖线、<> 尖括号、{} 花括号、() 圆括号这些 mermaid 保留字符，需要分隔改用 、或空格；③ 节点标签里的长中文必须用 <br/> 手动换行，每行不超过 10 个中文字（例：A["Zaki 对外口径<br/>agentic · seamless"]），不要依赖系统自动换行，否则中文会溢出、被节点边框截断；④ 箭头只用标准写法 -->、-->|文字|、==>、-.->、---，严禁 -->>、<<--、-->> 这类非法写法；⑤ 节点 id 只用简短英文/数字（A、B、R1、R2），中文一律放引号标签里。';
+    s += '\n\n【PPT 制作规范 · 默认规则，用户不说也要照做】用户要「做 PPT / 汇报 / 答辩 / 路演 / 演示」时，用 doc_generate 生成 pptx。默认做法（无需用户提醒）：① 内容一律「分板块 + 智能图形版式」，用 blocks 板块数组把内容拆成并列块/顺序步骤/层级/对照，渲染器会按板块数量自动匹配智能图形（2 块左右分栏、3 块三栏卡片、4 块 2×2 矩阵、更多自动网格；配合 layout 做 flow 横向流程箭头、pyramid 金字塔、compare 左右对比），文字写进每个板块的 title+points，绝不把文字直接罗列成 bullet 列表——这是硬性默认，用户没说「分板块」也要这么做；② 只有单个要点、没有并列/层级结构时才用 bullets 兜底；③ 默认 theme=academic（剑桥学术风），用户指定参考风格就沿用；④ 有数据、趋势、对比、占比的内容必须用 charts 原生图表（bar/line/pie/doughnut/area/radar），结构对照/清单用 table；⑤ 每页只讲一个核心结论，标题是结论不是名词；首尾用 title 标题页、每个大段开头用 section 章节页；⑥ 每个板块 points 写一句短句，论述细节写进 notes（演讲者备注），不堆在页面上。生成前先想「这一页拆成几个板块、用哪种智能图形」：能分块就分块、能上图不上表、能上表不堆字。';
     return s;
   }
 
