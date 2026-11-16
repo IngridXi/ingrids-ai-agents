@@ -116,6 +116,8 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
       <div class="metric"><div class="k">方法论经验</div><div class="v" id="mMethod" style="color:var(--purple)">—</div></div>
       <div class="metric"><div class="k">结论事故</div><div class="v" id="mConclusion" style="color:var(--teal)">—</div></div>
       <div class="metric"><div class="k">治理发现（重叠/孤儿/空壳）</div><div class="v" id="mGov" style="color:var(--dim)">—</div></div>
+      <div class="metric"><div class="k">情绪信号</div><div class="v" id="mSignal" style="color:var(--gold)">—</div></div>
+      <div class="metric"><div class="k">偏好规则（保持/避免）</div><div class="v" id="mPref" style="color:var(--accent)">—</div></div>
     </div>
     <div class="pipeline">
       <div class="step"><div class="n">① 发现</div><div class="s">调度中枢 + 各 Agent 执行</div></div>
@@ -174,6 +176,22 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
     </section>
   </div>
 
+  <!-- 情绪 / 偏好 -->
+  <section class="panel">
+    <h2>情绪 / 偏好 Agent <span class="tag">越用越贴合你的偏好</span></h2>
+    <p class="hint">侦测你对各 agent 的评价与情绪，学习「该多做 / 该避免」，沉淀成偏好规则：① 自动注入各 chat agent 的提示词指导后续操作；② 新偏好自动提交经验沉淀官（待审批，人工在环不变）。</p>
+    <div class="tabs">
+      <button id="tabDo" class="on">保持 / 多做</button>
+      <button id="tabAvoid">避免 / 少做</button>
+      <button id="tabSignals">最近情绪信号</button>
+    </div>
+    <div id="sentimentBox"></div>
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+      <button class="primary" id="runDistill">立即提炼一次</button>
+      <span class="hint" id="distillMsg"></span>
+    </div>
+  </section>
+
   <!-- 检索复用 -->
   <section class="panel">
     <h2>检索复用 <span class="tag">新问题先查历史经验</span></h2>
@@ -209,6 +227,15 @@ async function loadOverview() {
     $('#mPending').textContent = r.pending_approval ?? '—';
     $('#mMethod').textContent = r.library_methodology ?? '—';
     $('#mConclusion').textContent = r.library_conclusion ?? '—';
+
+    // 情绪/偏好 Agent 概览
+    try {
+      if (API.sentimentReport) {
+        const sr = await API.sentimentReport();
+        $('#mSignal').textContent = sr.signal_count ?? '—';
+        $('#mPref').textContent = (sr.preference_do ?? 0) + '/' + (sr.preference_avoid ?? 0);
+      }
+    } catch (e) {}
   } catch (e) {
     $('#mAgents').textContent = '—'; $('#mPending').textContent = '—';
     $('#mMethod').textContent = '—'; $('#mConclusion').textContent = '—';
@@ -262,6 +289,40 @@ async function loadLibrary() {
         '<div class="row">' + esc(e.insight || '') + '</div>' +
         (e.verification ? '<div class="verif">✓ 验证步骤：' + esc(e.verification) + '</div>' : '') +
         (e.tags ? '<div class="tags">标签：' + esc(e.tags) + '</div>' : '') +
+        '</div>';
+    }).join('');
+  } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+
+/* ---------------- 情绪 / 偏好 Agent ---------------- */
+let sentiTab = 'do';
+const VAL_LABEL = { positive: '👍 积极', negative: '👎 消极', neutral: '中性' };
+async function loadSentiment() {
+  const box = $('#sentimentBox');
+  if (!API.sentimentReport) { box.innerHTML = '<div class="empty">—</div>'; return; }
+  try {
+    const prefs = await API.sentimentPreferences();
+    const signals = await API.sentimentSignals(30);
+    if (sentiTab === 'signals') {
+      if (!signals.length) { box.innerHTML = '<div class="empty">还没有情绪/评价信号。在聊天里点 👍/👎，或说「很好」「太啰嗦」等，就会在这里积累。</div>'; return; }
+      box.innerHTML = signals.map(s => {
+        const vc = s.valence === 'positive' ? 'methodology' : (s.valence === 'negative' ? 'conclusion' : 'uncertain');
+        return '<div class="lib-item"><div class="head"><span class="cat ' + vc + '">' + (VAL_LABEL[s.valence] || s.valence) + '</span>' +
+          '<span class="title">' + esc(s.agent) + ' · ' + esc(s.scenario || '其他') + '</span>' +
+          '<span class="badge-mini">' + (s.source === 'feedback' ? '点赞点踩' : '自动侦测') + '</span></div>' +
+          '<div class="row">' + esc(s.text || '') + '</div>' +
+          '<div class="tags">' + esc((s.created || '').slice(0, 16).replace('T', ' ')) + '</div></div>';
+      }).join('');
+      return;
+    }
+    const dir = sentiTab;
+    const list = prefs.filter(p => p.direction === dir);
+    if (!list.length) { box.innerHTML = '<div class="empty">暂无「' + (dir === 'do' ? '保持 / 多做' : '避免 / 少做') + '」偏好。同场景同方向反馈累计 ≥2 次会自动提炼，也可点下方「立即提炼」。</div>'; return; }
+    box.innerHTML = list.map(p => {
+      return '<div class="lib-item"><div class="head"><span class="cat ' + (dir === 'do' ? 'methodology' : 'conclusion') + '">' + (dir === 'do' ? '保持' : '避免') + '</span>' +
+        '<span class="title">' + esc(p.agent) + ' · ' + esc(p.scenario) + '</span>' +
+        '<span class="badge-mini">' + p.count + ' 次 · 信心 ' + Math.round((p.confidence || 0) * 100) + '%</span></div>' +
+        '<div class="row">' + esc(p.action || '') + '</div>' +
         '</div>';
     }).join('');
   } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
@@ -363,6 +424,21 @@ $('#runGov').onclick = async () => {
 $('#doSuggest').onclick = doSuggest;
 $('#sQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSuggest(); });
 
+/* 情绪/偏好面板：tab 切换 + 手动提炼 */
+$('#tabDo').onclick = () => { sentiTab = 'do'; $('#tabDo').className = 'on'; $('#tabAvoid').className = ''; $('#tabSignals').className = ''; loadSentiment(); };
+$('#tabAvoid').onclick = () => { sentiTab = 'avoid'; $('#tabAvoid').className = 'on'; $('#tabDo').className = ''; $('#tabSignals').className = ''; loadSentiment(); };
+$('#tabSignals').onclick = () => { sentiTab = 'signals'; $('#tabSignals').className = 'on'; $('#tabDo').className = ''; $('#tabAvoid').className = ''; loadSentiment(); };
+$('#runDistill').onclick = async () => {
+  const msg = $('#distillMsg');
+  if (!API.sentimentDistill) { msg.textContent = '—'; return; }
+  msg.textContent = '提炼中…';
+  try {
+    const r = await API.sentimentDistill();
+    msg.textContent = '完成：新提炼 ' + (r.created || 0) + ' 条、更新 ' + (r.updated || 0) + ' 条、提交经验沉淀官 ' + (r.submitted || 0) + ' 条';
+    loadSentiment(); loadOverview(); loadProposals();
+  } catch (e) { msg.textContent = '失败：' + e.message; }
+};
+
 /* ---------------- 启动 ---------------- */
 (async function boot() {
   if (!hasApi()) {
@@ -370,7 +446,7 @@ $('#sQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSugge
     $('#library').innerHTML = '<div class="empty">—</div>';
     return;
   }
-  loadOverview(); loadProposals(); loadLibrary(); loadGovernance();
+  loadOverview(); loadProposals(); loadLibrary(); loadGovernance(); loadSentiment();
 })();
 </script>
 </body>

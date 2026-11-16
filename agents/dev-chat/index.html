@@ -92,6 +92,11 @@
   }
   .msg.assistant:hover .copy-btn { opacity: 1; }
   .msg .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .msg .feedback { position: absolute; top: 6px; right: 66px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; z-index: 5; }
+  .msg.assistant:hover .feedback { opacity: 1; }
+  .msg .fb-btn { padding: 3px 8px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink-soft); cursor: pointer; transition: .12s; }
+  .msg .fb-btn:hover { border-color: var(--accent); }
+  .msg .fb-btn.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 
   /* 会话内检索高亮 */
@@ -1624,6 +1629,9 @@
     }
     var caps = agentCapabilities();
     var s = systemPrompt + extra + toolSpecText(caps);
+    if (sentimentGuidanceCache) {
+      s += '\n\n【用户偏好 · 情绪/偏好 Agent 长期沉淀（务必遵守）】\n' + sentimentGuidanceCache;
+    }
     var _now = new Date();
     var _wd = ['日', '一', '二', '三', '四', '五', '六'][_now.getDay()];
     s = '【今天日期】今天是 ' + _now.getFullYear() + '年' + (_now.getMonth() + 1) + '月' + _now.getDate() + '日 星期' + _wd + '。回答涉及日期、星期、时间、截止日、时效性时以此为准，不要凭记忆猜测。\n\n' + s;
@@ -1660,6 +1668,15 @@
         }
       }
     } catch (e) { /* 保持 fallback */ }
+  }
+
+  // 情绪/偏好 Agent 沉淀的用户偏好指导（注入 system prompt，越用越贴合偏好）
+  var sentimentGuidanceCache = '';
+  function refreshSentimentGuidance() {
+    if (!IS_DESKTOP || !window.ingrid.sentimentGuidance) { sentimentGuidanceCache = ''; return; }
+    window.ingrid.sentimentGuidance(AGENT_NAME).then(function (g) {
+      if (g) sentimentGuidanceCache = g;
+    }).catch(function () {});
   }
 
   /* ---------- 研究日历：即将到期日程（注入系统提示词，主动提醒） ---------- */
@@ -1820,6 +1837,33 @@
       cb.textContent = '复制';
       cb.addEventListener('click', function () { copyBubbleText(wrap.querySelector('.bubble'), cb); });
       wrap.appendChild(cb);
+      // 情绪/偏好反馈：👍 有帮助 / 👎 不满意（上报情绪/偏好 Agent，学习用户偏好）
+      if (IS_DESKTOP && window.ingrid.sentimentObserve) {
+        var fb = document.createElement('div');
+        fb.className = 'feedback';
+        var _tmp = document.createElement('div');
+        _tmp.innerHTML = html || '';
+        var textPlain = (_tmp.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+        var mkFb = function (v, label, title) {
+          var b = document.createElement('button');
+          b.className = 'fb-btn'; b.title = title; b.textContent = label;
+          b.addEventListener('click', function () {
+            var cur = currentSession();
+            window.ingrid.sentimentObserve({
+              text: (v === 'positive' ? '这个回答有帮助' : '这个回答不满意'),
+              valence: v, agent: AGENT_NAME,
+              sessionId: cur ? cur.id : '', source: 'feedback', context: textPlain,
+            }).then(function () {
+              Array.prototype.forEach.call(fb.querySelectorAll('.fb-btn'), function (x) { x.classList.remove('on'); });
+              b.classList.add('on');
+            }).catch(function () {});
+          });
+          return b;
+        };
+        fb.appendChild(mkFb('positive', '👍', '有帮助，继续保持'));
+        fb.appendChild(mkFb('negative', '👎', '不满意，应该避免'));
+        wrap.appendChild(fb);
+      }
     }
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
@@ -1935,6 +1979,14 @@
       cur.updatedAt = Date.now();
       persistSessions();
       renderSessionList();
+      // 自动侦测用户情绪/评价（强烈正/负面词），上报情绪/偏好 Agent 学习偏好
+      if (IS_DESKTOP && window.ingrid.sentimentObserve && text && !isNote) {
+        var _ctx = '';
+        for (var _i = cur.messages.length - 2; _i >= 0; _i--) {
+          if (cur.messages[_i].role === 'assistant') { _ctx = cur.messages[_i].content || ''; break; }
+        }
+        window.ingrid.sentimentObserve({ text: text, agent: AGENT_NAME, sessionId: jobSessionId, source: 'auto', context: _ctx }).catch(function () {});
+      }
     }
 
     // 带图片时：当前模型原生支持视觉则直接带图；否则（纯文本推理模型，如 V4-Pro）
@@ -2755,6 +2807,7 @@
   loadSoul();
   loadEngines();
   loadSessions();
+  refreshSentimentGuidance();
   loadKbStatus();
   applySidebarWidth();
   initSidebarResize();

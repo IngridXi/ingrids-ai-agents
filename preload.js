@@ -251,6 +251,14 @@ contextBridge.exposeInMainWorld('ingrid', {
   governanceReport: () => ipcRenderer.invoke('governance:report'),
   governanceRun: () => ipcRenderer.invoke('governance:run'),
 
+  // 情绪/偏好 Agent（侦测评价情绪 → 提炼 do/avoid 偏好 → 联动经验沉淀）
+  sentimentReport: () => ipcRenderer.invoke('sentiment:report'),
+  sentimentSignals: (limit, valence) => ipcRenderer.invoke('sentiment:signals', limit, valence),
+  sentimentPreferences: (agent) => ipcRenderer.invoke('sentiment:preferences', agent),
+  sentimentGuidance: (agent) => ipcRenderer.invoke('sentiment:guidance', agent),
+  sentimentObserve: (raw) => ipcRenderer.invoke('sentiment:observe', raw),
+  sentimentDistill: () => ipcRenderer.invoke('sentiment:distill'),
+
   // 灵感目录（生态雷达：每日调研 DSH 插件生态）
   ecoRadarRun: () => ipcRenderer.invoke('eco:radar:run'),
   ecoRadarStatus: () => ipcRenderer.invoke('eco:radar:status'),

@@ -39,6 +39,7 @@ require('./permission-core.js');
 const PermissionCore = globalThis.PermissionCore;
 const KnowledgeSettlerCore = require('./knowledge-settler-core.js');
 const agentGovernance = require('./agent-governance.js');
+const SentimentAgentCore = require('./sentiment-agent-core.js');
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -192,6 +193,26 @@ function getKnowledgeSettler() {
     });
   }
   return knowledgeSettler;
+}
+
+/* ---------------- 情绪/偏好 Agent（借鉴海归海经验沉淀官 + 用户偏好学习）----------------
+ * 常驻后台「情绪/偏好 Agent」：侦测用户对各 agent 的评价与情绪，学习「该多做 / 该避免」
+ * 的偏好，沉淀成偏好规则并：① 注入 chat agent 的 system prompt 指导后续操作；
+ * ② 通过 settlerSubmit 把新提炼的偏好提交给「经验沉淀官」（仍停待审批，人工在环不变）。
+ * local-first：落盘 data/sentiment-library.json。
+ */
+let sentimentAgent = null;
+function getSentimentAgent() {
+  if (!sentimentAgent) {
+    sentimentAgent = new SentimentAgentCore.SentimentAgent({
+      load: () => readJson('sentiment-library.json', SentimentAgentCore.emptyState()),
+      save: (state) => writeJson('sentiment-library.json', state),
+    }, function (item) {
+      // 联动：把新提炼的用户偏好作为一条经验提交给经验沉淀官（去重 + 待审批）
+      return getKnowledgeSettler().submit(item);
+    });
+  }
+  return sentimentAgent;
 }
 
 /* ---------------- 秘书状态串行化写入 ----------------
@@ -1077,6 +1098,16 @@ ipcMain.handle('settler:run-once', () => {
     return getKnowledgeSettler().runOnce(done);
   } catch (e) { return { consumed: 0, created: 0, pending_approval: getKnowledgeSettler().report().pending_approval }; }
 });
+
+/* ---------------- IPC：情绪/偏好 Agent（侦测评价情绪 → 提炼偏好 → 联动经验沉淀）---------------- */
+ipcMain.handle('sentiment:report', () => getSentimentAgent().report());
+ipcMain.handle('sentiment:signals', (_e, limit, valence) => getSentimentAgent().signals(limit, valence));
+ipcMain.handle('sentiment:preferences', (_e, agent) => getSentimentAgent().preferences(agent));
+ipcMain.handle('sentiment:guidance', (_e, agent) => getSentimentAgent().guidance(agent));
+// 侦测 + 记录一条情绪/评价信号（valence 可省，省略则走词典侦测，中性不记录）
+ipcMain.handle('sentiment:observe', (_e, raw) => getSentimentAgent().observe(raw));
+// 手动/自动提炼：把信号聚合成偏好规则，新偏好自动提交经验沉淀官（待审批）
+ipcMain.handle('sentiment:distill', () => getSentimentAgent().distill());
 
 /* ---------------- IPC：Agent 治理官（只读盘点 + 重叠检测 + 对账）---------------- */
 ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
