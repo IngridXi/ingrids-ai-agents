@@ -1304,9 +1304,9 @@
       defs.push({ type: 'function', function: { name: name, description: desc, parameters: { type: 'object', properties: props, required: Object.keys(props) } } });
     }
     if (caps.fs) {
-      fn('fs_list', '列出某目录下的文件与子目录（省略 dir 则列主目录）', { dir: { type: 'string', description: '绝对路径，可选' } });
-      fn('fs_search', '按文件名/关键词搜索文件', { query: { type: 'string', description: '关键词' }, root: { type: 'string', description: '可选起始目录' } });
-      fn('fs_read', '读取文件内容（txt/md 直读；docx/doc/rtf/odt 自动提取正文；pdf 提取全文；pptx 提取每页文本；.ppt 需转 .pptx）', { path: { type: 'string', description: '绝对路径' } });
+      fn('fs_list', '列出某目录下的文件与子目录（省略 dir 则列主目录）。同一目录本会话只列一次，列完记住结果', { dir: { type: 'string', description: '绝对路径，可选' } });
+      fn('fs_search', '按文件名/关键词搜索文件。同一关键词本会话只搜一次', { query: { type: 'string', description: '关键词' }, root: { type: 'string', description: '可选起始目录' } });
+      fn('fs_read', '读取文件内容（txt/md 直读；docx/doc/rtf/odt 自动提取正文；pdf 提取全文；pptx 提取每页文本；.ppt 需转 .pptx）。同一文件本会话只读一次，读完记住要点，不要反复重读', { path: { type: 'string', description: '绝对路径' } });
       fn('fs_write', '写入/覆盖文件（覆盖前自动备份原文件）', { path: { type: 'string', description: '绝对路径' }, content: { type: 'string', description: '完整内容' } });
       fn('fs_append', '向文件末尾追加内容', { path: { type: 'string' }, content: { type: 'string' } });
       fn('fs_edit', '替换文件中的一段文字（原文须唯一；Word .docx/.doc 也能直接改）', { path: { type: 'string' }, old: { type: 'string', description: '原文' }, new: { type: 'string', description: '新文' } });
@@ -1346,6 +1346,44 @@
     var t = String(text || '').trim();
     if (!t || t.length > 160) return false;   // 过长的多半是完整回答
     return /(先列|先读|先核实|先搜索|先查|先查看|先打开|先写|先找|先确认|开始核实|开始列|开始读|开始搜索|现在核实|现在列|现在读|现在搜索|我先列|我先读|我先核实|我先搜|我来列|我来读|我将先|接下来我会先)/.test(t);
+  }
+  // 会话级「只读工具」结果缓存：思考型模型在工具循环里会反复读同一文件/列同一目录/搜同一关键词，
+  // 每次都把全文重新注入上下文 → token 爆炸 + 思考链反复重推。这里对只读工具做去重：
+  // 第二次执行同一只读操作时直接命中缓存，返回「已执行过、结果未变」提示，不再重复注入大段内容。
+  var toolCache = {};   // key -> true（成功过即缓存；写操作会使相关缓存失效）
+  function toolCacheKey(name, args) {
+    var a = args || {};
+    switch (name) {
+      case 'fs_read': return 'read:' + String(a.path || '');
+      case 'fs_list': return 'list:' + String(a.dir || '');
+      case 'fs_search': return 'find:' + String(a.query || '') + '|' + String(a.root || '');
+      case 'web_search': return 'web:' + String(a.query || '');
+      case 'db_query': return 'db:' + String(a.query || '');
+      case 'db_obsidian_report': return 'obsreport:';
+      case 'db_zotero_report': return 'zotreport:';
+      default: return null;   // 写类 / 副作用工具不缓存
+    }
+  }
+  function cachedExecuteTool(call, caps) {
+    var key = toolCacheKey(call.name, call.args);
+    if (key && toolCache[key]) {
+      return Promise.resolve({ ok: true, cached: true, note: '本会话已经执行过该只读操作（' + key + '），结果未变、上面已经给出。请直接使用之前得到的结果，不要再重复执行同一操作。' });
+    }
+    return executeTool(call, caps).then(function (r) {
+      // 写类操作成功后，文件系统状态已变，清空 fs 读缓存（read/list/find），避免后续读到旧内容
+      if (r && r.ok && /^(fs_write|fs_append|fs_edit|fs_move|fs_delete|doc_generate|pptx_fill_template)$/.test(call.name)) {
+        Object.keys(toolCache).forEach(function (k) {
+          if (k.indexOf('read:') === 0 || k.indexOf('list:') === 0 || k.indexOf('find:') === 0) delete toolCache[k];
+        });
+      }
+      // 只读成功则缓存，防后续重复读取
+      if (key && r && r.ok) {
+        toolCache[key] = true;
+        var ks = Object.keys(toolCache);
+        if (ks.length > 300) delete toolCache[ks[0]];   // 防内存膨胀
+      }
+      return r;
+    });
   }
   function executeTool(call, caps) {
     var n = call.name;
@@ -1459,6 +1497,7 @@
     });
   }
   function formatToolResult(call, res) {
+    if (res && res.cached) return '【工具 ' + call.name + ' 结果】\n' + (res.note || '本会话已执行过该只读操作，结果未变，请直接使用之前的结果。');
     var body;
     try {
     if (res && res.ok) {
@@ -1717,7 +1756,7 @@
       s += '\n\n【联网搜索能力 · 当前关闭】你具备联网搜索能力，但用户刚在界面把「联网」按钮关了。若用户问及联网或需要实时信息，请如实说明：联网当前未开启，可让用户点聊天框上方的「联网」按钮重新打开；不要谎称「我完全没有联网能力」。';
     }
     if (caps.fs || caps.db || caps.computer) {
-      s += '\n\n【自主工作准则 · 必须遵守】你是能长时间自主完成复杂任务的智能体，不是一问一答的聊天机器人：① 工具失败 / 报错 / 路径不存在时，先读错误信息、找原因，再换一种办法重试（先 fs_list 列目录看真实名称、用 fs_search 搜索、检查路径里的空格与全角字符、确认 iCloud 文件是否已下载），绝不要停在「我失败了」或直接放弃；② 复杂任务自己拆成多步、一步步推进，一步没成不要就停下；③ 完成前先核对结果是否真的满足用户要求（文件是否找到、内容是否对得上、任务是否做完），没做完就继续，不草率宣称「已完成」；④ 同一招失败两次就换思路；⑤ 全程持续自主推进、少打扰多交付：不要每做一步就停下来问用户，只有在三种情况下才主动停下向用户汇报——(a) 任务已全部完成、给出最终结果时；(b) 确实需要用户做决定、提供信息或授权才能继续时；(c) 反复尝试后确实无法继续、必须求助时；除此之外，把能查、能算、能写、能核对的步骤都自己做完，一次给到位。';
+      s += '\n\n【自主工作准则 · 必须遵守】你是能长时间自主完成复杂任务的智能体，不是一问一答的聊天机器人：① 工具失败 / 报错 / 路径不存在时，先读错误信息、找原因，再换一种办法重试（先 fs_list 列目录看真实名称、用 fs_search 搜索、检查路径里的空格与全角字符、确认 iCloud 文件是否已下载），绝不要停在「我失败了」或直接放弃；② 复杂任务自己拆成多步、一步步推进，一步没成不要就停下；③ 完成前先核对结果是否真的满足用户要求（文件是否找到、内容是否对得上、任务是否做完），没做完就继续，不草率宣称「已完成」；④ 同一招失败两次就换思路；⑤ 全程持续自主推进、少打扰多交付：不要每做一步就停下来问用户，只有在三种情况下才主动停下向用户汇报——(a) 任务已全部完成、给出最终结果时；(b) 确实需要用户做决定、提供信息或授权才能继续时；(c) 反复尝试后确实无法继续、必须求助时；除此之外，把能查、能算、能写、能核对的步骤都自己做完，一次给到位；⑥ 只读类工具（fs_read / fs_list / fs_search / web_search / db_query）对同一文件、同一目录、同一关键词，本会话只调用一次，拿到结果就记住要点，后续直接引用已获得的内容，绝不反复重读同一文件、反复列同一目录、反复搜同一关键词——重复读取既浪费 token 又拖慢进度，是必须避免的低效行为。';
     }
     s += '\n\n【执行交付铁律 · 不臆造的具体化】① 严格区分「观察到的（读到了文件/跑出了结果）」「推断的」「待验证的」，不把推断说成事实、不把没做的说成做了；② 没拿到文件就说没拿到，没实际运行就标 [待验证]，绝不编造工具调用、测试日志、截图或「已完成」的结果；③ 还没做完、还在等下一步的工作，只能写「进行中 / 待完成」，不能写成「已完成」；④ 交付任何文件 / 图表 / 表格后，先自查它是否存在、内容是否与结论一致，再报告完成；⑤ 失败时如实区分原因：工具缺失 / 权限不足 / 格式不支持 / 分析错误，不模糊带过。';
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
@@ -2244,6 +2283,7 @@
       var emptyStreak = 0;  // 连续空回复次数（推理型模型可能只输出思考、不输出正文），用于自动重试
       var pendingStreak = 0;   // 连续「只说不做」次数，用于兜底：模型声明要动手却没真正调用工具时再催一次
       var driftStreak = 0;     // 实时监事：连续「收尾正文与核心目标零关联」次数，触发目标纠偏
+      toolCache = {};          // 每次新任务重置只读工具缓存（同一任务内重复读被拦截，新任务重新开始）
       // 原生工具调用：云端 OpenAI 兼容引擎（deepseek/gpt/qwen）传 tools 参数走 function calling；
       // 本地 Ollama 模型兼容性不稳定，暂沿用文本 <tool> 标签解析
       var useNativeTools = (engine === 'deepseek' || engine === 'gpt' || engine === 'qwen');
@@ -2278,7 +2318,7 @@
               renderStream();
               var caps = agentCapabilities();
               Promise.all(calls.map(function (c) {
-                return executeTool(c, caps)
+                return cachedExecuteTool(c, caps)
                   .then(function (r) { return formatToolResult(c, r); })
                   .catch(function (e) { return '【工具 ' + c.name + ' 结果】\n工具执行失败：' + String((e && e.message) || e); });
               })).then(function (results) {
