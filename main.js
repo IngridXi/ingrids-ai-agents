@@ -548,6 +548,23 @@ const CHAT_ENDPOINTS = {
   'ollama-vision': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen2.5vl:7b', keyField: null },   // 识图专用（本地视觉模型，支持图片输入）
 };
 
+// 把各家 API 的原始英文报错翻译成可读中文，并附上可执行的下一步（余额不足/Key 无效/限流/超时等）
+function friendlyApiError(msg, engine) {
+  const m = String(msg || '');
+  const e = String(engine || '');
+  if (/insufficient\s*balance|balance\s*is?\s*(not\s*enough|insufficient)|402/i.test(m)) {
+    return (e === 'deepseek' ? 'DeepSeek' : (e === 'qwen' ? '通义千问/DashScope' : (e === 'gpt' ? 'OpenAI' : '该引擎')))
+      + ' 账户余额不足（Insufficient Balance）。请到对应开放平台充值后重试；'
+      + (e === 'deepseek' ? '充值地址 https://platform.deepseek.com/usage ；' : '')
+      + '如已开本地 Ollama，也可在引擎里切到「本地视觉模型」识图，不花 API 钱。';
+  }
+  if (/invalid.*(api)?\s*key|authentication|unauthorized|401/i.test(m)) {
+    return 'API Key 无效或已失效，请到「引擎设置」重新填写 ' + (e || '对应引擎') + ' 的 Key。';
+  }
+  if (/rate\s*limit|too\s*many\s*requests|429/i.test(m)) return '请求频率超限（Rate Limit），请稍等片刻再试。';
+  return m;
+}
+
 function which(cmd) {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
@@ -1501,7 +1518,7 @@ ipcMain.handle('chat:start', (e, payload) => {
         clearTimeout(stallTimer);
         let msg = 'HTTP ' + resp.status;
         try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
-        send('chat:done', { ok: false, error: msg, requestId });
+        send('chat:done', { ok: false, error: friendlyApiError(msg, engine), requestId });
         return;
       }
       const reader = resp.body.getReader();
@@ -1690,7 +1707,7 @@ async function callBgChat(engine, model, messages, tools) {
       clearTimeout(stallTimer);
       let msg = 'HTTP ' + resp.status;
       try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
-      return { ok: false, error: msg };
+      return { ok: false, error: friendlyApiError(msg, engine) };
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -2251,7 +2268,7 @@ async function completeChatStream(engine, messages, onChunk, opts) {
     clearTimeout(stallTimer);
     let msg = 'HTTP ' + resp.status;
     try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
-    throw new Error(msg);
+    throw new Error(friendlyApiError(msg, engine));
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
