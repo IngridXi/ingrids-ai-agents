@@ -67,6 +67,10 @@
   .session:hover .s-del { display: block; }
   .session .s-del:hover { color: var(--danger); background: #fbe7e7; }
   .session .s-rename { flex: 1; min-width: 0; font-size: 13px; padding: 2px 4px; border: 1px solid var(--accent); border-radius: 5px; outline: none; background: #fff; color: var(--ink); }
+  .session-menu { position: fixed; z-index: 9999; min-width: 150px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.15); padding: 5px; }
+  .session-menu .sm-item { padding: 8px 12px; font-size: 13px; color: var(--ink); border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .session-menu .sm-item:hover { background: var(--accent-soft); }
+  .session-menu .sm-item.danger { color: #d9534f; }
   .search-empty { padding: 14px 12px; font-size: 12.5px; color: var(--ink-faint); text-align: center; }
   #searchModeBtn {
     flex: none; padding: 0 8px; height: 26px; border: 1px solid var(--line); border-radius: 7px;
@@ -675,7 +679,7 @@
     return null;
   }
   function serializeSession(s) {
-    return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, pinned: !!s.pinned, messages: serializeHistory(s.messages) };
+    return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, pinned: !!s.pinned, titleAuto: s.titleAuto !== false, messages: serializeHistory(s.messages) };
   }
   function persistSessions() {
     if (!IS_DESKTOP) return;
@@ -689,8 +693,8 @@
       for (var i = 0; i < s.messages.length; i++) {
         var m = s.messages[i];
         if (m.role === 'user' && m.content) {
-          var t = String(m.content).replace(/\s+/g, ' ').trim();
-          if (t) { s.title = t.slice(0, 24); break; }
+          var t = cleanTitleSeed(m.content);
+          if (t) { s.title = t; break; }
         }
       }
     }
@@ -699,16 +703,19 @@
   var __autoTitleBusy = {};
   function autoTitle(session) {
     if (!IS_DESKTOP || !session) return;
+    if (session.titleAuto === false) return;   // 用户手动定名后不再自动覆盖
     if (__autoTitleBusy[session.id]) return;
-    var q = '';
+    var parts = [];
     for (var i = 0; i < session.messages.length; i++) {
       var m = session.messages[i];
       if (m.role === 'user' && m.content) {
-        q = String(m.content).replace(/\s+/g, ' ').trim().slice(0, 200);
-        break;
+        var _q = String(m.content).replace(/\s+/g, ' ').trim();
+        if (_q) parts.push(_q);
+        if (parts.length >= 2) break;
       }
     }
-    if (!q) return;
+    if (!parts.length) return;
+    var q = parts.join(' | ').slice(0, 400);
     __autoTitleBusy[session.id] = true;
     var engine = engineSelect.value || 'ollama';
     var acc = '';
@@ -716,7 +723,7 @@
       engine: engine,
       model: currentModelId(),
       messages: [
-        { role: 'system', content: '你是会话标题生成器。根据用户的问题，生成一个不超过 12 个字的简洁中文标题，概括主题。只输出标题本身，不要引号、书名号、标点、序号、解释或任何前后缀。' },
+        { role: 'system', content: '你是会话标题生成器。根据用户的问题与对话意图，生成一个 6~12 字的简洁中文标题，概括这段对话在讨论什么、要做什么。要求：① 提炼主题，而不是复述用户原话或回答某个具体事实；② 不要输出「未看到」「没有」「无法」「找不到」这类对单一事实的否定回答；③ 只输出标题本身，不要引号、书名号、标点、序号、解释或任何前后缀。' },
         { role: 'user', content: q },
       ],
     }, {
@@ -725,8 +732,9 @@
         __autoTitleBusy[session.id] = false;
         if (!d || !d.ok) return;   // 失败则保留截取标题
         var t = acc.replace(/["'""''【】《》#*\-—\n]/g, '').trim().slice(0, 20);
-        if (!t) return;
+        if (!t || /^(未看到|没有|无法|找不到|不能|不会)/.test(t)) return;
         session.title = t;
+        session.titleAuto = true;
         persistSessions();
         renderSessionList();
       },
@@ -751,7 +759,8 @@
     sorted.forEach(function (s) {
       var row = document.createElement('div');
       row.className = 'session' + (s.id === activeId ? ' active' : '') + (s.pinned ? ' pinned' : '');
-      row.title = '单击切换 · 双击重命名';
+      row.dataset.sid = s.id;
+      row.title = '单击切换 · 双击重命名 · 右键菜单';
       row.innerHTML = '<div class="s-title"></div><div class="s-time"></div><button class="s-pin" title="置顶/取消置顶">📌</button><button class="s-del" title="删除会话">✕</button>';
       row.querySelector('.s-title').textContent = s.title || '新对话';
       row.querySelector('.s-time').textContent = relTime(s.updatedAt || s.createdAt || Date.now());
@@ -762,6 +771,11 @@
       row.addEventListener('dblclick', function (e) {
         if (e.target && e.target.classList && (e.target.classList.contains('s-del') || e.target.classList.contains('s-pin'))) return;
         startRename(s.id, row);
+      });
+      row.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showSessionMenu(e.clientX, e.clientY, s.id);
       });
       row.querySelector('.s-pin').addEventListener('click', function (e) {
         e.stopPropagation();
@@ -792,7 +806,7 @@
     titleEl.replaceWith(inp);
     inp.focus(); inp.select();
     var finish = function (save) {
-      if (save && s) { var v = inp.value.trim(); if (v) s.title = v; }
+      if (save && s) { var v = inp.value.trim(); if (v) { s.title = v; s.titleAuto = false; } }
       persistSessions();
       renderSessionList();
     };
@@ -801,6 +815,45 @@
       else if (e.key === 'Escape') { finish(false); }
     });
     inp.addEventListener('blur', function () { finish(true); });
+  }
+  function cleanTitleSeed(text) {
+    var t = String(text || '').replace(/\s+/g, ' ').trim();
+    t = t.replace(/^(你好|您好|hi|hello|hey|请问|麻烦|帮我|请帮我|帮忙|能不能|可不可以|能否|我想|我想要|我要|希望)[，,、\s:：]*/i, '');
+    return t.slice(0, 16);
+  }
+  var __sessionMenuEl = null;
+  function closeSessionMenu() {
+    if (__sessionMenuEl) { __sessionMenuEl.remove(); __sessionMenuEl = null; }
+    document.removeEventListener('click', closeSessionMenu);
+  }
+  function findSessionRow(id) {
+    var box = el('sessionList');
+    return box ? box.querySelector('.session[data-sid="' + id + '"]') : null;
+  }
+  function showSessionMenu(x, y, id) {
+    closeSessionMenu();
+    var s = sessionById(id);
+    if (!s) return;
+    var menu = document.createElement('div');
+    menu.className = 'session-menu';
+    var items = [
+      { label: '✏️ 重命名', action: function () { var row = findSessionRow(id); if (row) startRename(id, row); } },
+      { label: (s.pinned ? '📌 取消置顶' : '📌 置顶'), action: function () { togglePin(id); } },
+      { label: '🗑️ 删除', danger: true, action: function () { if (confirm('删除这个对话？')) deleteSession(id); } }
+    ];
+    items.forEach(function (it) {
+      var mi = document.createElement('div');
+      mi.className = 'sm-item' + (it.danger ? ' danger' : '');
+      mi.textContent = it.label;
+      mi.addEventListener('click', function (e) { e.stopPropagation(); closeSessionMenu(); it.action(); });
+      menu.appendChild(mi);
+    });
+    document.body.appendChild(menu);
+    var r = menu.getBoundingClientRect();
+    menu.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+    __sessionMenuEl = menu;
+    setTimeout(function () { document.addEventListener('click', closeSessionMenu); }, 0);
   }
   // 渲染「后台任务进行中」的占位气泡（切回正在生成的会话时，实时显示进度）
   function renderRunningBubble(p) {
@@ -834,7 +887,7 @@
     var cur = currentSession();
     if (cur && cur.messages.length === 0) { activeId = cur.id; }
     else {
-      var s = { id: uid(), title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
+      var s = { id: uid(), title: '新对话', titleAuto: true, createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
       sessions.push(s); activeId = s.id;
     }
     history = currentSession().messages;
@@ -888,7 +941,7 @@
         list = [{ id: uid(), title: '历史会话', createdAt: Date.now(), updatedAt: Date.now(), messages: data }];
       } else if (data && Array.isArray(data.sessions)) {
         list = data.sessions.map(function (s) {
-          return { id: s.id || uid(), title: s.title || '新对话', createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), pinned: !!s.pinned, messages: Array.isArray(s.messages) ? s.messages : [] };
+          return { id: s.id || uid(), title: s.title || '新对话', createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), pinned: !!s.pinned, titleAuto: s.titleAuto !== false, messages: Array.isArray(s.messages) ? s.messages : [] };
         });
         activeId = data.activeId;
       }
@@ -2116,8 +2169,8 @@
           for (var i = 0; i < jobMsgs.length; i++) {
             var mm = jobMsgs[i];
             if (mm.role === 'user' && mm.content) {
-              var tt = String(mm.content).replace(/\s+/g, ' ').trim();
-              if (tt) { jobSess.title = tt.slice(0, 24); break; }
+              var tt = cleanTitleSeed(mm.content);
+              if (tt) { jobSess.title = tt; break; }
             }
           }
         }
@@ -2480,8 +2533,8 @@
             for (var i = 0; i < jobMsgs.length; i++) {
               var mm = jobMsgs[i];
               if (mm.role === 'user' && mm.content) {
-                var tt2 = String(mm.content).replace(/\s+/g, ' ').trim();
-                if (tt2) { jobSess.title = tt2.slice(0, 24); break; }
+                var tt2 = cleanTitleSeed(mm.content);
+                if (tt2) { jobSess.title = tt2; break; }
               }
             }
           }
