@@ -1506,6 +1506,7 @@
     var bubble = addBubble('assistant', '<span class="cursor"></span>');
     var acc = '', thinking = '';
     var live = '';
+    var liveThinking = '';   // 本轮「纯思考」内容（正文为空但确有推理时用于兜底摘录）
     streaming = true; sendBtn.disabled = true;
     var engine = engineSelect.value || 'ollama';
     if (img && engine === 'ollama') engine = 'ollama-vision';
@@ -1561,9 +1562,10 @@
 
       function runToolTurn(msgs, round) {
         live = '';
+        liveThinking = '';
         window.ingrid.chatStream({ engine: engine, messages: msgs, tools: toolsPayload }, {
           onDelta: function (d) {
-            if (d && d.thinking) thinking += d.thinking;
+            if (d && d.thinking) { thinking += d.thinking; liveThinking += d.thinking; }
             if (d && d.text) live += d.text;
             renderStream();
           },
@@ -1612,12 +1614,19 @@
                 emptyStreak += 1;
                 if (emptyStreak < 4) {
                   var nudgeMsgs = msgs.concat([{ role: 'assistant', content: rawRound }])
-                    .concat([{ role: 'user', content: '你上一条回复只有思考、没有正文。请现在直接输出完整回答（需要就调用工具继续推进任务），不要只写思考过程，也不要复述前面已经说过的话。' }]);
+                    .concat([{ role: 'user', content: '你上一条回复只有思考过程、没有正文。请停止思考，直接基于上面已获得的工具结果，把最终结论写进正文（普通文本，不要用思考/reasoning 标签），一次写完。' }]);
                   live = '';
+                  liveThinking = '';
                   runToolTurn(nudgeMsgs, round);
                   return;
                 }
-                finish(acc, '连续多次返回空回复，模型可能暂时异常。请换一个模型，或点重试。');
+                // 兜底：连续空回复后，若本轮确有「纯思考」内容，摘录其尾部作为答案（比死胡同提示更有用）
+                var fb = (liveThinking || '').replace(/\s+$/g, '').slice(-1200);
+                if (fb) {
+                  finish(acc + '\n\n---\n> ⚠️ 模型本轮只输出了思考过程、未给出正文，以下为思考尾部摘录（仅供参考）：\n\n' + fb);
+                } else {
+                  finish(acc, '连续多次返回空回复，模型可能暂时异常。请换一个模型，或点重试。');
+                }
                 return;
               }
               // 「只说不做」兜底：模型声明要动手却没真正调用工具，再催一次
