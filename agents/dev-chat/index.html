@@ -235,23 +235,10 @@
   .msg .bubble .think .think-tag.warn   { background: #fdf0dc; color: #b45309; }
   .msg .bubble .think .think-tag.done   { background: #e4f4e6; color: #15803d; }
   .msg .bubble .think .think-tag.think  { background: #efedf4; color: #6b6575; }
-  /* 流式期间思考过程折叠成一行，避免把正文挤到屏外、滚动失控 */
-  .msg .bubble .think-live { margin-bottom: 9px; }
-  .msg .bubble .think-live summary {
-    cursor: pointer; list-style: none; user-select: none;
-    display: flex; align-items: center; gap: 7px;
-    padding: 6px 9px; border-radius: 8px; background: var(--accent-soft);
-    font-size: 12.5px; color: var(--ink-soft); font-weight: 500; line-height: 1.4;
-  }
-  .msg .bubble .think-live summary::-webkit-details-marker { display: none; }
-  .msg .bubble .think-live summary .think-arrow { flex: 0 0 auto; color: var(--accent); font-size: 11px; transition: transform .12s; }
-  .msg .bubble .think-live[open] summary .think-arrow { transform: rotate(90deg); }
-  .msg .bubble .think-live .think-title { flex: 1; min-width: 0; }
-  .msg .bubble .think-live .think-body {
-    margin: 4px 0 0 16px; padding: 6px 9px;
-    background: rgba(255,255,255,.62); border-radius: 6px;
-    font-size: 12px; color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; line-height: 1.5;
-  }
+  /* 次要中间过程：合并折叠成一行，视觉弱化以突出重要步骤 */
+  .msg .bubble .think-minor summary { color: var(--ink-soft); }
+  .msg .bubble .think-minor summary .think-title { font-weight: 400; opacity: .82; }
+  .msg .bubble .think-minor summary .think-arrow { color: var(--ink-soft); }
   .msg .bubble .status-line { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
   .msg .bubble .status-line .dots { display: inline-flex; gap: 3px; }
   .msg .bubble .status-line .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; animation: blink 1.2s infinite; }
@@ -2163,12 +2150,17 @@
       if (__streamRaf) return;   // rAF 节流：合并同一帧内的多次增量，避免每 token 全量重建 DOM
       __streamRaf = requestAnimationFrame(function () {
         __streamRaf = null;
+        // 保留用户手动展开的「中间过程」折叠块状态（全量重建会重置 details.open）
+        var minorOpen = false;
+        var prevMinor = bubble.querySelector('.think-minor');
+        if (prevMinor && prevMinor.open) minorOpen = true;
         var thinkHtml = renderThinking(thinking, true);
         // 还没出正文时，给用户一个明确的「在干什么」提示
         var status = (!acc && !live) ? statusHtml(statusText) : '';
         // 流式期间正文用轻量转义（保留换行），不做逐 token 的 markdown 全量解析；完成后 finish() 再一次性排版
         var liveHtml = live ? '<div class="streaming">' + esc(live).replace(/\n/g, '<br>') + '</div>' : '';
         bubble.innerHTML = thinkHtml + status + (acc ? mdToHtml(acc) : '') + liveHtml + '<span class="cursor"></span>';
+        if (minorOpen) { var curMinor = bubble.querySelector('.think-minor'); if (curMinor) curMinor.open = true; }
         autoScroll(false);
         maybeSaveProgress();
         jobProgress[jobSessionId] = { text: stripToolMarkers(acc) + (live ? live : ''), thinking: thinking };
@@ -2457,8 +2449,12 @@
 
     function render() {
       if (bubble) {
+        var minorOpen = false;
+        var prevMinor = bubble.querySelector('.think-minor');
+        if (prevMinor && prevMinor.open) minorOpen = true;
         var thinkHtml = renderThinking(curThink, true);
         bubble.innerHTML = bubble._tag + thinkHtml + (curText ? mdToHtml(curText) : '') + '<span class="cursor"></span>';
+        if (minorOpen) { var curMinor = bubble.querySelector('.think-minor'); if (curMinor) curMinor.open = true; }
       } else if (reviewEl) {
         reviewEl.innerHTML = reviewEl._summary + (curText ? mdToHtml(curText) : '') + '<span class="cursor"></span>';
       }
@@ -2582,12 +2578,12 @@
 
   /* ---------- 思考过程结构化展示：分段 + 标签 + 可折叠（像 WorkBuddy 的思考卡片） ---------- */
   function classifyThinking(seg) {
-    if (/失败|错误|不存在|error|异常|无法|拒绝|没找到|没有找到|打不开/.test(seg)) return { tag: '遇到问题', cls: 'warn' };
-    if (/结论|最终|总结|因此|所以|答案|完成|搞定|结果|综上/.test(seg)) return { tag: '结论', cls: 'done' };
-    if (/工具|fs_|db_|computer|执行|调用|检索|搜索|读取|写入|列出/.test(seg)) return { tag: '调用工具', cls: 'tool' };
-    if (/用户|需求|想要|希望|问题|任务|目标|要求|先理解|先确认/.test(seg)) return { tag: '理解需求', cls: 'goal' };
-    if (/首先|第一步|接着|然后|接下来|开始|先|再|之后|继续|下一步/.test(seg)) return { tag: '推进', cls: 'step' };
-    return { tag: '思考', cls: 'think' };
+    if (/失败|错误|不存在|error|异常|无法|拒绝|没找到|没有找到|打不开/.test(seg)) return { tag: '遇到问题', cls: 'warn', important: true };
+    if (/结论|最终|总结|因此|所以|答案|完成|搞定|结果|综上/.test(seg)) return { tag: '结论', cls: 'done', important: true };
+    if (/工具|fs_|db_|computer|执行|调用|检索|搜索|读取|写入|列出/.test(seg)) return { tag: '调用工具', cls: 'tool', important: true };
+    if (/用户|需求|想要|希望|问题|任务|目标|要求|先理解|先确认/.test(seg)) return { tag: '理解需求', cls: 'goal', important: true };
+    if (/首先|第一步|接着|然后|接下来|开始|先|再|之后|继续|下一步/.test(seg)) return { tag: '推进', cls: 'step', important: false };
+    return { tag: '思考', cls: 'think', important: false };
   }
   function thinkingTitle(seg) {
     var first = seg.split('\n')[0].trim();
@@ -2626,19 +2622,19 @@
     var steps = splitThinking(text);
     if (!steps.length) return '';
     var count = steps.length;
-    // 流式期间（openLast=true）：只显示一行可折叠的「思考过程 · N 步」，不逐条展开，
-    // 避免思考块越积越多把正文挤到屏外、导致滚动失控；点开只看最新一步
-    if (openLast) {
-      var last = steps[steps.length - 1];
-      return '<details class="think think-live"><summary><span class="think-arrow">▸</span><span class="think-tag think">思考</span><span class="think-title">思考过程 · ' + count + ' 步（点击展开最新）</span></summary>'
-        + '<div class="think-body">' + esc(last) + '</div></details>';
+    // 分级展示（像 ChatGPT/WorkBuddy）：重要步骤默认展开、次要中间过程合并折叠成一行
+    var items = steps.map(function (b) { return { b: b, c: classifyThinking(b) }; });
+    var important = items.filter(function (it) { return it.c.important; });
+    var minor = items.filter(function (it) { return !it.c.important; });
+    function stepHtml(it, open) {
+      return '<details class="think-step"' + (open ? ' open' : '') + '><summary><span class="think-arrow">▸</span><span class="think-tag ' + it.c.cls + '">' + esc(it.c.tag) + '</span><span class="think-title">' + esc(thinkingTitle(it.b)) + '</span></summary><div class="think-body">' + esc(it.b) + '</div></details>';
     }
     var html = '<div class="think"><div class="think-head">思考过程<span class="think-count">' + count + ' 步</span></div>';
-    steps.forEach(function (b, i) {
-      var c = classifyThinking(b);
-      var open = (openLast && i === steps.length - 1) ? ' open' : '';
-      html += '<details class="think-step"' + open + '><summary><span class="think-arrow">▸</span><span class="think-tag ' + c.cls + '">' + esc(c.tag) + '</span><span class="think-title">' + esc(thinkingTitle(b)) + '</span></summary><div class="think-body">' + esc(b) + '</div></details>';
-    });
+    important.forEach(function (it) { html += stepHtml(it, true); });
+    if (minor.length) {
+      html += '<details class="think-step think-minor"><summary><span class="think-arrow">▸</span><span class="think-tag think">省略</span><span class="think-title">中间过程 ' + minor.length + ' 步（点击展开）</span></summary><div class="think-body">'
+        + minor.map(function (it) { return esc(it.b); }).join('\n\n') + '</div></details>';
+    }
     html += '</div>';
     return html;
   }
