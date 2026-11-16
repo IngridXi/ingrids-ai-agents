@@ -168,6 +168,7 @@
   function SentimentAgent(storage, settlerSubmit) {
     this.storage = storage || defaultStorage();
     this.settlerSubmit = typeof settlerSubmit === 'function' ? settlerSubmit : null;
+    this.distiller = null;   // 可注入「做法提炼器」：async function(buckets) -> [{key, action, reason}]
     this.state = this.storage.load();
     this._normalize();
   }
@@ -184,6 +185,13 @@
 
   SentimentAgent.prototype.setSettlerSubmit = function (fn) {
     this.settlerSubmit = typeof fn === 'function' ? fn : null;
+  };
+
+  /* 注入「做法提炼器」（可选）。fn 签名：async function(buckets) -> [{key, action, reason}]
+   * buckets 每项：{ key, agent, scenario, direction, signals: [{text, context, ...}] }。
+   * 注入后 distill() 会优先用提炼结果；未注入或提炼失败则降级启发式。 */
+  SentimentAgent.prototype.setDistiller = function (fn) {
+    this.distiller = typeof fn === 'function' ? fn : null;
   };
 
   /* ---------------- 记录一条信号（已明确 valence） ---------------- */
@@ -258,9 +266,14 @@
    * distill() 扫描全部信号，按 (agent + scenario + direction) 聚合；
    * 同方向累计 >= MIN_COUNT 即生成/更新偏好规则，并把「新提炼」的偏好
    * 通过 settlerSubmit 提交给经验沉淀官（去重：只对新出现/升级的提交）。
-   * 返回 { created, updated, submitted, skipped }。
+   *
+   * 做法提炼：若通过 setDistiller(fn) 注入了「做法提炼器」（如 LLM），则把
+   * 待处理的 bucket 批量交给它提炼出「具体可执行的做法」；未注入或提炼失败则
+   * 降级为启发式（保留用户评价原文）。distiller 签名：
+   *   async function(buckets) -> [{ key, action, reason }, ...]
+   * 返回 { created, updated, submitted, skipped, distilled, mode }。
    */
-  SentimentAgent.prototype.distill = function () {
+  SentimentAgent.prototype.distill = async function () {
     var self = this;
     // 聚合
     var buckets = {};
@@ -268,31 +281,55 @@
       var dir = s.valence === VAL_POSITIVE ? DIR_DO : DIR_AVOID;
       var key = self._prefKey(s.agent, s.scenario, dir);
       if (!buckets[key]) {
-        buckets[key] = { agent: s.agent || '通用', scenario: s.scenario || '其他', direction: dir, signals: [] };
+        buckets[key] = { key: key, agent: s.agent || '通用', scenario: s.scenario || '其他', direction: dir, signals: [] };
       }
       buckets[key].signals.push(s);
     });
 
-    var created = 0, updated = 0, submitted = 0;
+    // 待处理 bucket（同方向累计 >= MIN_COUNT）
+    var pending = [];
     Object.keys(buckets).forEach(function (key) {
       var b = buckets[key];
-      if (b.signals.length < MIN_COUNT) return;
+      if (b.signals.length >= MIN_COUNT) pending.push(b);
+    });
+
+    // 批量做法提炼（注入了 distiller 时）
+    var distilled = {};
+    var mode = 'heuristic';
+    if (typeof this.distiller === 'function' && pending.length) {
+      try {
+        var res = await this.distiller(pending);
+        if (res && Array.isArray(res)) {
+          res.forEach(function (d) {
+            if (d && d.key && (d.action || d.reason)) distilled[d.key] = d;
+          });
+        }
+        if (Object.keys(distilled).length) mode = 'llm';
+      } catch (e) { /* 提炼失败 → 降级启发式 */ }
+    }
+
+    var created = 0, updated = 0, submitted = 0;
+    pending.forEach(function (b) {
+      var key = b.key;
       var existing = self.state.preferences.filter(function (p) { return p.key === key; })[0];
       var latest = b.signals[0];  // 信号按时间倒序，最新在前
       var newestText = latest.text;
-      // 做法总结：正 → 用户认可的做法；负 → 用户不满意的做法
-      var action = b.direction === DIR_DO
-        ? ('用户认可「' + b.scenario + '」场景下的这种做法，应继续保持：' + newestText)
-        : ('用户不满意「' + b.scenario + '」场景下的这种做法，应避免：' + newestText);
+      var d = distilled[key];
+      // 做法：LLM 提炼结果优先；否则启发式（保留用户评价原文）
+      var action = d && d.action
+        ? d.action
+        : (b.direction === DIR_DO
+            ? ('用户认可「' + b.scenario + '」场景下的这种做法，应继续保持：' + newestText)
+            : ('用户不满意「' + b.scenario + '」场景下的这种做法，应避免：' + newestText));
+      var reason = d && d.reason ? d.reason : newestText;
       if (existing) {
         var grew = existing.count !== b.signals.length;
         existing.count = b.signals.length;
         existing.action = action;
-        existing.reason = newestText;
+        existing.reason = reason;
         existing.lastSeen = latest.created;
         existing.confidence = Math.min(1, 0.5 + b.signals.length * 0.15);
         if (grew) updated++;
-        self._save();
         return;
       }
       var pref = {
@@ -302,7 +339,7 @@
         agent: b.agent,
         scenario: b.scenario,
         action: action,
-        reason: newestText,
+        reason: reason,
         confidence: Math.min(1, 0.5 + b.signals.length * 0.15),
         count: b.signals.length,
         firstSeen: b.signals[b.signals.length - 1].created,
@@ -326,7 +363,11 @@
       }
     });
     this._save();
-    return { created: created, updated: updated, submitted: submitted, skipped: Object.keys(buckets).length - created - updated };
+    return {
+      created: created, updated: updated, submitted: submitted,
+      skipped: Object.keys(buckets).length - created - updated,
+      distilled: Object.keys(distilled).length, mode: mode,
+    };
   };
 
   /* ---------------- 偏好规则列表 ---------------- */

@@ -534,13 +534,18 @@ $('#tabAvoid').onclick = () => { sentiTab = 'avoid'; $('#tabAvoid').className = 
 $('#tabSignals').onclick = () => { sentiTab = 'signals'; $('#tabSignals').className = 'on'; $('#tabDo').className = ''; $('#tabAvoid').className = ''; loadSentiment(); };
 $('#runDistill').onclick = async () => {
   const msg = $('#distillMsg');
+  const btn = $('#runDistill');
   if (!API.sentimentDistill) { msg.textContent = '—'; return; }
-  msg.textContent = '提炼中…';
+  if (btn.disabled) return;
+  btn.disabled = true;
+  msg.textContent = '提炼中…（LLM 正在提炼做法，可能需数秒）';
   try {
     const r = await API.sentimentDistill();
-    msg.textContent = '完成：新提炼 ' + (r.created || 0) + ' 条、更新 ' + (r.updated || 0) + ' 条、提交经验沉淀官 ' + (r.submitted || 0) + ' 条';
+    const modeTxt = (r.mode === 'llm') ? (' · LLM 提炼做法 ' + (r.distilled || 0) + ' 条') : ' · 启发式降级';
+    msg.textContent = '完成：新提炼 ' + (r.created || 0) + ' 条、更新 ' + (r.updated || 0) + ' 条、提交经验沉淀官 ' + (r.submitted || 0) + ' 条' + modeTxt;
     loadSentiment(); loadOverview(); loadProposals();
   } catch (e) { msg.textContent = '失败：' + e.message; }
+  finally { btn.disabled = false; }
 };
 
 /* 偏好卡片：编辑 / 删除 / 保存 / 取消（事件委托）+ 信心度滑块联动 */

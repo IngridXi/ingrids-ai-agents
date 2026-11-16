@@ -211,8 +211,95 @@ function getSentimentAgent() {
       // 联动：把新提炼的用户偏好作为一条经验提交给经验沉淀官（去重 + 待审批）
       return getKnowledgeSettler().submit(item);
     });
+    // 注入 LLM「做法提炼器」：把「被评价回复 + 用户评价」提炼成一句可执行做法
+    sentimentAgent.setDistiller(distillActionWithLLM);
   }
   return sentimentAgent;
+}
+
+/* ---------------- LLM 做法提炼（方案 B：情绪仅作索引，真正沉淀的是「做法」）----------------
+ * 借鉴 PAHF 的 Detect-Summarize-Integrate 三段 + opensearch ml-commons 的
+ * 「偏好提取输出自然语言单句」经验。distill 时把待处理的 bucket 批量交给 LLM，
+ * 提炼出「具体可执行的做法」；LLM 不可用则返回 null，由核心模块降级启发式。
+ */
+function buildDistillPrompt(buckets) {
+  const lines = [];
+  lines.push('你是「用户偏好提炼器」。下面是用户对我方 AI Agent 输出的若干条评价记录，每条含：场景、方向（保持=用户认可，避免=用户不满）、用户评价原文、被评价的 Agent 回复内容。');
+  lines.push('请为每一条提炼出一句「具体、可执行的做法」——不是复述情绪，而是说清「Agent 应该怎么做 / 不该怎么做」。');
+  lines.push('');
+  lines.push('严格输出一个 JSON 数组，不要输出任何其他文字、不要用 markdown 代码块、不要加解释。数组每项格式：');
+  lines.push('{"k":序号,"action":"一句可执行做法","reason":"用户依据摘要"}');
+  lines.push('');
+  lines.push('规则：');
+  lines.push('1. action 必须是动宾结构、具体到能被另一个 Agent 照着做（如「总结时先给结论再分点并标注出处」），禁止「要更好」「要专业」「用户觉得好」这类空话。');
+  lines.push('2. 若回复里看不出具体做法（只是「谢谢」「OK」），action 填「（无明确做法）」。');
+  lines.push('3. 用自然语言，不要嵌套引号、不要换行。');
+  lines.push('');
+  lines.push('待提炼列表：');
+  buckets.forEach(function (b, i) {
+    const ctx = String(b.signals[0].context || '').replace(/\s+/g, ' ').slice(0, 500);
+    const txt = String(b.signals[0].text || '').replace(/\s+/g, ' ').slice(0, 150);
+    lines.push((i + 1) + '. [k=' + (i + 1) + '] 场景:' + b.scenario + ' | 方向:' + (b.direction === 'do' ? '保持' : '避免') + ' | 用户评价:' + txt + ' | 被评价回复:' + ctx);
+  });
+  return lines.join('\n');
+}
+
+function parseDistillResult(text, buckets) {
+  const arr = [];
+  const seen = {};
+  const push = function (key, action, reason) {
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    arr.push({ key: key, action: action, reason: reason });
+  };
+  const extract = function (items) {
+    if (!Array.isArray(items)) return false;
+    items.forEach(function (item) {
+      const k = parseInt(item && item.k, 10);
+      if (isNaN(k) || k < 1 || k > buckets.length) return;
+      const b = buckets[k - 1];
+      if (!b) return;
+      push(b.key, String(item.action || '').trim(), String(item.reason || '').trim());
+    });
+    return arr.length > 0;
+  };
+  const t = String(text || '').trim();
+  if (!t) return null;
+  // 1) 整段是 JSON 数组
+  try { if (extract(JSON.parse(t))) return arr; } catch (e) {}
+  // 2) 提取首个 [...] 数组
+  try {
+    const m = t.match(/\[[\s\S]*\]/);
+    if (m && extract(JSON.parse(m[0]))) return arr;
+  } catch (e) {}
+  // 3) 逐段提取 {...} 对象
+  try {
+    const re = /\{[\s\S]*?\}/g; let m; const items = [];
+    while ((m = re.exec(t)) !== null) { try { items.push(JSON.parse(m[0])); } catch (e) {} }
+    if (items.length && extract(items)) return arr;
+  } catch (e) {}
+  // 4) 兜底：单 bucket 时把整段文字当作该条 action
+  if (buckets.length === 1 && t.length < 300) {
+    push(buckets[0].key, t, '');
+    return arr;
+  }
+  return arr.length ? arr : null;
+}
+
+async function distillActionWithLLM(buckets) {
+  const prompt = buildDistillPrompt(buckets);
+  // 云优先（质量稳、快），本地 Ollama 兜底（免费、离线）；都失败则返回 null 降级启发式
+  const engines = ['deepseek', 'ollama'];
+  for (const eng of engines) {
+    try {
+      const r = await callBgChat(eng, '', [{ role: 'user', content: prompt }]);
+      if (r && r.ok && r.text) {
+        const parsed = parseDistillResult(r.text, buckets);
+        if (parsed) return parsed;
+      }
+    } catch (e) { /* 换下一个引擎 */ }
+  }
+  return null;
 }
 
 /* ---------------- 秘书状态串行化写入 ----------------
