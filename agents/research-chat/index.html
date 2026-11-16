@@ -1218,7 +1218,7 @@
       tools.push('db_zotero_collection：把文献归档到集合（文件夹），参数 {"itemKeys":["key1","key2"],"collectionName":"集合名"}（集合不存在会自动新建）');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
-    tools.push('doc_generate：生成一份文档并保存到「导出」目录，参数 {"type":"pptx|docx|xlsx|md","title":"标题","content":"正文(Markdown，docx/md 用)","slides":[{"title":"页标题","bullets":["要点1"]}],"sheets":[{"name":"表名","rows":[["单元格"]]}]}。pptx 用 slides、docx/md 用 content、xlsx 用 sheets；生成成功返回文件路径');
+    tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片、标题页/章节页/双栏布局、剑桥学术配色），slides 每页可含 title/subtitle/layout(title标题/section章节/content正文/twoCol双栏/blank空白)/bullets/charts/table/image/notes，顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
     if (webEnabled) tools.push('web_search：联网搜索，参数 {"query":"搜索关键词"}（返回标题、链接、摘要；查实时信息/最新事实/SOTA 进展时用它，不要凭记忆编造）');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
@@ -1256,7 +1256,7 @@
       fn('db_zotero_collection', '把文献归档到集合（文件夹）', { itemKeys: { type: 'array', items: { type: 'string' } }, collectionName: { type: 'string' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
-    fn('doc_generate', '生成一份文档并保存到「导出」目录：type=pptx 用 slides（每页 title+bullets 数组）；type=docx 或 md 用 content（Markdown 正文）；type=xlsx 用 sheets（name+rows 二维数组）。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（作为文件名）' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用），每项 {title, bullets:[...]}' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
+    fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片、标题页/章节页/双栏布局、剑桥学术配色），slides 每页 {title, subtitle, layout, bullets, charts, table, image, notes}；type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank), bullets:[字符串或{text,sub:[...]}], charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     if (webEnabled) fn('web_search', '联网搜索（返回标题、链接、摘要）。查实时信息、最新事实、SOTA 进展、外部资料时调用，不要凭记忆编造最新数据', { query: { type: 'string', description: '搜索关键词' } });
     return defs;
   }
@@ -1583,6 +1583,7 @@
     }
     s += '\n\n【输出格式】用 Markdown 排版：标题用 # / ##，重点加粗，善用列表、表格、引用；需要展示关系、流程或数据对比时，用 ```mermaid 代码块输出图表（flowchart 流程图、sequenceDiagram 时序图、pie 饼图、xychart-beta 柱状/折线图），不要用纯文字描述本可图示的内容。';
     s += '\n\n【Mermaid 语法规范 · 生成图表必须逐条遵守，否则图表会渲染失败或文字被截断】① 节点标签一律用英文双引号包裹，中文写进引号里，如 A["新瓶旧酒"]、R1["实证失守"]；② 标签内严禁出现 | 竖线、<> 尖括号、{} 花括号、() 圆括号这些 mermaid 保留字符，需要分隔改用 、或空格；③ 节点标签里的长中文必须用 <br/> 手动换行，每行不超过 10 个中文字（例：A["Zaki 对外口径<br/>agentic · seamless"]），不要依赖系统自动换行，否则中文会溢出、被节点边框截断；④ 箭头只用标准写法 -->、-->|文字|、==>、-.->、---，严禁 -->>、<<--、-->> 这类非法写法；⑤ 节点 id 只用简短英文/数字（A、B、R1、R2），中文一律放引号标签里。';
+    s += '\n\n【PPT 制作规范 · 生成演示文稿必须遵守】用户要「做 PPT / 汇报 / 答辩 / 演示」时，用 doc_generate 生成 pptx，并遵循：① 默认 theme=academic（剑桥学术风：深海军蓝 + 剑桥蓝/青绿点缀 + 大量留白），用户指定了参考风格（如 Cambridge Service Alliance 学术风）就沿用学术风；② 有数据、趋势、对比、占比的内容，必须用 charts 生成原生图表（type=bar/line/pie/doughnut/area/radar），多系列用 series、单系列用 labels+values，不要只写文字 bullet；③ 结构清晰的对照/清单用 table（headers+rows）；④ 每页只讲一个核心结论，标题是结论不是名词；⑤ 用 layout 组织：首尾用 title、每个部分开头用 section 做章节页、并列观点用 twoCol；⑥ 每页 bullets 3–6 条、每条一句话，论述细节写进 notes（演讲者备注）而不是堆在页面上。生成前先想清楚「这一页用图、表还是文字」最能说清：能上图不上表、能上表不堆字。';
     return s;
   }
 

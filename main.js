@@ -2454,6 +2454,215 @@ function mdToDocxChildren(md, title) {
   });
   return children;
 }
+/* ================= 学术级 PPT 渲染器（图表/表格/图片/主题/分栏） =================
+ * 用 pptxgenjs 原生 addChart / addTable / addImage，产出可继续编辑的原生图表与版式，
+ * 而不是"纯文字 bullet"。默认主题为「剑桥服务联盟（Cambridge Service Alliance）风格」的
+ * 学术配色：深海军蓝 + 剑桥蓝/青绿点缀 + 大量留白，适合学术汇报/答辩/会议 talk。
+ */
+const PPT_THEMES = {
+  academic: {
+    bg: 'FFFFFF', ink: '1A2233', sub: '5A6472', line: 'E3E8EF',
+    primary: '1B3A6B', accent: '1F7A8C', cambridge: 'A3C1AD', soft: 'EEF1F6',
+    chartColors: ['1B3A6B', '1F7A8C', 'A3C1AD', 'C98A2B', '7C6FD6', 'B0573C'],
+  },
+  minimal: {
+    bg: 'FFFFFF', ink: '111111', sub: '666666', line: 'E5E5E5',
+    primary: '111111', accent: '444444', cambridge: '999999', soft: 'F5F5F5',
+    chartColors: ['111111', '555555', '999999', 'BBBBBB', 'DDDDDD', '777777'],
+  },
+  corporate: {
+    bg: 'FFFFFF', ink: '222A35', sub: '5C6672', line: 'E2E7ED',
+    primary: '0F3D7A', accent: '00A9E0', cambridge: '8CC63F', soft: 'EEF3FA',
+    chartColors: ['0F3D7A', '00A9E0', '8CC63F', 'F0A500', 'D04040', '707070'],
+  },
+};
+function _hex(c) { return String(c == null ? '' : c).replace(/^#/, ''); }
+const PPT_FONT = 'Arial';
+
+// 把 bullets（字符串或 {text, sub:[...]}）转成 pptxgenjs 文本 run
+function _bulletRuns(bullets, T) {
+  const runs = [];
+  (Array.isArray(bullets) ? bullets : []).forEach(function (b) {
+    if (b && typeof b === 'object') {
+      runs.push({ text: String(b.text || b.title || ''), options: { bullet: { code: '2022' }, color: T.ink, fontSize: 14, breakLine: true, paraSpaceAfter: 6 } });
+      (b.sub || b.children || []).forEach(function (sub) {
+        runs.push({ text: String(sub && typeof sub === 'object' ? (sub.text || '') : sub), options: { bullet: { code: '2013', indent: 18 }, color: T.sub, fontSize: 12.5, breakLine: true, paraSpaceAfter: 3 } });
+      });
+    } else {
+      runs.push({ text: String(b), options: { bullet: { code: '2022' }, color: T.ink, fontSize: 14, breakLine: true, paraSpaceAfter: 6 } });
+    }
+  });
+  return runs;
+}
+
+function _addChart(slide, pptx, c, T, x, y, w, h) {
+  const map = { column: 'bar', bar: 'bar', line: 'line', pie: 'pie', doughnut: 'doughnut', area: 'area', radar: 'radar' };
+  const t = map[String((c && c.type) || 'bar').toLowerCase()] || 'bar';
+  let data;
+  if (c && Array.isArray(c.series) && c.series.length) {
+    data = c.series.map(function (sr) { return { name: String(sr.name || '系列'), labels: (Array.isArray(sr.labels) ? sr.labels : (c.labels || [])), values: (Array.isArray(sr.values) ? sr.values : []) }; });
+  } else {
+    data = [{ name: String((c && c.name) || '数值'), labels: (Array.isArray(c && c.labels) ? c.labels : []), values: (Array.isArray(c && c.values) ? c.values : []) }];
+  }
+  const opts = {
+    x, y, w, h,
+    chartColors: T.chartColors,
+    showLegend: true, legendPos: 'b', legendColor: T.sub, legendFontSize: 10,
+    showValue: false,
+    valAxisLabelColor: T.sub, catAxisLabelColor: T.sub, valAxisLabelFontSize: 9, catAxisLabelFontSize: 9,
+    dataLabelColor: T.sub, dataLabelFontSize: 10,
+    valGridLine: { color: T.line, style: 'solid', size: 1 },
+    catGridLine: { style: 'none' },
+    title: (c && c.title) ? String(c.title) : '',
+    titleColor: T.primary, titleFontSize: 13, titleFontFace: PPT_FONT, titleAlign: 'left',
+    showCatAxisTitle: false, showValAxisTitle: false,
+    border: { pt: 0, color: T.line },
+  };
+  if (t === 'bar') opts.barDir = 'col';
+  if (t === 'pie' || t === 'doughnut') {
+    opts.showPercent = true; opts.dataLabelPosition = 'outEnd';
+    opts.showLegend = true; opts.legendPos = 'r';
+  }
+  slide.addChart(t, data, opts);
+}
+
+function _addTable(slide, tb, T, x, y, w, h) {
+  const headers = (tb && Array.isArray(tb.headers)) ? tb.headers : [];
+  const rows = (tb && Array.isArray(tb.rows)) ? tb.rows : [];
+  const cell = function (text, o) { return { text: String(text == null ? '' : text), options: o }; };
+  const tableRows = [];
+  if (headers.length) {
+    tableRows.push(headers.map(function (hh) { return cell(hh, { bold: true, fill: { color: T.primary }, color: 'FFFFFF', fontSize: 11 }); }));
+  }
+  rows.forEach(function (r, i) {
+    const arr = Array.isArray(r) ? r : [r];
+    const fill = (i % 2 === 0) ? T.bg : T.soft;
+    tableRows.push(arr.map(function (cc) { return cell(cc, { fill: { color: fill }, color: T.ink, fontSize: 10.5 }); }));
+  });
+  slide.addTable(tableRows, {
+    x, y, w, h,
+    border: { type: 'solid', color: T.line, pt: 0.5 },
+    fill: { color: T.bg },
+    margin: 0.06, valign: 'middle', fontFace: PPT_FONT,
+  });
+}
+
+function _addFooter(slide, pptx, T, idx, total, deckTitle) {
+  slide.addShape(pptx.ShapeType.rect, { x: 0.6, y: 7.02, w: 12.13, h: 0.006, fill: { color: T.line } });
+  slide.addText(String(deckTitle || ''), { x: 0.6, y: 7.08, w: 9, h: 0.32, fontSize: 9, color: T.sub, fontFace: PPT_FONT });
+  slide.addText((idx + 1) + ' / ' + total, { x: 11.3, y: 7.08, w: 1.43, h: 0.32, fontSize: 9, color: T.sub, fontFace: PPT_FONT, align: 'right' });
+}
+
+function _addPptxSlide(pptx, s, T, idx, total, p) {
+  const slide = pptx.addSlide();
+  slide.background = { color: T.bg };
+  const layout = String(s.layout || 'content').toLowerCase();
+  const hasChart = Array.isArray(s.charts) && s.charts.length;
+  const hasTable = s.table && (Array.isArray(s.table.rows) || Array.isArray(s.table.headers));
+  const hasImage = !!(s.image && (s.image.path || s.image.src || typeof s.image === 'string'));
+
+  if (layout === 'title') {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.24, fill: { color: T.primary } });
+    if (s.title) slide.addText(String(s.title), { x: 0.9, y: 2.05, w: 11.53, h: 1.6, fontSize: 33, bold: true, color: T.primary, fontFace: PPT_FONT, align: 'center', valign: 'middle' });
+    if (s.subtitle) slide.addText(String(s.subtitle), { x: 0.9, y: 3.72, w: 11.53, h: 0.8, fontSize: 17, color: T.accent, fontFace: PPT_FONT, align: 'center' });
+    const byline = [p.author, p.date].filter(Boolean).join(' · ');
+    if (byline) slide.addText(byline, { x: 0.9, y: 5.6, w: 11.53, h: 0.5, fontSize: 12, color: T.sub, fontFace: PPT_FONT, align: 'center' });
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 7.26, w: 13.333, h: 0.24, fill: { color: T.cambridge } });
+    return;
+  }
+
+  if (layout === 'section') {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.24, h: 7.5, fill: { color: T.primary } });
+    if (s.title) slide.addText(String(s.title), { x: 1.0, y: 2.6, w: 11.4, h: 1.5, fontSize: 34, bold: true, color: T.primary, fontFace: PPT_FONT, valign: 'middle' });
+    if (s.subtitle) slide.addText(String(s.subtitle), { x: 1.0, y: 4.2, w: 11.4, h: 0.8, fontSize: 15, color: T.sub, fontFace: PPT_FONT });
+    return;
+  }
+
+  // content / twoCol / blank
+  let bodyTop = 0.45;
+  if (layout !== 'blank' && s.title) {
+    slide.addShape(pptx.ShapeType.rect, { x: 0.6, y: 0.5, w: 0.14, h: 0.62, fill: { color: T.accent } });
+    slide.addText(String(s.title), { x: 0.88, y: 0.44, w: 11.85, h: 0.75, fontSize: 24, bold: true, color: T.primary, fontFace: PPT_FONT, valign: 'middle' });
+    bodyTop = 1.38;
+    if (s.subtitle) {
+      slide.addText(String(s.subtitle), { x: 0.88, y: 1.16, w: 11.85, h: 0.42, fontSize: 13, color: T.sub, fontFace: PPT_FONT });
+      bodyTop = 1.68;
+    }
+  }
+
+  const bodyH = 7.02 - bodyTop;
+  if (layout === 'twoCol' && !hasChart && !hasTable) {
+    let cols = Array.isArray(s.columns) ? s.columns : null;
+    if (!cols && Array.isArray(s.bullets)) {
+      const half = Math.ceil(s.bullets.length / 2);
+      cols = [s.bullets.slice(0, half), s.bullets.slice(half)];
+    }
+    const runsL = _bulletRuns(cols && cols[0], T);
+    const runsR = _bulletRuns(cols && cols[1], T);
+    if (runsL.length) slide.addText(runsL, { x: 0.7, y: bodyTop, w: 5.9, h: bodyH, valign: 'top', fontFace: PPT_FONT });
+    if (runsR.length) slide.addText(runsR, { x: 6.7, y: bodyTop, w: 5.9, h: bodyH, valign: 'top', fontFace: PPT_FONT });
+  } else if (hasChart && (Array.isArray(s.bullets) && s.bullets.length)) {
+    const runs = _bulletRuns(s.bullets, T);
+    slide.addText(runs, { x: 0.7, y: bodyTop, w: 5.4, h: bodyH, valign: 'top', fontFace: PPT_FONT });
+    const n = s.charts.length, cw = (n === 1) ? 6.2 : 3.05, cx = 6.35;
+    s.charts.forEach(function (c, i) {
+      const x = (n === 1) ? cx : cx + i * (cw + 0.1);
+      _addChart(slide, pptx, c, T, x, bodyTop, cw, bodyH);
+    });
+  } else if (hasChart) {
+    const n = s.charts.length;
+    s.charts.forEach(function (c, i) {
+      const cw = (n === 1) ? 12.13 : 6.0;
+      const x = (n === 1) ? 0.6 : 0.6 + i * (cw + 0.13);
+      _addChart(slide, pptx, c, T, x, bodyTop, cw, bodyH);
+    });
+  } else if (hasTable) {
+    _addTable(slide, s.table, T, 0.6, bodyTop, 12.13, bodyH);
+  } else if (hasImage) {
+    const src = (typeof s.image === 'string') ? s.image : (s.image.path || s.image.src);
+    if (src) {
+      const abs = path.isAbsolute(src) ? src : path.resolve(src);
+      if (fs.existsSync(abs)) slide.addImage({ path: abs, x: 0.6, y: bodyTop, w: 12.13, h: bodyH, sizing: { type: 'contain', w: 12.13, h: bodyH } });
+      else slide.addText('（图片未找到：' + src + '）', { x: 0.6, y: bodyTop, w: 12.13, h: 0.5, color: 'C0392B', fontSize: 13 });
+    }
+  } else {
+    const runs = _bulletRuns(s.bullets, T);
+    if (runs.length) slide.addText(runs, { x: 0.7, y: bodyTop, w: 11.93, h: bodyH, valign: 'top', fontFace: PPT_FONT });
+  }
+
+  if (s.notes) slide.addNotes(String(s.notes));
+  _addFooter(slide, pptx, T, idx, total, p.title);
+}
+
+function renderPptx(p, file) {
+  return new Promise(function (resolve, reject) {
+    try {
+      const PptxGenJS = require('pptxgenjs');
+      const pptx = new PptxGenJS();
+      if (String(p.size) === '4x3') { pptx.defineLayout({ name: 'STD', width: 10, height: 7.5 }); pptx.layout = 'STD'; }
+      else { pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'; }
+      pptx.author = String(p.author || "Ingrid's AI Agents");
+      pptx.title = String(p.title || '');
+      const base = PPT_THEMES[String(p.theme || 'academic').toLowerCase()] || PPT_THEMES.academic;
+      const T = Object.assign({}, base, {
+        primary: p.primary ? _hex(p.primary) : base.primary,
+        accent: p.accent ? _hex(p.accent) : base.accent,
+      });
+      const slides = (Array.isArray(p.slides) && p.slides.length)
+        ? p.slides
+        : [{ title: String(p.title || '未命名'), bullets: [] }];
+      slides.forEach(function (s, idx) {
+        try { _addPptxSlide(pptx, s, T, idx, slides.length, p); }
+        catch (e) {
+          const sl = pptx.addSlide();
+          sl.addText('（本页渲染失败：' + String(e && e.message || e) + '）', { x: 0.5, y: 0.5, w: 12, h: 1, color: 'C0392B', fontSize: 13 });
+        }
+      });
+      pptx.writeFile({ fileName: file }).then(function () { resolve({ ok: true }); }).catch(reject);
+    } catch (err) { reject(err); }
+  });
+}
+
 ipcMain.handle('doc:generate', async (_e, payload) => {
   const p = payload || {};
   const type = String(p.type || 'docx');
@@ -2466,17 +2675,7 @@ ipcMain.handle('doc:generate', async (_e, payload) => {
       const buf = await Packer.toBuffer(doc);
       fs.writeFileSync(file, buf);
     } else if (type === 'pptx') {
-      const PptxGenJS = require('pptxgenjs');
-      const pptx = new PptxGenJS();
-      const slides = (Array.isArray(p.slides) && p.slides.length) ? p.slides : [{ title: title || '未命名', bullets: [] }];
-      slides.forEach(function (s) {
-        const sl = pptx.addSlide();
-        if (s.title) sl.addText(String(s.title), { x: 0.5, y: 0.4, w: 9, h: 0.9, fontSize: 28, bold: true, color: '4A3F8C' });
-        if (Array.isArray(s.bullets) && s.bullets.length) {
-          sl.addText(s.bullets.map(function (b) { return { text: String(b), options: { bullet: true, breakLine: true, color: '26232E', fontSize: 16 } }; }), { x: 0.7, y: 1.5, w: 8.6, h: 3.8 });
-        }
-      });
-      await pptx.writeFile({ fileName: file });
+      await renderPptx(p, file);
     } else if (type === 'xlsx') {
       const ExcelJS = require('exceljs');
       const wb = new ExcelJS.Workbook();
