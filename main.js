@@ -20,6 +20,7 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const os = require('os');
 const net = require('net');
 const http = require('http');
+const crypto = require('crypto');
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 const { KbEngine, detectObsidianVaults, detectZoteroDir, isWorkspaceVault } = require('./kb-engine.js');
@@ -1107,15 +1108,16 @@ const USD_TO_CNY = 7.2;   // 工作台成本按 USD 记账（PRICES），展示�
 
 const BILLING_META = {
   deepseek: { name: 'DeepSeek', currency: 'CNY', symbol: '¥', auto: true,  defaultThreshold: 20 },
-  gpt:      { name: 'GPT / OpenAI', currency: 'USD', symbol: '$', auto: false, defaultThreshold: 5 },
-  qwen:     { name: 'Qwen / 通义万相', currency: 'CNY', symbol: '¥', auto: false, defaultThreshold: 20 },
+  gpt:      { name: 'GPT / OpenAI', currency: 'USD', symbol: '$', auto: true,  defaultThreshold: 5 },
+  qwen:     { name: 'Qwen / 通义万相', currency: 'CNY', symbol: '¥', auto: true, defaultThreshold: 20 },
 };
 
 function readBalanceState() {
-  const s = readJson(BALANCE_FILE, { balances: {}, thresholds: {}, lastAlert: {} });
+  const s = readJson(BALANCE_FILE, { balances: {}, thresholds: {}, lastAlert: {}, errors: {} });
   if (!s.balances) s.balances = {};
   if (!s.thresholds) s.thresholds = {};
   if (!s.lastAlert) s.lastAlert = {};
+  if (!s.errors) s.errors = {};
   return s;
 }
 function writeBalanceState(s) { writeJson(BALANCE_FILE, s); }
@@ -1145,6 +1147,124 @@ async function queryDeepSeekBalance() {
     grantedBalance: Number(cny.granted_balance) || 0,
     toppedUpBalance: Number(cny.topped_up_balance) || 0,
   };
+}
+
+/* OpenAI 余额：官方没有公开余额接口。未公开端点 /v1/dashboard/billing/credit_grants
+ * 返回 total_granted / total_used / total_available；部分账号/组织用普通 API Key 仍可读，
+ * 部分已被收紧为「必须浏览器会话 key（sess-…，数天过期）」。据此做 best-effort 查询，
+ * 失败则明确降级到手动填写。 */
+async function queryOpenAiBalance() {
+  const settings = decryptSettings(readSettingsRaw());
+  const key = settings.gpt;
+  if (!key) return { ok: false, error: '未配置 OpenAI API Key' };
+  try {
+    const resp = await fetch('https://api.openai.com/v1/dashboard/billing/credit_grants', {
+      headers: { 'Authorization': 'Bearer ' + key, 'Accept': 'application/json' },
+    });
+    if (!resp.ok) {
+      let txt = '';
+      try { txt = await resp.text(); } catch { /* 忽略 */ }
+      const needSession = /session key|session key required/i.test(txt);
+      return {
+        ok: false,
+        error: needSession
+          ? 'OpenAI 已禁止用 API Key 查余额（需浏览器会话 key，数天过期）'
+          : 'OpenAI 未开放余额接口（HTTP ' + resp.status + '）',
+      };
+    }
+    const j = await resp.json();
+    const available = Number(j.total_available);
+    if (!isFinite(available)) return { ok: false, error: '余额响应格式异常' };
+    return {
+      ok: true, currency: 'USD', totalBalance: available,
+      totalGranted: Number(j.total_granted) || 0, totalUsed: Number(j.total_used) || 0,
+    };
+  } catch (e) {
+    return { ok: false, error: '查询 OpenAI 余额失败：' + String((e && e.message) || e) };
+  }
+}
+
+/* Qwen / 通义·百炼 余额：
+ *   - 官方百炼/DashScope 的 sk- key 没有任何余额接口（真金白银在阿里云账户里）。
+ *   - 有阿里云 AccessKey（AK/SK）→ 走 BSS QueryAccountBalance 拿真实可用余额（¥）。
+ *   - 仅 sk- key（Token Plan 套餐 sk-sp-…）→ 尝试 token-plan/balance 读 Credits 余额。
+ *   - 都没有 → 引导手动填写 / 补 AccessKey。 */
+async function queryQwenBalance() {
+  const settings = decryptSettings(readSettingsRaw());
+  const ak = settings.qwenAk;
+  const aksk = settings.qwenSk;
+  if (ak && aksk) {
+    return queryAliyunBalance(ak, aksk);
+  }
+  const sk = settings.qwen;
+  if (sk) {
+    try {
+      const resp = await fetch('https://dashscope.aliyuncs.com/api/v1/token-plan/balance', {
+        headers: { 'Authorization': 'Bearer ' + sk, 'Accept': 'application/json' },
+      });
+      if (resp.ok) {
+        const j = await resp.json();
+        const d = (j && j.data && typeof j.data === 'object') ? j.data : (j || {});
+        const bal = Number(d.available != null ? d.available : (d.balance != null ? d.balance : (d.credits != null ? d.credits : d.remaining)));
+        if (isFinite(bal)) return { ok: true, currency: 'CNY', totalBalance: bal, via: 'token-plan' };
+      }
+      return { ok: false, error: '百炼 sk- key 无余额接口（Token Plan 套餐除外）' };
+    } catch (e) {
+      return { ok: false, error: '查询通义余额失败：' + String((e && e.message) || e) };
+    }
+  }
+  return { ok: false, error: '未配置通义 API Key / 阿里云 AccessKey' };
+}
+
+/* 阿里云 BSS QueryAccountBalance（真实账户余额），用 ACS3-HMAC-SHA256（SigV3）签名。
+ * 参考 ragflow PR #15567：sk- key 不能当 AccessKey，BSS 需 AccessKey ID/Secret 单独签名。 */
+function aliyunPctEnc(s) {
+  return encodeURIComponent(String(s)).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+async function queryAliyunBalance(ak, aksk) {
+  const host = 'business.aliyuncs.com';
+  const action = 'QueryAccountBalance';
+  const version = '2017-12-14';
+  const query = { Action: action, Version: version, Format: 'JSON', RegionId: 'cn-hangzhou' };
+  const qs = Object.keys(query).sort()
+    .map((k) => aliyunPctEnc(k) + '=' + aliyunPctEnc(query[k]))
+    .join('&');
+  const now = new Date();
+  const xAcsDate = now.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const body = '';
+  const contentSha = crypto.createHash('sha256').update(body).digest('hex');
+
+  const headers = {
+    'host': host,
+    'x-acs-action': action,
+    'x-acs-version': version,
+    'x-acs-date': xAcsDate,
+    'x-acs-signature-nonce': nonce,
+    'x-acs-content-sha256': contentSha,
+  };
+  const signedNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedNames.map((n) => n + ':' + String(headers[n]).trim() + '\n').join('');
+  const signedHeaders = signedNames.join(';');
+  const canonicalRequest = 'GET\n' + '/\n' + qs + '\n' + canonicalHeaders + '\n' + signedHeaders + '\n' + contentSha;
+  const hashedCanonical = crypto.createHash('sha256').update(canonicalRequest, 'utf8').digest('hex');
+  const stringToSign = 'ACS3-HMAC-SHA256\n' + hashedCanonical;
+  const signature = crypto.createHmac('sha256', aksk).update(stringToSign, 'utf8').digest('hex');
+  const authorization = 'ACS3-HMAC-SHA256 Credential=' + ak + ',SignedHeaders=' + signedHeaders + ',Signature=' + signature;
+
+  const url = 'https://' + host + '/?' + qs;
+  try {
+    const resp = await fetch(url, { headers: Object.assign({}, headers, { Authorization: authorization }) });
+    if (!resp.ok) return { ok: false, error: '阿里云 BSS HTTP ' + resp.status };
+    const j = await resp.json();
+    if (j && j.Success === false) return { ok: false, error: '阿里云 BSS 错误：' + (j.Message || j.Code || '未知') };
+    const d = (j && j.Data) || {};
+    const bal = Number(d.AvailableAmount != null ? d.AvailableAmount : d.AvailableCashAmount);
+    if (!isFinite(bal)) return { ok: false, error: '阿里云余额响应格式异常' };
+    return { ok: true, currency: String(d.Currency || 'CNY'), totalBalance: bal, via: 'bss' };
+  } catch (e) {
+    return { ok: false, error: '查询阿里云余额失败：' + String((e && e.message) || e) };
+  }
 }
 
 // 用量汇总：按 engine 聚合（本月 / 累计）+ 近 30 天按天成本
@@ -1194,12 +1314,18 @@ async function buildBillingDashboard() {
     }
     engines[id] = {
       engine: id, name: meta.name, symbol: meta.symbol, currency: meta.currency,
-      auto: meta.auto, hasKey: !!settings[id], threshold: threshold,
+      auto: meta.auto,
+      hasKey: id === 'qwen'
+        ? !!(settings[id] || (settings.qwenAk && settings.qwenSk))
+        : !!settings[id],
+      threshold: threshold,
       balance: (typeof bal.balance === 'number') ? bal.balance : null,
       totalBalance: bal.totalBalance, grantedBalance: bal.grantedBalance, toppedUpBalance: bal.toppedUpBalance,
       manual: !!bal.manual, updatedAt: bal.updatedAt || 0,
       low: (typeof bal.balance === 'number') && threshold > 0 && bal.balance <= threshold,
       otherUsageCny: other,
+      via: bal.via || null,
+      error: (state.errors && state.errors[id] && state.errors[id].message) || null,
       monthCostUsd: usage.monthCost, allCostUsd: usage.allCost,
       monthIn: usage.monthIn, monthOut: usage.monthOut, calls: usage.calls,
     };
@@ -1207,24 +1333,40 @@ async function buildBillingDashboard() {
   return { engines, summary, updatedAt: Date.now() };
 }
 
-// 拉取 DeepSeek 余额 + 低余额检查（供 IPC 刷新与定时器共用）
+// 拉取各家余额 + 低余额检查（供 IPC 刷新与定时器共用）
 async function refreshBalanceAndAlert() {
   const state = readBalanceState();
-  let deepseekRes = { ok: false, error: '未配置 DeepSeek API Key' };
   const settings = decryptSettings(readSettingsRaw());
-  if (settings.deepseek) {
-    deepseekRes = await queryDeepSeekBalance();
-    if (deepseekRes.ok) {
-      state.balances.deepseek = {
-        balance: deepseekRes.totalBalance, currency: deepseekRes.currency,
-        totalBalance: deepseekRes.totalBalance, grantedBalance: deepseekRes.grantedBalance,
-        toppedUpBalance: deepseekRes.toppedUpBalance, updatedAt: Date.now(), auto: true,
+  const queries = {
+    deepseek: { run: queryDeepSeekBalance, hasCred: () => !!settings.deepseek },
+    gpt:      { run: queryOpenAiBalance,   hasCred: () => !!settings.gpt },
+    qwen:     { run: queryQwenBalance,     hasCred: () => !!(settings.qwen || (settings.qwenAk && settings.qwenSk)) },
+  };
+  const results = {};
+  for (const id of Object.keys(queries)) {
+    if (!queries[id].hasCred()) {
+      results[id] = { ok: false, error: '未配置 ' + (BILLING_META[id] || {}).name + ' 凭据' };
+      continue;
+    }
+    let r;
+    try { r = await queries[id].run(); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+    results[id] = r;
+    if (r.ok) {
+      const b = {
+        balance: r.totalBalance, currency: r.currency,
+        totalBalance: r.totalBalance, grantedBalance: r.grantedBalance,
+        toppedUpBalance: r.toppedUpBalance, updatedAt: Date.now(), auto: true,
       };
-      writeBalanceState(state);
+      if (r.via) b.via = r.via;
+      state.balances[id] = b;
+      state.errors[id] = null;
+    } else {
+      state.errors[id] = { message: r.error, at: Date.now() };
     }
   }
+  writeBalanceState(state);
   const alerts = checkLowBalance();
-  return { deepseek: deepseekRes, alerts };
+  return { results: results, alerts: alerts };
 }
 
 // 低余额检查 + 系统通知（去重：仅在「跌破阈值」或「余额继续下降」时提醒，且 24h 内不重复）
@@ -1314,7 +1456,7 @@ async function runApiAgent(engine, prompt, soul, key) {
     const resp = await fetch(cfg.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-      body: JSON.stringify({ model: cfg.model, messages, max_tokens: 1200 }),
+      body: JSON.stringify({ model: cfg.model, messages, max_tokens: maxTokensForModel(cfg.model) }),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
@@ -1603,6 +1745,7 @@ ipcMain.handle('balance:set-manual', (_e, engine, balance) => {
   if (!BILLING_META[id]) return { ok: false, error: '未知引擎：' + id };
   const state = readBalanceState();
   state.balances[id] = { balance: Number(balance) || 0, currency: BILLING_META[id].currency, manual: true, updatedAt: Date.now() };
+  state.errors[id] = null;
   writeBalanceState(state);
   checkLowBalance();
   return { ok: true };
@@ -1709,7 +1852,7 @@ ipcMain.handle('chat:start', (e, payload) => {
       }
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
-      let buf = '', truncated = false, outChars = 0;
+      let buf = '', truncated = false, outChars = 0, reasoning = '';
       const toolCalls = {};   // index -> { id, name, arguments } 原生工具调用分片累积
       while (true) {
         const { done, value } = await reader.read();
@@ -1731,7 +1874,7 @@ ipcMain.handle('chat:start', (e, payload) => {
             // 思考型模型（如 qwen3）先流 reasoning 再流 content，两者都要透传
             const text = delta.content || '';
             const thinking = delta.reasoning || delta.reasoning_content || '';
-            if (thinking) send('chat:delta', { thinking: thinking, requestId });
+            if (thinking) { reasoning += thinking; send('chat:delta', { thinking: thinking, requestId }); }
             if (text) { send('chat:delta', { text: text, requestId }); outChars += text.length; }
             // 原生工具调用（OpenAI 兼容流式）：按 index 累积分片（name/arguments 可能分多块到达）
             if (Array.isArray(delta.tool_calls)) {
@@ -1758,7 +1901,7 @@ ipcMain.handle('chat:start', (e, payload) => {
           costSource: 'estimated', status: 'ok', dryRun: false,
         });
       } catch (e) { /* 记账失败不阻断聊天 */ }
-      send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls, requestId });
+      send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls, reasoning: reasoning, requestId });
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err), requestId });
     } finally {
@@ -1907,7 +2050,7 @@ async function callBgChat(engine, model, messages, tools) {
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
-    let buf = '', text = '', truncated = false;
+    let buf = '', text = '', truncated = false, reasoning = '';
     const toolCalls = {};
     while (true) {
       const { done, value } = await reader.read();
@@ -1927,6 +2070,7 @@ async function callBgChat(engine, model, messages, tools) {
           const delta = choice && choice.delta;
           if (!delta) continue;
           if (delta.content) text += delta.content;
+          if (delta.reasoning || delta.reasoning_content) reasoning += (delta.reasoning || delta.reasoning_content);
           if (Array.isArray(delta.tool_calls)) {
             for (const tc of delta.tool_calls) {
               const ti = tc.index != null ? tc.index : 0;
@@ -1941,7 +2085,7 @@ async function callBgChat(engine, model, messages, tools) {
     }
     clearTimeout(stallTimer);
     const assembled = Object.keys(toolCalls).map((k) => toolCalls[k]).filter((t) => t.name);
-    return { ok: true, text: text, tool_calls: assembled, truncated: truncated };
+    return { ok: true, text: text, tool_calls: assembled, truncated: truncated, reasoning: reasoning };
   } catch (err) {
     return { ok: false, error: '请求失败：' + String((err && err.message) || err) };
   }
@@ -1992,6 +2136,7 @@ async function runBackgroundTask(ticket) {
         role: 'assistant', content: raw,
         tool_calls: r.tool_calls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })),
       });
+      if (r.reasoning) msgs[msgs.length - 1].reasoning_content = r.reasoning;
       msgs = msgs.concat(results);
       continue;
     }
@@ -2418,6 +2563,20 @@ ipcMain.handle('review:checkpoint:clear', (_e, agent) => { clearReviewCheckpoint
 // 去道德化（abliteration）模型会顺带削弱「简洁 / 聚焦 / 知道何时停笔」能力，
 // 这里不换模型、不重训，只靠采样参数强约束补回：抑制重复 + 限制长度 + 适度降温。
 // 仅在命中 uncensored/abliterat 模型时生效（本地 Ollama），其余引擎不受影响。
+// 思考型模型是否默认开启思考链（DeepSeek V4 系列、本地 r1 推理模型等）
+function isThinkingModel(model) {
+  const m = String(model || '');
+  return /deepseek|v4|reasoner|\br1\b|o1|o3|thinking/i.test(m);
+}
+
+// 输出 token 上限：思考型模型的「思考链」本身就很耗 token，硬编码 8000 会把正文挤掉，
+// 表现为 finish_reason=length 截断（回答说到一半就断）或「只有思考、没有正文」的空回复。
+// DeepSeek V4 思考模式官方默认输出上限 64K，这里放宽到 32000 留足思考+正文空间。
+function maxTokensForModel(model) {
+  if (isThinkingModel(model)) return 32000;
+  return 8000;
+}
+
 function samplingForModel(model) {
   const m = String(model || '');
   if (/uncensored|abliterat/i.test(m)) {
@@ -2428,7 +2587,7 @@ function samplingForModel(model) {
       presence_penalty: 0.5,      // 惩罚已出现内容，鼓励推进而非原地打转
     };
   }
-  return {};
+  return { max_tokens: maxTokensForModel(m) };
 }
 
 // 通用流式调用：向 CHAT_ENDPOINTS 引擎发请求，累积完整文本，逐块回调 onChunk(text, thinking)
@@ -2457,8 +2616,9 @@ async function completeChatStream(engine, messages, onChunk, opts) {
     body: JSON.stringify(Object.assign({
       model: model, messages: messages, stream: true,
       temperature: o.temperature != null ? o.temperature : 0.7,
-      max_tokens: o.maxTokens || 8000,
-    }, samplingForModel(model))),
+    }, samplingForModel(model), {
+      max_tokens: o.maxTokens || maxTokensForModel(model),
+    })),
   });
   if (!resp.ok) {
     clearTimeout(stallTimer);

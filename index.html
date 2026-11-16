@@ -1118,6 +1118,17 @@ function openSettings() {
     apiList.appendChild(div);
   });
 
+  // 通义/阿里云：sk- key 本身没有余额接口，真实余额要 AccessKey（BSS），单独两个字段（可选）
+  const qwRow = document.createElement('div');
+  qwRow.className = 'engine-row';
+  qwRow.style.cssText = 'flex-wrap:wrap;row-gap:8px';
+  qwRow.innerHTML = `
+    <div class="e-ic">${iconSvg('key')}</div>
+    <div class="e-body"><div class="e-name">阿里云 AccessKey（通义余额自动查，可选）</div><div class="e-tag">用于读阿里云真实账户余额（BSS）；仅本机加密保存。不填则通义余额只能手动填</div></div>
+    <input data-qwen-ak type="password" placeholder="AccessKey ID（LTAI…）" style="flex:1;min-width:160px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:12.5px;background:#fff;color:var(--ink)">
+    <input data-qwen-sk type="password" placeholder="AccessKey Secret" style="flex:1;min-width:160px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:12.5px;background:#fff;color:var(--ink)">`;
+  apiList.appendChild(qwRow);
+
   // 回填已存的 Key（桌面版从钥匙串解密读取）
   if (IS_DESKTOP) {
     window.ingrid.getSettings().then(s => {
@@ -1125,6 +1136,10 @@ function openSettings() {
         const inp = apiList.querySelector(`[data-key="${id}"]`);
         if (inp && s[id]) inp.value = s[id];
       });
+      const ak = apiList.querySelector('[data-qwen-ak]');
+      const sk = apiList.querySelector('[data-qwen-sk]');
+      if (ak && s.qwenAk) ak.value = s.qwenAk;
+      if (sk && s.qwenSk) sk.value = s.qwenSk;
     });
   }
 
@@ -1165,6 +1180,10 @@ settingsModal.addEventListener('click', e => {
       const inp = settingsModal.querySelector(`[data-key="${id}"]`);
       if (inp && inp.value.trim()) out[id] = inp.value.trim();
     });
+    const qwAk = settingsModal.querySelector('[data-qwen-ak]');
+    const qwSk = settingsModal.querySelector('[data-qwen-sk]');
+    if (qwAk && qwAk.value.trim()) out.qwenAk = qwAk.value.trim();
+    if (qwSk && qwSk.value.trim()) out.qwenSk = qwSk.value.trim();
     if (IS_DESKTOP) window.ingrid.saveSettings(out);
     alert('已保存（本机钥匙串加密存储）');
   }

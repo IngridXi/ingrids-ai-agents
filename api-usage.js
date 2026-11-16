@@ -159,9 +159,6 @@
       headEl.querySelector('.au-refresh').textContent = '刷新余额';
       if (r && r.dashboard) render(r.dashboard);
       else load();
-      if (r && r.deepseek && r.deepseek.ok === false) {
-        // 静默：余额查询失败不打断渲染，卡片上会显示「未查到」
-      }
     }).catch(function (e) {
       headEl.querySelector('.au-refresh').disabled = false;
       headEl.querySelector('.au-refresh').textContent = '刷新余额';
@@ -196,7 +193,7 @@
     // 3) 近 30 天用量
     html += '<div class="au-sec"><h3>近 30 天工作台成本（按天，¥）</h3>' + bars(s) + '</div>';
 
-    html += '<div class="au-updated">数据更新于 ' + new Date(d.updatedAt).toLocaleString('zh-CN') + ' · DeepSeek 余额自动查询，GPT/Qwen 余额请手动填写</div>';
+    html += '<div class="au-updated">数据更新于 ' + new Date(d.updatedAt).toLocaleString('zh-CN') + ' · DeepSeek 走官方接口自动查；GPT 走未公开 credit_grants（失败需手动）；Qwen 需阿里云 AccessKey 或 Token Plan 才能自动查</div>';
 
     bodyEl.innerHTML = html;
     bindCards();
@@ -212,8 +209,9 @@
     var badges = '';
     if (e.hasKey) badges += '<span class="au-badge key">已配 Key</span>';
     else badges += '<span class="au-badge nokey">未配 Key</span>';
-    if (e.auto) badges += '<span class="au-badge auto">余额自动查</span>';
-    else badges += '<span class="au-badge manual">余额手动填</span>';
+    if (e.manual) badges += '<span class="au-badge manual">余额手动填</span>';
+    else if (e.auto) badges += '<span class="au-badge auto">余额自动查</span>';
+    if (e.via === 'bss') badges += '<span class="au-badge auto" style="background:#eef3fb;color:#2f6fed">阿里云 BSS</span>';
     if (e.low) badges += '<span class="au-badge low">余额不足</span>';
 
     var balNum = (typeof e.balance === 'number')
@@ -224,6 +222,10 @@
       ? '<span class="v other">¥' + fmtMoney(e.otherUsageCny) + '</span>'
       : '<span class="v" style="color:#b4b2a9">—</span>';
 
+    var errLine = (typeof e.balance !== 'number' && e.error)
+      ? '<div style="font-size:11px;color:#b08938;margin-top:6px;">自动查询失败：' + esc(e.error) + '（可手动填写）</div>'
+      : '';
+
     var html =
       '<div class="au-card' + (e.low ? ' low' : '') + '" data-engine="' + esc(e.engine) + '">' +
       '  <div class="au-top"><span class="au-ename">' + esc(e.name) + '</span>' + badges + '</div>' +
@@ -231,6 +233,7 @@
       '    <span class="cur">' + esc(e.currency) + '</span>' +
       '    <span class="thr">阈值 ' + e.symbol + (e.threshold || '—') + ' · 更新 ' + relTime(e.updatedAt) + '</span>' +
       '  </div>' +
+      errLine +
       '  <div class="au-grid">' +
       '    <div class="au-cell"><div class="k">本月工作台</div><div class="v">' + costDisplay(e.monthCostUsd, e.symbol) + '</div></div>' +
       '    <div class="au-cell"><div class="k">累计工作台</div><div class="v">' + costDisplay(e.allCostUsd, e.symbol) + '</div></div>' +
@@ -241,13 +244,11 @@
       '    <div class="au-cell"><div class="k">累计 Token</div><div class="v">' + fmtTokens((e.monthIn + e.monthOut)) + '</div></div>' +
       '    <div class="au-cell"><div class="k">调用次数</div><div class="v">' + fmtNum(e.calls) + '</div></div>' +
       '  </div>' +
-      '  <div class="au-foot">';
-    if (!e.auto) {
-      html += '<span class="lbl">手动填余额 ' + e.symbol + '</span>' +
-        '<input class="inp au-manual" type="number" min="0" step="0.01" placeholder="' + esc(e.currency) + '" />' +
-        '<button class="btn au-save-manual" type="button">保存</button>';
-    }
-    html += '<span class="lbl">低余额阈值 ' + e.symbol + '</span>' +
+      '  <div class="au-foot">' +
+      '<span class="lbl">手动填余额 ' + e.symbol + '</span>' +
+      '<input class="inp au-manual" type="number" min="0" step="0.01" placeholder="' + esc(e.currency) + '" />' +
+      '<button class="btn au-save-manual" type="button">保存</button>' +
+      '<span class="lbl">低余额阈值 ' + e.symbol + '</span>' +
       '<input class="inp au-threshold" type="number" min="0" step="1" value="' + esc(e.threshold || '') + '" />' +
       '<button class="btn au-save-threshold" type="button">保存阈值</button>';
     html += '  </div>' +

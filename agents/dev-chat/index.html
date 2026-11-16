@@ -2344,6 +2344,7 @@
                 if (nativeCalls.length) {
                   // 原生工具调用：用 role:tool 回传结果（OpenAI 规范），模型才能继续
                   var assistantMsg = { role: 'assistant', content: rawRound || '', tool_calls: nativeCalls.map(function (tc) { return { id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }; }) };
+                  if (d && d.reasoning) assistantMsg.reasoning_content = d.reasoning;
                   var toolMsgs = calls.map(function (c, i) { return { role: 'tool', tool_call_id: nativeCalls[i] ? nativeCalls[i].id : ('t' + i), content: results[i] }; });
                   next = msgs.concat([assistantMsg]).concat(toolMsgs);
                   if (correction) next = next.concat([{ role: 'user', content: correction }]);
