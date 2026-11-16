@@ -21,6 +21,46 @@ npm install
 npm start
 ```
 
+## 独立部署（不依赖 WorkBuddy）
+
+工作台**核心功能零 WorkBuddy 依赖**，clone 到任何装了 Node.js 的 macOS 机器即可运行；WorkBuddy 只是「可选 skill 导入源」（见文末）。
+
+### 前置依赖
+
+| 依赖 | 用途 | 检查 |
+|---|---|---|
+| Node.js 18+ 与 npm | Electron 应用与依赖 | `node -v` |
+| macOS（含 Xcode 命令行工具） | 用系统命令 `textutil` / `/usr/bin/swift` / `/usr/bin/unzip` 提取 PDF/PPTX | `xcode-select --install` |
+| 系统 Python 3（`/usr/bin/python3`，macOS 自带） | Word 编辑、电脑操作、浏览器自动化脚本 | `/usr/bin/python3 --version` |
+
+> Windows/Linux 也能跑大部分功能，但 PDF/PPTX 提取、电脑操作、浏览器自动化这几个依赖 macOS 系统命令的能力会降级（`main.js` 里 `SYSTEM_PY3` 已按平台回退到 `python` / `python3`）。
+
+### 系统 Python 的两个可选包（按需安装）
+
+只在你用到「Word 编辑」「电脑操作 / 浏览器自动化」时需要，装到**用户级**（无需 sudo）：
+
+```bash
+/usr/bin/python3 -m pip install --user python-docx pyobjc-framework-Quartz pyobjc-framework-Cocoa
+```
+
+没装也不影响工作台启动，只是对应能力（`doc_edit` / `computer` / `cdp`）会提示不可用。
+
+### 模型引擎（可选，不配也能跑演练模式）
+
+- **云端 API**：在「⚙️ 引擎设置」填 `deepseek` / `gpt` / `qwen` 的 Key；
+- **本机 CLI**：装并登录 `claude` / `codex` / `grok`；
+- **本地推理**：装 [Ollama](https://ollama.com) 并 `ollama pull qwen3:8b`（会议纪要、情绪做法提炼等本地任务可用）。
+
+### 数据落盘位置
+
+```
+~/Library/Application Support/Ingrid's AI Agents/data/
+```
+
+### 关于 WorkBuddy（可选导入源，非依赖）
+
+主进程会扫描 `~/.workbuddy/skills` 与 `~/.workbuddy/plugins/cache` 作为**可选 skill 导入源**，但默认**一条都不启用**；机器上没有这些目录会自动跳过，不影响任何功能。也就是说：**换一台没有 WorkBuddy 的机器，工作台照常独立运行**，只是少了「从 WorkBuddy 一键导入现成 skill」这个便利。
+
 ## 目录结构
 
 ```
