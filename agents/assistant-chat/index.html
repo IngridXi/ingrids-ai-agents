@@ -339,6 +339,7 @@
 <script src="../../icons.js"></script>
 <script src="../../supervisor-core.js"></script>
 <script src="../../chat-feedback.js"></script>
+<script src="../../chat-index.js"></script>
 <script>
 (function () {
   'use strict';
@@ -476,7 +477,7 @@
         }).filter(Boolean).join(' ');
         c = txt || '[图片]';
       }
-      return { role: m.role, content: String(c == null ? '' : c) };
+      return { role: m.role, content: String(c == null ? '' : c), ts: m.ts ? Number(m.ts) : undefined };
     });
   }
   /* ---------- 多会话：聊天记录列表 + 新对话 + 会话内检索 ---------- */
@@ -592,7 +593,7 @@
     var s = currentSession();
     if (!s || !s.messages.length) { welcome(); return; }
     s.messages.forEach(function (m) {
-      var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content));
+      var b = addBubble(m.role, m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content), m.ts);
       if (m.role === 'assistant') renderMermaidIn(b);
     });
     messages.scrollTop = messages.scrollHeight;
@@ -1102,6 +1103,7 @@
 
   var el = function (id) { return document.getElementById(id); };
   var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
+  var chatIndex = window.ChatIndex ? window.ChatIndex.mount({ messagesEl: messages }) : null;
   var engineSelect = el('engineSelect');
 
   function setLogo() {
@@ -1203,13 +1205,15 @@
     } else { render(); }
   }
 
-  function addBubble(role, html) {
+  function addBubble(role, html, ts) {
     var wrap = document.createElement('div');
     wrap.className = 'msg ' + role;
+    var stamp = fmtClock(ts);
+    wrap.setAttribute('data-ts', stamp);
     wrap.innerHTML = avatarHtml(role);
     var body = document.createElement('div');
     body.className = 'msg-body';
-    body.innerHTML = '<div class="bubble">' + html + '</div>';
+    body.innerHTML = '<div class="bubble">' + html + '</div>' + '<div class="msg-time">' + stamp + '</div>';
     wrap.appendChild(body);
     if (role === 'assistant') {
       var cb = document.createElement('button');
@@ -1386,7 +1390,7 @@
     if (urlMatch && !img && !isNote && IS_DESKTOP) {
       var url = urlMatch[0];
       var instruction = text.replace(urlMatch[0], '').trim() || '请总结这个网页的主要内容';
-      history.push({ role: 'user', content: text });
+      history.push({ role: 'user', content: text, ts: nowTs() });
       while (history.length > 24) history.shift();
       touchCurrentSession(); persistSessions(); renderSessionList();
       withWebFetch(url, instruction);
@@ -1407,8 +1411,8 @@
       messages.scrollTop = messages.scrollHeight;
     }
     function finish(finalText, err) {
-      history.push({ role: 'user', content: isNote ? noteWrap(body) : (body || (img ? '（图片）' : '')) });
-      if (finalText) history.push({ role: 'assistant', content: finalText });
+      history.push({ role: 'user', content: isNote ? noteWrap(body) : (body || (img ? '（图片）' : '')), ts: nowTs() });
+      if (finalText) history.push({ role: 'assistant', content: finalText, ts: nowTs() });
       while (history.length > 24) history.shift();
       touchCurrentSession();
       persistSessions();
@@ -1600,7 +1604,7 @@
       bubble.innerHTML = thinkHtml + (err ? '<span class="err">' + esc('⚠️ ' + err) + '</span>' : mdToHtml(finalText || '（无回复）'));
       if (err) bubble.classList.add('err');
       else renderMermaidIn(bubble);
-      if (finalText) { history.push({ role: 'assistant', content: finalText }); touchCurrentSession(); persistSessions(); renderSessionList(); }
+      if (finalText) { history.push({ role: 'assistant', content: finalText, ts: nowTs() }); touchCurrentSession(); persistSessions(); renderSessionList(); }
       streaming = false; sendBtn.disabled = false;
       setContextTag('');
       input.focus();

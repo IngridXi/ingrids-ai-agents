@@ -6,8 +6,9 @@
  *  目标（对齐 WorkBuddy / ChatGPT 的反馈体验）：
  *    1. 👍/👎 固定显示在每一条 assistant 回复的正下方（不再 hover 才出现、
  *       不再悬浮在气泡右上角、不再只出现在思考过程里）。
- *    2. 点击 👍/👎 弹出「细化」窗口：给出几个原因选项（chips）+ 一个手动
- *       输入条，让用户清楚阐述对哪里满意 / 不满。
+ *    2. 点 👍/👎 立即快捷记录（无需填写，秒完成），随后弹出一个「可选」的
+ *       细化窗口：可以选原因、写补充、勾选沉淀；也可以直接关掉，快捷记录
+ *       已经生效。
  *    3. 窗口里带「是否沉淀」判断：勾选「沉淀为长期偏好」时，把这条反馈
  *       提交给经验沉淀官（仍停 pending_approval，人工在环铁律不变）；
  *       不确定时给出「什么时候该沉淀」的引导说明。
@@ -28,7 +29,6 @@
  *      api:          {                        // 可选；缺省时自动取 window.ingrid
  *        observe: fn(raw),                   // 记录情绪/评价信号（sentimentObserve）
  *        settle:  fn(item),                  // 提交经验沉淀（settlerSubmit）
- *        distill: fn(),                      // 提炼偏好（sentimentDistill，可选）
  *      },
  *    }
  * ============================================================
@@ -74,6 +74,12 @@
     '.cf-btn.cf-up.on { border-color: ' + C.accent + '; background: ' + C.accentSoft + '; color: ' + C.accent2 + '; }',
     '.cf-btn.cf-down.on { border-color: ' + C.danger + '; background: #fdf0ef; color: ' + C.danger + '; }',
     '.cf-note { font-size: 11px; color: ' + C.inkFaint + '; }',
+
+    '/* 消息时间戳（年月日 + 时分） */',
+    '.msg-time {',
+    '  font-size: 11px; color: ' + C.inkFaint + '; line-height: 1.2;',
+    '  margin: 4px 12px 0; user-select: none; white-space: nowrap;',
+    '}',
 
     '/* chat-feedback：细化弹窗 */',
     '.cf-overlay {',
@@ -193,7 +199,6 @@
     return {
       observe: typeof ing.sentimentObserve === 'function' ? ing.sentimentObserve : null,
       settle:  typeof ing.settlerSubmit === 'function' ? ing.settlerSubmit : null,
-      distill: typeof ing.sentimentDistill === 'function' ? ing.sentimentDistill : null,
     };
   }
 
@@ -213,8 +218,8 @@
 
   /* ---------------- 主入口：attach(bodyEl, opts) ---------------- */
   /**
-   * 在 assistant 回复的气泡下方（bodyEl 内）追加固定反馈条，返回控制对象
-   * { footer, setRated(v), value() }。点击 👍/👎 打开细化弹窗。
+   * 在 assistant 回复的气泡下方（bodyEl 内）追加固定反馈条，返回控制对象。
+   * 点击 👍/👎：先立即快捷记录，再弹可选细化窗。
    */
   function attach(bodyEl, opts) {
     ensureCss();
@@ -241,8 +246,10 @@
     note.className = 'cf-note';
     note.textContent = '';
 
-    up.addEventListener('click', function () { openModal('positive', { footer: footer, up: up, down: down, note: note, state: state, opts: opts, api: api }); });
-    down.addEventListener('click', function () { openModal('negative', { footer: footer, up: up, down: down, note: note, state: state, opts: opts, api: api }); });
+    var ctx = { footer: footer, up: up, down: down, note: note, state: state, opts: opts, api: api };
+
+    up.addEventListener('click', function () { rate('positive', ctx); });
+    down.addEventListener('click', function () { rate('negative', ctx); });
 
     footer.appendChild(up);
     footer.appendChild(down);
@@ -260,7 +267,33 @@
     note.textContent = valence === 'positive' ? '已记录 · 感谢反馈' : '已记录 · 会改进';
   }
 
-  /* ---------------- 细化弹窗 ---------------- */
+  /* 点 👍/👎：立即快捷记录（不强制填写），随后弹「可选」细化窗 */
+  function rate(valence, ctx) {
+    quickRecord(valence, ctx);
+    openModal(valence, ctx);
+  }
+
+  /* 快捷记录：立即写一条情绪/评价信号 + 高亮按钮 + 提示（无需等弹窗） */
+  function quickRecord(valence, ctx) {
+    var isPos = valence === 'positive';
+    var text = isPos ? '这条回答有帮助' : '这条回答不满意';
+    try {
+      var p = ctx.api.observe({
+        text: text,
+        valence: valence,
+        agent: clean(ctx.opts.agent) || '通用',
+        sessionId: ctx.opts.getSessionId ? ctx.opts.getSessionId() : '',
+        source: 'feedback',
+        context: ctx.opts.getContext ? clean(ctx.opts.getContext()).slice(0, 800) : '',
+        scenario: '',
+      });
+      if (p && typeof p.catch === 'function') p.catch(function () {});
+    } catch (e) { /* 静默 */ }
+    setRated(ctx.state, ctx.up, ctx.down, ctx.note, valence);
+    toast(isPos ? '已记录 👍 · 可补充详情（也可直接关闭）' : '已记录 👎 · 可补充详情（也可直接关闭）');
+  }
+
+  /* ---------------- 细化弹窗（可选，可随时关闭） ---------------- */
   function openModal(valence, ctx) {
     var reasons = valence === 'positive' ? POS_REASONS : NEG_REASONS;
     var isPos = valence === 'positive';
@@ -281,11 +314,11 @@
       ? '这条回答帮到你了 👍'
       : '这条回答哪里不满意 👎';
     var subtitle = isPos
-      ? '哪里做得不错？（可多选，也可以直接提交）'
-      : '问题出在哪？（可多选）';
+      ? '已快捷记录。可选：补充一下哪里做得好？'
+      : '已快捷记录。可选：具体说说哪里不对？';
     var placeholder = isPos
-      ? '还想补充吗？例如希望它以后也这么做……（可选）'
-      : '具体说说哪里不对，它应该怎么做？（可选）';
+      ? '例如：希望它以后也这么做……（可选，留空直接关闭即可）'
+      : '具体说说哪里不对、它应该怎么做？（可选，留空直接关闭即可）';
     var settleLabel = isPos
       ? '沉淀为长期偏好，让 AI 以后<b>继续保持</b>'
       : '沉淀为长期偏好，让 AI 以后<b>避免</b>';
@@ -313,8 +346,8 @@
         '</ul></details>' +
       '</div>' +
       '<div class="cf-actions">' +
-        '<button type="button" class="cf-cancel">取消</button>' +
-        '<button type="button" class="cf-submit">提交反馈</button>' +
+        '<button type="button" class="cf-cancel">关闭</button>' +
+        '<button type="button" class="cf-submit">提交补充</button>' +
       '</div>';
 
     overlay.appendChild(modal);
@@ -347,6 +380,8 @@
     overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
     document.addEventListener('keydown', onKey);
 
+    // 提交「补充」：仅在用户勾选原因/写了补充/勾沉淀时，把增量信息写回；
+    // 基础情绪信号已在 quickRecord 里记录，不重复。
     submitBtn.addEventListener('click', function () {
       if (submitBtn.disabled) return;
       submitBtn.disabled = true;
@@ -359,11 +394,10 @@
       var freeText = clean(input.value);
       var scenario = (ids[0] && REASON_SCENARIO[ids[0]]) || '';
 
-      // 组装反馈文本（供情绪/偏好 Agent 记录）
       var parts = [];
       if (labels.length) parts.push((isPos ? '认可：' : '不满：') + labels.join('、'));
       if (freeText) parts.push('补充：' + freeText);
-      var text = parts.join('。') || (isPos ? '这条回答有帮助' : '这条回答不满意');
+      var text = parts.join('。');
 
       var approach = freeText;
       if (!approach && labels.length) {
@@ -371,28 +405,30 @@
       }
       if (!approach) approach = isPos ? '继续保持当前做法' : '请用户补充具体改进方向';
 
-      try {
-        // 1) 总是记录一条情绪/评价信号（学习用户偏好）
-        var p1 = api.observe({
-          text: text,
-          valence: valence,
-          agent: clean(opts.agent) || '通用',
-          sessionId: opts.getSessionId ? opts.getSessionId() : '',
-          source: 'feedback',
-          context: opts.getContext ? clean(opts.getContext()).slice(0, 800) : '',
-          scenario: scenario,
-        });
-        if (p1 && typeof p1.catch === 'function') p1.catch(function () {});
-      } catch (e) { /* 静默 */ }
-
-      // 2) 勾选「沉淀」→ 直接提交经验沉淀官（待人工审批，人工在环铁律不变）
-      if (settleBox.checked && api.settle) {
+      // 1) 有补充细节 → 记一条「细化」信号（与快捷记录同 session，偏好 Agent 会聚合）
+      if (labels.length || freeText) {
         try {
-          var p2 = api.settle({
+          var p1 = ctx.api.observe({
+            text: text,
+            valence: valence,
+            agent: clean(ctx.opts.agent) || '通用',
+            sessionId: ctx.opts.getSessionId ? ctx.opts.getSessionId() : '',
+            source: 'feedback-detail',
+            context: ctx.opts.getContext ? clean(ctx.opts.getContext()).slice(0, 800) : '',
+            scenario: scenario,
+          });
+          if (p1 && typeof p1.catch === 'function') p1.catch(function () {});
+        } catch (e) { /* 静默 */ }
+      }
+
+      // 2) 勾选「沉淀」→ 提交经验沉淀官（待人工审批，人工在环铁律不变）
+      if (settleBox.checked && ctx.api.settle) {
+        try {
+          var p2 = ctx.api.settle({
             source: 'feedback',
             rule: 'user-preference',
             title: (isPos ? '【用户偏好】保持' : '【用户偏好】避免') + (scenario ? '：' + scenario : ''),
-            evidence: '用户对「' + (clean(opts.agent) || '通用') + '」的回答点了 ' + (isPos ? '👍' : '👎') + '，反馈：' + text,
+            evidence: '用户对「' + (clean(ctx.opts.agent) || '通用') + '」的回答点了 ' + (isPos ? '👍' : '👎') + (text ? '，反馈：' + text : ''),
             rootCause: isPos ? '用户认可这种做法' : '用户不满意这种做法',
             fixApproach: approach,
           });
@@ -400,13 +436,11 @@
         } catch (e) { /* 静默 */ }
       }
 
-      // 3) 更新按钮状态 + 提示
-      setRated(ctx.state, ctx.up, ctx.down, ctx.note, valence);
       close();
-      toast(settleBox.checked ? '已记录，并已提交沉淀（待人工审批）' : '已记录，感谢反馈');
+      toast(settleBox.checked ? '已提交沉淀（待人工审批）' : (labels.length || freeText ? '已补充，感谢反馈' : '已记录，感谢反馈'));
     });
 
-    // 打开动画 + 聚焦
+    // 打开动画 + 聚焦（不强求填写，用户可直接关闭）
     requestAnimationFrame(function () {
       overlay.classList.add('cf-show');
       input.focus();
@@ -414,7 +448,7 @@
   }
 
   /* ---------------- 导出 ---------------- */
-  // 立即注入布局样式（.msg-body 等）——addBubble 无条件用到，不能等 attach 才注入
+  // 立即注入布局样式（.msg-body / .msg-time 等）——addBubble 无条件用到，不能等 attach 才注入
   ensureCss();
 
   window.ChatFeedback = {

@@ -23,7 +23,7 @@ source: workbuddy-pptx / workbuddy-docx / workbuddy-sheetagent（适配工作台
 
 ## PPT 怎么做（重点）
 
-**核心原则：能上图不上表、能上表不堆字。** 纯文字的 PPT 是失败的——有数据、趋势、对比、占比的内容必须可视化。
+**核心原则：分板块、有版式、嵌进图形，绝不把文字直接罗列在页面上。** 纯文字列表的 PPT 是失败的——用户要的是「标题栏 → 并列卡片 / 流程箭头 / 金字塔 / 左右对比」这种有版式设计的感觉。
 
 ### 顶层参数
 
@@ -36,8 +36,9 @@ source: workbuddy-pptx / workbuddy-docx / workbuddy-sheetagent（适配工作台
 
 - `title` 页标题（结论，不是名词）
 - `subtitle` 副标题（可选）
-- `layout` 版式：`title`(标题页) / `section`(章节页) / `content`(正文，默认) / `twoCol`(双栏) / `blank`(空白)
-- `bullets` 要点数组：字符串，或 `{text, sub:[...]}` 带子要点
+- `layout` 版式：`title`(标题页) / `section`(章节页) / `content`(正文，默认) / `twoCol`(双栏) / `blank`(空白) / `cards`(卡片) / `flow`(横向流程) / `pyramid`(金字塔) / `compare`(左右对比)
+- **`blocks` 板块数组（强烈推荐，智能图形核心）**：`[{title:"板块名", points:["要点1","要点2"], accent:"色值(可选)"}, ...]`。有 blocks 时渲染器**按板块数量自动匹配智能图形版式**：2 块左右分栏、3 块三栏、4 块 2×2 矩阵、更多网格；配合 `layout:"flow"` 做横向流程（箭头串联）、`layout:"pyramid"` 做金字塔（自上而下逐层加宽）、`layout:"compare"` 做左右对比。
+- `bullets` 要点数组：字符串，或 `{text, sub:[...]}` 带子要点（没有 blocks 时的兜底）
 - `charts` 图表数组（原生可编辑图表）：
   - 单系列：`{type, title, labels:[...], values:[...]}`
   - 多系列：`{type, title, labels:[...], series:[{name, values:[...]}]}`
@@ -49,8 +50,15 @@ source: workbuddy-pptx / workbuddy-docx / workbuddy-sheetagent（适配工作台
 ### 版式与结构
 
 - 首尾用 `layout:"title"` 做标题页；每个大段开头用 `layout:"section"` 做章节页。
+- **正文页优先用 `blocks` 分板块**：把「并列的几个方面」写成 blocks（3 个方面 → 自动三栏卡片）；「有先后顺序的步骤」用 `layout:"flow"` + blocks；「层级递进」用 `layout:"pyramid"`；「正反对照」用 `layout:"compare"`。文字写进每个板块的 `points`，每个 points 一句短句。
 - 有图又有要点时，要点放左、图放右（自动布局）。
-- 每页一个核心结论；每页 bullets 3–6 条、每条一句、不写整段话。
+- 每页一个核心结论；每页 3–6 个板块/要点，每条一句，不写整段话。
+
+## 套模板（复用已有 .pptx 的母版/SmartArt）
+
+- 首选 `doc_generate` 生成（纯 Node 内置，产出上面的智能图形版式，无需任何外部依赖）。
+- 需要 1:1 复用某个 .pptx 模板的母版/背景/主题时，用 `pptx_fill_template` 工具：先 `action:"inspect"` 看模板每页形状名与占位符，再 `action:"fill"` 填空。
+- **`pptx_fill_template` 是内置工具，机器已装好 python-pptx，直接调用即可，绝不要用 shell/computer 手动 `pip install`**（那样会被权限拦截并误判为「缺依赖」）。
 
 ## 内容组织纪律
 

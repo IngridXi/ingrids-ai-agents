@@ -2512,6 +2512,80 @@ function _bulletRuns(bullets, T) {
   return runs;
 }
 
+/* ================= 智能图形版式（SmartArt 风格，按「板块」数量自动匹配） =================
+ * 用户要的不是「把文字罗列在页面上」，而是「分板块、清晰、有版式设计」——像
+ * Cambridge 参考稿那样：标题栏 → 并列卡片 / 流程箭头 / 金字塔 / 左右对比。
+ * 做法：slides 每页可选 blocks 板块数组，渲染器按板块数量自动选版式：
+ *   2 块左右分栏、3 块三栏、4 块 2×2 矩阵、更多网格；flow 横向流程、pyramid 金字塔。
+ */
+// 单个板块卡片：白底细边框 + 顶部色条标题 + 项目符号要点
+function _addCard(slide, pptx, b, T, x, y, w, h, idx) {
+  const title = String((b && (b.title || b.heading || b.name)) || '');
+  const pts = (b && Array.isArray(b.points)) ? b.points : (b && Array.isArray(b.bullets)) ? b.bullets : [];
+  const color = (b && b.accent) ? _hex(b.accent) : T.chartColors[(idx || 0) % T.chartColors.length];
+  // 卡片底
+  slide.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: T.bg }, line: { color: T.line, width: 1 } });
+  // 顶部色条 + 标题
+  const hh = Math.min(0.54, h * 0.28);
+  slide.addShape(pptx.ShapeType.rect, { x, y, w, hh, fill: { color: color }, line: { color: color, width: 0 } });
+  if (title) slide.addText(String(title), { x: x + 0.12, y: y + 0.04, w: w - 0.24, h: hh - 0.08, fontSize: 13, bold: true, color: 'FFFFFF', fontFace: PPT_FONT, valign: 'middle', align: 'center', wrap: true });
+  // 要点（项目符号）
+  const runs = pts.map(function (p) {
+    const t = String(p && typeof p === 'object' ? (p.text || p.title || '') : p);
+    return t ? { text: t, options: { bullet: { code: '2022' }, color: T.ink, fontSize: 11, breakLine: true, paraSpaceAfter: 4 } } : null;
+  }).filter(Boolean);
+  if (runs.length) slide.addText(runs, { x: x + 0.14, y: y + hh + 0.1, w: w - 0.28, h: h - hh - 0.18, valign: 'top', fontFace: PPT_FONT });
+}
+
+// 卡片网格：按数量自动分栏（1 全宽 / 2 左右 / 3 三栏 / 4 2×2 / ≤6 三栏 / 更多四栏）
+function _addCards(slide, pptx, blocks, T, x, y, w, h) {
+  const n = blocks.length;
+  let cols = 1, rows = 1;
+  if (n === 1) { cols = 1; rows = 1; }
+  else if (n === 2) { cols = 2; rows = 1; }
+  else if (n === 3) { cols = 3; rows = 1; }
+  else if (n === 4) { cols = 2; rows = 2; }
+  else if (n <= 6) { cols = 3; rows = Math.ceil(n / 3); }
+  else { cols = 4; rows = Math.ceil(n / 4); }
+  const gap = 0.16;
+  const cw = (w - gap * (cols - 1)) / cols;
+  const ch = (h - gap * (rows - 1)) / rows;
+  blocks.forEach(function (b, i) {
+    const r = Math.floor(i / cols), c = i % cols;
+    _addCard(slide, pptx, b, T, x + c * (cw + gap), y + r * (ch + gap), cw, ch, i);
+  });
+}
+
+// 横向流程：等宽步骤卡片 + 箭头串联
+function _addFlow(slide, pptx, blocks, T, x, y, w, h) {
+  const n = blocks.length;
+  const gap = 0.42;
+  const stepW = (w - gap * (n - 1)) / n;
+  blocks.forEach(function (b, i) {
+    const sx = x + i * (stepW + gap);
+    _addCard(slide, pptx, b, T, sx, y, stepW, h, i);
+    if (i < n - 1) {
+      slide.addShape(pptx.ShapeType.rightArrow, { x: sx + stepW + 0.04, y: y + h / 2 - 0.14, w: gap - 0.08, h: 0.28, fill: { color: T.accent }, line: { color: T.accent, width: 0 } });
+    }
+  });
+}
+
+// 金字塔：自上而下逐层加宽，标题居中白字
+function _addPyramid(slide, pptx, blocks, T, x, y, w, h) {
+  const n = blocks.length;
+  const gap = 0.06;
+  const layerH = (h - gap * (n - 1)) / n;
+  blocks.forEach(function (b, i) {
+    const ratio = (i + 1) / n;
+    const lw = w * (0.35 + 0.65 * ratio);
+    const lx = x + (w - lw) / 2;
+    const ly = y + i * (layerH + gap);
+    const color = T.chartColors[i % T.chartColors.length];
+    slide.addShape(pptx.ShapeType.rect, { x: lx, y: ly, w: lw, h: layerH, fill: { color: color }, line: { color: color, width: 0 } });
+    slide.addText(String((b && (b.title || b.heading || b.name)) || ''), { x: lx, y: ly, w: lw, h: layerH, fontSize: 13, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: PPT_FONT, wrap: true });
+  });
+}
+
 function _addChart(slide, pptx, c, T, x, y, w, h) {
   const map = { column: 'bar', bar: 'bar', line: 'line', pie: 'pie', doughnut: 'doughnut', area: 'area', radar: 'radar' };
   const t = map[String((c && c.type) || 'bar').toLowerCase()] || 'bar';
@@ -2608,6 +2682,16 @@ function _addPptxSlide(pptx, s, T, idx, total, p) {
   }
 
   const bodyH = 7.02 - bodyTop;
+  // 智能图形版式：有「板块 blocks」时，按数量自动匹配卡片网格/流程/金字塔/对比
+  if (Array.isArray(s.blocks) && s.blocks.length) {
+    const sl = String(s.layout || 'cards').toLowerCase();
+    if (sl === 'flow') _addFlow(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
+    else if (sl === 'pyramid') _addPyramid(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
+    else _addCards(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
+    if (s.notes) slide.addNotes(String(s.notes));
+    _addFooter(slide, pptx, T, idx, total, p.title);
+    return;
+  }
   if (layout === 'twoCol' && !hasChart && !hasTable) {
     let cols = Array.isArray(s.columns) ? s.columns : null;
     if (!cols && Array.isArray(s.bullets)) {

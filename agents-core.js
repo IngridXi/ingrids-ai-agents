@@ -680,3 +680,19 @@
     createAgent: function (overrides) { return Object.assign({}, DEFAULT_AGENT, overrides); },
   };
 })(typeof window !== 'undefined' ? window : globalThis);
+
+/* ============================================================
+ * 共享工具：消息时间戳格式化（年月日 + 时分）
+ * 供各 chat agent 的 addBubble 显示每条消息的发送时间。
+ * ============================================================ */
+(function () {
+  'use strict';
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function fmtClock(ts) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) d = new Date();
+    return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  window.fmtClock = fmtClock;
+  window.nowTs = function () { return Date.now(); };
+})();

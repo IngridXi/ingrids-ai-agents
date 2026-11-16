@@ -475,6 +475,7 @@
 <script src="../../icons.js"></script>
 <script src="../../supervisor-core.js"></script>
 <script src="../../chat-feedback.js"></script>
+<script src="../../chat-index.js"></script>
 <script>
 (function () {
   'use strict';
@@ -653,7 +654,7 @@
         }).filter(Boolean).join(' ');
         c = txt || '[图片]';
       }
-      return { role: m.role, content: String(c == null ? '' : c), thinking: m.thinking ? String(m.thinking) : undefined };
+      return { role: m.role, content: String(c == null ? '' : c), thinking: m.thinking ? String(m.thinking) : undefined, ts: m.ts ? Number(m.ts) : undefined };
     });
   }
   /* ---------- 多会话：聊天记录列表 + 新对话 + 会话内检索 ---------- */
@@ -819,7 +820,7 @@
     }
     s.messages.forEach(function (m) {
       var body = m.role === 'assistant' ? mdToHtml(stripToolMarkers(m.content)) : esc(m.content);
-      var b = addBubble(m.role, body);
+      var b = addBubble(m.role, body, m.ts);
       if (m.role === 'assistant') {
         if (m.thinking) b.innerHTML = renderThinking(m.thinking, false) + b.innerHTML;
         renderMermaidIn(b);
@@ -1225,8 +1226,8 @@
       tools.push('brain_index：重建第二大脑 index.md 总目录，参数 {"vault":"库路径(可选)"}');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
-    tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片、标题页/章节页/双栏布局、剑桥学术配色），slides 每页可含 title/subtitle/layout(title标题/section章节/content正文/twoCol双栏/blank空白)/bullets/charts/table/image/notes，顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
-    tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}');
+    tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片 + 智能图形版式 + 剑桥学术配色）。slides 每页可含 title/subtitle/layout/bullets/charts/table/image/notes/blocks；layout 取值 title标题/section章节/content正文/twoCol双栏/blank空白/cards卡片/flow流程/pyramid金字塔/compare对比；blocks 是「板块」数组 [{title,points:[...]}]，有 blocks 时按板块数量自动匹配智能图形版式（2块左右分栏、3块三栏、4块2×2矩阵、更多则网格；配合 flow/pyramid/compare 做流程/金字塔/对比），把文字嵌进图形而非罗列；顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
+    tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}。内置工具，机器已装好依赖，直接调用即可，勿用 shell 手动 pip install');
     tools.push('image_process：本地图片处理（图片不出本机）。参数 {"action":"remove_bg|resize|convert|info","input":"图片绝对路径","output":"输出路径","width":800,"height":600}。remove_bg 用 rembg 抠图去背景输出透明 PNG（首次会下载 u2net 模型）；resize 缩放；convert 转格式；info 查尺寸');
     tools.push('image_generate：文生图（通义万相，云端，需已配「Qwen/通义」DashScope Key）。参数 {"prompt":"画面描述(中文效果好)","size":"1024*1024|1280*720|720*1280","n":1,"negative_prompt":"不要出现的元素(可选)"}。生成后自动下载保存到「下载」目录并返回图片绝对路径');
     tools.push('skill_install：自扩展——把一段 markdown 知识写成工作台新 skill 并立即热加载（下一条消息即生效，无需重启）。参数 {"name":"skill名称","description":"一句话说明","category":"research|writing|design|finance|office|browser|media|code|general(可选,默认自动分类)","boards":"挂载板块,逗号分隔(research/design/finance/docs/automation)","markdown":"skill正文(纯提示词/方法论,≤12000字)"}。只装纯提示词知识，不含代码');
@@ -1271,7 +1272,7 @@
       fn('brain_index', '重建第二大脑 index.md 总目录', { vault: { type: 'string', description: '库路径（可选）' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
-    fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片、标题页/章节页/双栏布局、剑桥学术配色），slides 每页 {title, subtitle, layout, bullets, charts, table, image, notes}；type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank), bullets:[字符串或{text,sub:[...]}], charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
+    fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表/表格/图片 + 智能图形版式 + 剑桥学术配色）。slides 每页 {title, subtitle, layout, bullets, blocks, charts, table, image, notes}；layout 取 title/section/content/twoCol/blank/cards/flow/pyramid/compare；blocks 为板块数组 [{title, points:[...]}]，有 blocks 时按数量自动匹配智能图形版式（左右分栏/三栏/2×2矩阵/网格/流程/金字塔/对比），文字嵌进图形而非罗列。type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank/cards/flow/pyramid/compare), bullets:[字符串或{text,sub:[...]}], blocks:[{title,points:[...]}]（板块数组，按数量自动匹配智能图形版式）, charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     if (webEnabled) fn('web_search', '联网搜索（返回标题、链接、摘要）。查实时信息、最新事实、SOTA 进展、外部资料时调用，不要凭记忆编造最新数据', { query: { type: 'string', description: '搜索关键词' } });
     fn('pptx_fill_template', '把内容套进已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 查看模板每页形状名与占位符，再 action=fill 填空', { action: { type: 'string', description: 'inspect（查看模板结构）或 fill（填空，默认）' }, template: { type: 'string', description: '模板 .pptx 绝对路径' }, output: { type: 'string', description: '输出 .pptx 路径（可选，默认另存为 *_filled_*.pptx）' }, replacements: { type: 'object', description: '全局文本替换 {"{{占位符}}":"新文字"}' }, byName: { type: 'array', description: '按形状名填空 [{name,text}]' } });
     fn('image_process', '本地图片处理（rembg 抠图去背景 / 缩放 / 格式转换 / 信息查询，图片不出本机）', { action: { type: 'string', description: 'remove_bg / resize / convert / info' }, input: { type: 'string', description: '输入图片绝对路径' }, output: { type: 'string', description: '输出路径（可选）' }, width: { type: 'integer', description: 'resize 目标宽（可选）' }, height: { type: 'integer', description: 'resize 目标高（可选）' } });
@@ -1481,6 +1482,7 @@
 
   var el = function (id) { return document.getElementById(id); };
   var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
+  var chatIndex = window.ChatIndex ? window.ChatIndex.mount({ messagesEl: messages }) : null;
 
   /* ---------- 智能自动滚动：用户上滚查看历史时暂停跟随，回到底部才恢复（不再强行拉到底） ---------- */
   var stickBottom = true;   // 是否「贴底」：在底部附近才自动跟随，用户上滚即暂停
@@ -1845,13 +1847,15 @@
   }
 
   /* ---------- 渲染消息 ---------- */
-  function addBubble(role, html) {
+  function addBubble(role, html, ts) {
     var wrap = document.createElement('div');
     wrap.className = 'msg ' + role;
+    var stamp = fmtClock(ts);
+    wrap.setAttribute('data-ts', stamp);
     wrap.innerHTML = avatarHtml(role);
     var body = document.createElement('div');
     body.className = 'msg-body';
-    body.innerHTML = '<div class="bubble">' + html + '</div>';
+    body.innerHTML = '<div class="bubble">' + html + '</div>' + '<div class="msg-time">' + stamp + '</div>';
     wrap.appendChild(body);
     if (role === 'assistant') {
       var cb = document.createElement('button');
@@ -1990,7 +1994,7 @@
 
     // 立即把用户消息入账到发起时的会话（多会话并发下，切换会话也能正确归属；finish 只补 assistant 消息）
     if (cur) {
-      cur.messages.push({ role: 'user', content: isNote ? noteWrap(body) : (body || (img ? '（图片）' : '')) });
+      cur.messages.push({ role: 'user', content: isNote ? noteWrap(body) : (body || (img ? '（图片）' : '')), ts: nowTs() });
       while (cur.messages.length > 24) cur.messages.shift();
       cur.updatedAt = Date.now();
       persistSessions();
@@ -2104,7 +2108,7 @@
       try { localStorage.removeItem('research_stream_progress'); } catch (e) {}
       var jobSess = sessionById(jobSessionId);
       var jobMsgs = jobSess ? jobSess.messages : history;
-      if (finalText) jobMsgs.push({ role: 'assistant', content: finalText, thinking: thinking });
+      if (finalText) jobMsgs.push({ role: 'assistant', content: finalText, thinking: thinking, ts: nowTs() });
       while (jobMsgs.length > 24) jobMsgs.shift();
       if (jobSess) {
         jobSess.updatedAt = Date.now();
