@@ -47,6 +47,39 @@
       ],
       "defaultEngine": "claude-code",
       "color": "#6366f1"
+    },
+    {
+      "id": "finance",
+      "name": "Finance",
+      "emoji": "📊",
+      "desc": "金融分析：个股/基金/ETF/财报/估值/宏观，守红线（不编造数据、强制免责声明）+ 联网核实数据",
+      "skillIds": [
+        "builtin:finance/financial-analysis"
+      ],
+      "defaultEngine": "deepseek",
+      "color": "#c98a2b"
+    },
+    {
+      "id": "docs",
+      "name": "Docs",
+      "emoji": "📄",
+      "desc": "文档生成：PPT / Word / Excel / Markdown，用 doc_generate 工具落盘到导出目录",
+      "skillIds": [
+        "builtin:docs/document-generation"
+      ],
+      "defaultEngine": "claude-code",
+      "color": "#3b82c4"
+    },
+    {
+      "id": "automation",
+      "name": "Automation",
+      "emoji": "🤖",
+      "desc": "浏览器自动化：网页抓取、自动填表、截图、数据采集，用 computer 工具执行",
+      "skillIds": [
+        "builtin:automation/browser-automation"
+      ],
+      "defaultEngine": "claude-code",
+      "color": "#e11d48"
     }
   ]
 }
