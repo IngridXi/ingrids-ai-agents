@@ -933,8 +933,48 @@
     } catch (e) {}
   }
 
-  /* ---------- 审稿闭环中断恢复：恢复中断前的初稿/审稿意见/修订版 ---------- */
+  /* ---------- 审稿闭环中断恢复：从磁盘 checkpoint 重放已完成阶段，并从断点自动续跑 ---------- */
+  function renderResumedReview(cp) {
+    var st = document.createElement('div');
+    st.className = 'loop-status';
+    st.textContent = '⚙ 检测到未完成的审稿闭环，已恢复中断前内容，正在从断点续跑…';
+    messages.appendChild(st);
+    if (cp.draft) {
+      var b = addBubble('assistant', '');
+      b.innerHTML = '<span class="phase-tag draft">初稿</span>' + mdToHtml(stripToolMarkers(cp.draft));
+      renderMermaidIn(b);
+    }
+    var n = (cp.reviews && cp.reviews.length) || 0;
+    for (var i = 0; i < n; i++) {
+      var rv = cp.reviews[i];
+      var wrap = document.createElement('div');
+      wrap.className = 'msg assistant';
+      wrap.innerHTML = avatarHtml('assistant') + '<div class="bubble"><div class="review-block"><details open><summary>审稿人意见 · 第 ' + rv.round + ' 轮</summary>' + mdToHtml(stripToolMarkers(rv.text)) + '</details></div></div>';
+      messages.appendChild(wrap);
+      if (cp.revises && cp.revises[i]) {
+        var b2 = addBubble('assistant', '');
+        b2.innerHTML = '<span class="phase-tag revise">修订版 · 第 ' + (i + 1) + ' 轮</span>' + mdToHtml(stripToolMarkers(cp.revises[i]));
+        renderMermaidIn(b2);
+      }
+    }
+    messages.scrollTop = messages.scrollHeight;
+  }
+
   function restoreReviewProgress() {
+    if (!IS_DESKTOP || !window.ingrid.reviewCheckpointLoad) return;
+    window.ingrid.reviewCheckpointLoad(AGENT_NAME).then(function (cp) {
+      if (!cp) { restoreReviewProgressLegacy(); return; }
+      var s = currentSession();
+      if (!s) return;
+      if (cp.sessionId && s.id && cp.sessionId !== s.id) return;   // checkpoint 属于别的会话，不续跑
+      renderResumedReview(cp);
+      streaming = true; setSendBtnState(true);
+      sendReviewLoop(cp.question, null, cp);
+    }).catch(function () { restoreReviewProgressLegacy(); });
+  }
+
+  function restoreReviewProgressLegacy() {
+    // 旧版本 localStorage 快照兜底（向后兼容）
     try {
       var raw = localStorage.getItem('dev_review_progress');
       if (!raw) return;
@@ -2185,28 +2225,11 @@
   }
 
   /* ---------- 审稿闭环：产出 → 审稿 → 返修 ---------- */
-  function sendReviewLoop(text, engine) {
+  function sendReviewLoop(text, engine, resumeCp) {
     var bubble = null;       // 当前正文气泡（初稿 / 修订版）
     var reviewEl = null;     // 当前审稿意见块
     var curText = '', curThink = '';
-    var __reviewPhase = '', __reviewRound = 0, __reviewLastSave = 0;
-    // 审稿闭环中断恢复：每 3 秒把当前阶段已生成内容（正文 + 思考）落盘快照
-    function maybeSaveReviewProgress() {
-      var now = Date.now();
-      if (now - __reviewLastSave < 3000) return;
-      __reviewLastSave = now;
-      try {
-        var s = currentSession();
-        if (!s) return;
-        localStorage.setItem('dev_review_progress', JSON.stringify({
-          sessionId: s.id, agent: AGENT_NAME,
-          phase: __reviewPhase, round: __reviewRound,
-          text: stripToolMarkers(curText), thinking: curThink,
-          userText: text,
-          at: now
-        }));
-      } catch (e) {}
-    }
+    var __reviewPhase = '', __reviewRound = 0;
 
     function render() {
       if (bubble) {
@@ -2216,7 +2239,6 @@
         reviewEl.innerHTML = reviewEl._summary + (curText ? mdToHtml(curText) : '') + '<span class="cursor"></span>';
       }
       messages.scrollTop = messages.scrollHeight;
-      maybeSaveReviewProgress();
     }
 
     function close() {
@@ -2231,14 +2253,30 @@
       bubble = null; reviewEl = null; curText = ''; curThink = '';
     }
 
-    var reqMessages = [{ role: 'system', content: buildSystemPrompt() }]
-      .concat(history.slice(-12).map(function (m) { return { role: m.role, content: m.content }; }))
-      .concat([{ role: 'user', content: text }]);
+    var payload;
+    if (resumeCp) {
+      // 续跑：后端从磁盘 checkpoint 恢复状态，无需重新传 messages/model
+      payload = { resume: true, agent: AGENT_NAME };
+    } else {
+      var reqMessages = [{ role: 'system', content: buildSystemPrompt() }]
+        .concat(history.slice(-12).map(function (m) { return { role: m.role, content: m.content }; }))
+        .concat([{ role: 'user', content: text }]);
+      var s0 = currentSession();
+      payload = { engine: engine, model: currentModelId(), messages: reqMessages, rounds: 2, agent: AGENT_NAME, sessionId: s0 ? s0.id : '' };
+    }
 
-    window.ingrid.reviewLoop({ engine: engine, model: currentModelId(), messages: reqMessages, rounds: 2 }, {
+    window.ingrid.reviewLoop(payload, {
       onPhase: function (d) {
         __reviewPhase = d.phase; __reviewRound = d.round || 0;
         close();
+        if (d.phase === 'resume') {
+          var st = document.createElement('div');
+          st.className = 'loop-status';
+          st.textContent = '⚙ 已从断点续跑（自第 ' + (d.round || 0) + ' 轮起，仅重跑中断阶段）';
+          messages.appendChild(st);
+          messages.scrollTop = messages.scrollHeight;
+          return;
+        }
         if (d.phase === 'draft') {
           bubble = addBubble('assistant', '');
           bubble._tag = '<span class="phase-tag draft">初稿</span>';
@@ -2264,7 +2302,7 @@
         render();
       },
       onDone: function (d) {
-        try { localStorage.removeItem('dev_review_progress'); } catch (e) {}
+        try { window.ingrid.reviewCheckpointClear(AGENT_NAME); } catch (e) {}
         close();
         if (stopRequested) {
           var s2 = document.createElement('div');

@@ -79,6 +79,10 @@ contextBridge.exposeInMainWorld('ingrid', {
     return ipcRenderer.invoke('chat:review-loop', payload);
   },
 
+  // 审稿闭环 checkpoint：读/清磁盘上的阶段级断点（支持中断后从断点续跑）
+  reviewCheckpointLoad: (agent) => ipcRenderer.invoke('review:checkpoint:load', agent),
+  reviewCheckpointClear: (agent) => ipcRenderer.invoke('review:checkpoint:clear', agent),
+
   // 技能板块 / 只读索引 / 按需读正文 / 预设（v3）
   scanSkillsSync: () => ipcRenderer.sendSync('skills:scan-sync'),
   scanSkills: () => ipcRenderer.invoke('skills:scan'),

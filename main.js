@@ -1989,6 +1989,27 @@ ipcMain.handle('dashboard:get', () => {
 // 事件：review:phase {phase,round} → review:delta {text,thinking} → review:done {ok,finalText,passed,rounds,error}
 const REVIEWER_SYSTEM = '你是严谨的同行评审审稿人，专为研究内容挑毛病。只依据给定材料判断，不臆造文献与数据。逐项审查：①研究问题是否聚焦、论证有无循环或跳跃；②每条主张是否有证据支撑、能否回到材料溯源（缺来源必须标出）；③方法/数据/统计有无漏洞；④表达有无套话、空话、防御性措辞。输出：按严重程度排序的问题清单 + 一句话最关键修改指令。若确实挑不出实质问题，明确回复「通过」（不要为了挑毛病而硬挑）。';
 
+/* ---------------- 审稿闭环 checkpoint（阶段级落盘，支持中断后续跑） ---------------- */
+// 每个完整阶段（初稿 / 每轮审稿 / 每轮返修）完成后把完整状态写入磁盘；
+// 中断后重启可从最近一个已完成阶段的边界续跑，只重跑中断的那一个阶段（SSE 流式无法精确续传 token）。
+function reviewCheckpointFile(agent) {
+  const dir = path.join(dataDir(), 'review-checkpoint');
+  fs.mkdirSync(dir, { recursive: true });
+  const safe = String(agent || 'default').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_').slice(0, 80);
+  return path.join(dir, safe + '.json');
+}
+function saveReviewCheckpoint(agent, data) {
+  try { fs.writeFileSync(reviewCheckpointFile(agent), JSON.stringify(data, null, 2), 'utf8'); return true; } catch { return false; }
+}
+function loadReviewCheckpoint(agent) {
+  try { return JSON.parse(fs.readFileSync(reviewCheckpointFile(agent), 'utf8')); } catch { return null; }
+}
+function clearReviewCheckpoint(agent) {
+  try { fs.unlinkSync(reviewCheckpointFile(agent)); } catch { /* 不存在则忽略 */ }
+}
+ipcMain.handle('review:checkpoint:load', (_e, agent) => loadReviewCheckpoint(agent));
+ipcMain.handle('review:checkpoint:clear', (_e, agent) => { clearReviewCheckpoint(agent); return true; });
+
 // 通用流式调用：向 CHAT_ENDPOINTS 引擎发请求，累积完整文本，逐块回调 onChunk(text, thinking)
 async function completeChatStream(engine, messages, onChunk, opts) {
   const cfg = CHAT_ENDPOINTS[engine];
@@ -2053,62 +2074,104 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   return { text: text, thinking: thinking, truncated: truncated };
 }
 
-ipcMain.handle('chat:review-loop', (e, payload) => {
-  const p = payload || {};
-  const engine = String(p.engine || 'ollama');
-  const model = String(p.model || '');   // 前端可选模型（仅作用于「干活」引擎，审稿引擎保持其自身默认）
-  const messages = Array.isArray(p.messages) ? p.messages : [];
-  const rounds = Math.min(Math.max(parseInt(p.rounds, 10) || 2, 1), 4);
-  const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
-
-  // 审稿引擎：跨模型对抗——干活是本地 ollama(qwen3.8:27b) 时默认用本地 deepseek-r1:32b 审稿；否则选已配 Key 的不同 API 引擎
-  const settings = decryptSettings(readSettingsRaw());
-  let reviewerEngine = String(p.reviewer || '');
-  if (!reviewerEngine) {
-    if (engine === 'ollama') reviewerEngine = 'ollama-review';
-    else reviewerEngine = ['deepseek', 'qwen', 'gpt'].find((id) => id !== engine && settings[id]) || 'ollama';
-  }
-
+// 审稿闭环状态机：stage 表示「下一个要执行的阶段」—— 'draft' | 'review' | 'revise'；'done' 表示完成。
+// 每个阶段完成后 saveReviewCheckpoint 落盘；中断后从 checkpoint 的 stage 边界续跑，只重跑中断的那个阶段。
+async function runReviewLoop(st, send) {
+  const { engine, model, reviewerEngine, rounds, messages, question } = st;
   const systemMsg = messages.find((m) => m.role === 'system') || { role: 'system', content: '' };
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-  const question = lastUser ? lastUser.content : '';
 
-  (async () => {
-    let finalText = '';
-    try {
-      // 初稿（干活引擎）
+  while (st.stage !== 'done') {
+    if (st.stage === 'draft') {
       send('review:phase', { phase: 'draft', round: 0, engine: engine, reviewer: reviewerEngine });
       const d = await completeChatStream(engine, messages, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
-      finalText = d.text;
+      st.finalText = d.text;
+      st.draft = d.text;
+      st.stage = 'review'; st.round = 1;
+      saveReviewCheckpoint(st.agent, st);
+    } else if (st.stage === 'review') {
+      const r = st.round;
+      send('review:phase', { phase: 'review', round: r, engine: engine, reviewer: reviewerEngine });
+      const reviewMsgs = [
+        { role: 'system', content: REVIEWER_SYSTEM },
+        { role: 'user', content: '【原始任务】\n' + question + '\n\n【待审稿的内容】\n' + st.finalText },
+      ];
+      const rv = await completeChatStream(reviewerEngine, reviewMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { temperature: 0.4 });
+      const review = String(rv.text || '').trim();
+      st.reviews.push({ round: r, text: review });
 
-      // 对抗循环：审稿 → 返修
-      for (let r = 1; r <= rounds; r++) {
-        send('review:phase', { phase: 'review', round: r, engine: engine, reviewer: reviewerEngine });
-        const reviewMsgs = [
-          { role: 'system', content: REVIEWER_SYSTEM },
-          { role: 'user', content: '【原始任务】\n' + question + '\n\n【待审稿的内容】\n' + finalText },
-        ];
-        const rv = await completeChatStream(reviewerEngine, reviewMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { temperature: 0.4 });
-        const review = String(rv.text || '').trim();
+      if (/^\s*通过/.test(review) || review.length < 8) {
+        clearReviewCheckpoint(st.agent);
+        send('review:done', { ok: true, finalText: st.finalText, passed: true, rounds: r, engine: engine, reviewer: reviewerEngine });
+        return;
+      }
+      st.stage = 'revise';
+      saveReviewCheckpoint(st.agent, st);
+    } else if (st.stage === 'revise') {
+      const r = st.round;
+      const review = st.reviews[st.reviews.length - 1].text;
+      send('review:phase', { phase: 'revise', round: r, engine: engine, reviewer: reviewerEngine });
+      const reviseMsgs = [
+        systemMsg,
+        { role: 'user', content: '【原始任务】\n' + question },
+        { role: 'assistant', content: st.finalText },
+        { role: 'user', content: '【审稿人意见】\n' + review + '\n\n请据此返修：只修正审稿人指出的问题，保留原有优点，输出完整修订版（只输出修订后的正文，不要输出审稿意见）。' },
+      ];
+      const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
+      st.finalText = rv2.text;
+      st.revises.push(rv2.text);
 
-        if (/^\s*通过/.test(review) || review.length < 8) {
-          send('review:done', { ok: true, finalText: finalText, passed: true, rounds: r, engine: engine, reviewer: reviewerEngine });
-          return;
+      if (r < rounds) {
+        st.stage = 'review'; st.round = r + 1;
+        saveReviewCheckpoint(st.agent, st);
+      } else {
+        clearReviewCheckpoint(st.agent);
+        send('review:done', { ok: true, finalText: st.finalText, passed: false, rounds: rounds, engine: engine, reviewer: reviewerEngine });
+        return;
+      }
+    }
+  }
+}
+
+ipcMain.handle('chat:review-loop', (e, payload) => {
+  const p = payload || {};
+  const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
+
+  (async () => {
+    let st = null;
+    try {
+      if (p.resume) {
+        // 续跑：从磁盘 checkpoint 恢复状态，从断点阶段继续
+        st = loadReviewCheckpoint(p.agent);
+        if (!st) { send('review:done', { ok: false, error: '没有可续跑的审稿闭环任务（checkpoint 不存在）' }); return; }
+        send('review:phase', { phase: 'resume', round: st.round || 0, engine: st.engine, reviewer: st.reviewerEngine });
+      } else {
+        const engine = String(p.engine || 'ollama');
+        const model = String(p.model || '');   // 前端可选模型（仅作用于「干活」引擎，审稿引擎保持其自身默认）
+        const messages = Array.isArray(p.messages) ? p.messages : [];
+        const rounds = Math.min(Math.max(parseInt(p.rounds, 10) || 2, 1), 4);
+
+        // 审稿引擎：跨模型对抗——干活是本地 ollama(qwen3.8:27b) 时默认用本地 deepseek-r1:32b 审稿；否则选已配 Key 的不同 API 引擎
+        const settings = decryptSettings(readSettingsRaw());
+        let reviewerEngine = String(p.reviewer || '');
+        if (!reviewerEngine) {
+          if (engine === 'ollama') reviewerEngine = 'ollama-review';
+          else reviewerEngine = ['deepseek', 'qwen', 'gpt'].find((id) => id !== engine && settings[id]) || 'ollama';
         }
 
-        send('review:phase', { phase: 'revise', round: r, engine: engine, reviewer: reviewerEngine });
-        const reviseMsgs = [
-          systemMsg,
-          { role: 'user', content: '【原始任务】\n' + question },
-          { role: 'assistant', content: finalText },
-          { role: 'user', content: '【审稿人意见】\n' + review + '\n\n请据此返修：只修正审稿人指出的问题，保留原有优点，输出完整修订版（只输出修订后的正文，不要输出审稿意见）。' },
-        ];
-        const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
-        finalText = rv2.text;
+        const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+        const question = lastUser ? lastUser.content : '';
+        st = {
+          agent: String(p.agent || '研究助手'),
+          sessionId: String(p.sessionId || ''),
+          engine: engine, model: model, reviewerEngine: reviewerEngine,
+          rounds: rounds, messages: messages, question: question,
+          stage: 'draft', round: 0, finalText: '', draft: '', reviews: [], revises: [],
+        };
+        saveReviewCheckpoint(st.agent, st);
       }
-      send('review:done', { ok: true, finalText: finalText, passed: false, rounds: rounds, engine: engine, reviewer: reviewerEngine });
+      await runReviewLoop(st, send);
     } catch (err) {
-      send('review:done', { ok: false, error: String(err && err.message || err), finalText: finalText, engine: engine, reviewer: reviewerEngine });
+      send('review:done', { ok: false, error: String(err && err.message || err), finalText: st ? st.finalText : '', engine: st && st.engine, reviewer: st && st.reviewerEngine });
     }
   })();
   return true;

@@ -149,6 +149,7 @@
 - **2026-11-16**：修复流式「无缘无故中断」（requestId 串线）+ `activeChatAbort` 单例覆盖；三 agent 补「中断恢复落盘」。
 - **2026-11-16**：审稿闭环（研究/软件 agent）补中断恢复——`sendReviewLoop` 每 3 秒落盘 `{phase,round,text,thinking}` 快照（key `research/dev_review_progress`），启动 `restoreReviewProgress` 恢复中断前初稿/审稿意见/修订版；SOUL_UNALIGNED 删除所有边界、保留「标注性质与后果」。
 - **2026-11-16**：研究/软件 agent 补「主动联网搜索 `web_search`」工具 + 提示词声明联网能力；知识库自动检索改默认关。
+- **2026-11-16**：审稿闭环升级为**阶段级 checkpoint 续跑**——后端 `runReviewLoop` 显式状态机 + 每阶段落盘 `data/review-checkpoint/<agent>.json`，前端启动时读 checkpoint 重放已完成阶段并自动 `resume` 续跑（只重跑中断阶段，不再从头再来）；替代原「前端 localStorage 快照」方案（保留 legacy 兜底）。
 - **2026-11-15~16**：性能修复（rAF 节流 + 流式轻量转义）；知识库启动懒加载 + OneDrive 手动同步。
 - **更早**：伦理 agent 去道德化（SOUL_UNALIGNED + abliteration 落地）、模式-模型联动、主页面图标/排序优化、删除「敬请期待」占位。
 
@@ -156,4 +157,4 @@
 
 ## 9. 已知风险 / 待办
 
-- 审稿闭环中断恢复为「前端快照 + 启动恢复」：中断后把已生成初稿/审稿意见/修订版写回会话历史、不丢内容；但**不支持后端 checkpoint 续跑**（中断后需基于已恢复内容手动继续，或重跑）。
+- 审稿闭环已支持**阶段级 checkpoint 续跑**（2026-11-16 终版）：后端 `runReviewLoop` 显式状态机（draft/review/revise），每个完整阶段完成后 `saveReviewCheckpoint` 落盘到 `data/review-checkpoint/<agent>.json`（含 engine/model/reviewerEngine/rounds/messages/question/draft/reviews/revises/stage/round）；前端 `restoreReviewProgress` 启动时读磁盘 checkpoint（`review:checkpoint:load`），重放已完成阶段后自动 `reviewLoop({resume:true})` 续跑，只重跑中断的那个阶段。SSE 流式无法精确续传 token，故 checkpoint 落在**阶段边界**——中断时最多重跑当前一个阶段，不会从头再来。
