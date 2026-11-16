@@ -27,7 +27,8 @@
         "builtin:research/research-project-management",
         "builtin:research/research-mentor",
         "builtin:research/adversarial-review",
-        "builtin:research/integrity-forensics"
+        "builtin:research/integrity-forensics",
+        "builtin:research/academic-writing-zh"
       ],
       "defaultEngine": "claude-code",
       "color": "#7c6fd6"
@@ -54,7 +55,8 @@
       "emoji": "📊",
       "desc": "金融分析：个股/基金/ETF/财报/估值/宏观，守红线（不编造数据、强制免责声明）+ 联网核实数据",
       "skillIds": [
-        "builtin:finance/financial-analysis"
+        "builtin:finance/financial-analysis",
+        "builtin:finance/equity-deep-research"
       ],
       "defaultEngine": "deepseek",
       "color": "#c98a2b"
