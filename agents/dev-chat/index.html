@@ -92,11 +92,7 @@
   }
   .msg.assistant:hover .copy-btn { opacity: 1; }
   .msg .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .msg .feedback { position: absolute; top: 6px; right: 66px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; z-index: 5; }
-  .msg.assistant:hover .feedback { opacity: 1; }
-  .msg .fb-btn { padding: 3px 8px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink-soft); cursor: pointer; transition: .12s; }
-  .msg .fb-btn:hover { border-color: var(--accent); }
-  .msg .fb-btn.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  /* 👍/👎 反馈条样式已迁移到 chat-feedback.js（.cf-footer / .cf-btn） */
   .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 
   /* 会话内检索高亮 */
@@ -508,6 +504,7 @@
 <script src="../../agents-core.js"></script>
 <script src="../../icons.js"></script>
 <script src="../../supervisor-core.js"></script>
+<script src="../../chat-feedback.js"></script>
 <script>
 (function () {
   'use strict';
@@ -1904,45 +1901,31 @@
   function addBubble(role, html) {
     var wrap = document.createElement('div');
     wrap.className = 'msg ' + role;
-    wrap.innerHTML = avatarHtml(role) + '<div class="bubble">' + html + '</div>';
+    wrap.innerHTML = avatarHtml(role);
+    var body = document.createElement('div');
+    body.className = 'msg-body';
+    body.innerHTML = '<div class="bubble">' + html + '</div>';
+    wrap.appendChild(body);
     if (role === 'assistant') {
       var cb = document.createElement('button');
       cb.className = 'copy-btn';
       cb.title = '复制回答';
       cb.textContent = '复制';
-      cb.addEventListener('click', function () { copyBubbleText(wrap.querySelector('.bubble'), cb); });
+      cb.addEventListener('click', function () { copyBubbleText(body.querySelector('.bubble'), cb); });
       wrap.appendChild(cb);
-      // 情绪/偏好反馈：👍 有帮助 / 👎 不满意（上报情绪/偏好 Agent，学习用户偏好）
-      if (IS_DESKTOP && window.ingrid.sentimentObserve) {
-        var fb = document.createElement('div');
-        fb.className = 'feedback';
-        var _tmp = document.createElement('div');
-        _tmp.innerHTML = html || '';
-        var textPlain = (_tmp.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
-        var mkFb = function (v, label, title) {
-          var b = document.createElement('button');
-          b.className = 'fb-btn'; b.title = title; b.textContent = label;
-          b.addEventListener('click', function () {
-            var cur = currentSession();
-            window.ingrid.sentimentObserve({
-              text: (v === 'positive' ? '这个回答有帮助' : '这个回答不满意'),
-              valence: v, agent: AGENT_NAME,
-              sessionId: cur ? cur.id : '', source: 'feedback', context: textPlain,
-            }).then(function () {
-              Array.prototype.forEach.call(fb.querySelectorAll('.fb-btn'), function (x) { x.classList.remove('on'); });
-              b.classList.add('on');
-            }).catch(function () {});
-          });
-          return b;
-        };
-        fb.appendChild(mkFb('positive', '👍', '有帮助，继续保持'));
-        fb.appendChild(mkFb('negative', '👎', '不满意，应该避免'));
-        wrap.appendChild(fb);
-      }
+      // 👍/👎 固定在回复下方，点击弹窗细化（chat-feedback.js）
+      var _tmp = document.createElement('div');
+      _tmp.innerHTML = html || '';
+      var textPlain = (_tmp.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      ChatFeedback.attach(body, {
+        agent: AGENT_NAME,
+        getSessionId: function () { var cur = currentSession(); return cur ? cur.id : ''; },
+        getContext: function () { return textPlain; },
+      });
     }
     messages.appendChild(wrap);
     autoScroll(true);
-    return wrap.querySelector('.bubble');
+    return body.querySelector('.bubble');
   }
   function fallbackCopyText(text) {
     var ta = document.createElement('textarea');

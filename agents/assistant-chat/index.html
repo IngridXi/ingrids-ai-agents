@@ -338,6 +338,7 @@
 <script src="../../agents-core.js"></script>
 <script src="../../icons.js"></script>
 <script src="../../supervisor-core.js"></script>
+<script src="../../chat-feedback.js"></script>
 <script>
 (function () {
   'use strict';
@@ -1205,18 +1206,31 @@
   function addBubble(role, html) {
     var wrap = document.createElement('div');
     wrap.className = 'msg ' + role;
-    wrap.innerHTML = avatarHtml(role) + '<div class="bubble">' + html + '</div>';
+    wrap.innerHTML = avatarHtml(role);
+    var body = document.createElement('div');
+    body.className = 'msg-body';
+    body.innerHTML = '<div class="bubble">' + html + '</div>';
+    wrap.appendChild(body);
     if (role === 'assistant') {
       var cb = document.createElement('button');
       cb.className = 'copy-btn';
       cb.title = '复制回答';
       cb.textContent = '复制';
-      cb.addEventListener('click', function () { copyBubbleText(wrap.querySelector('.bubble'), cb); });
+      cb.addEventListener('click', function () { copyBubbleText(body.querySelector('.bubble'), cb); });
       wrap.appendChild(cb);
+      // 👍/👎 固定在回复下方，点击弹窗细化（chat-feedback.js）
+      var _tmp = document.createElement('div');
+      _tmp.innerHTML = html || '';
+      var textPlain = (_tmp.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      ChatFeedback.attach(body, {
+        agent: AGENT_NAME,
+        getSessionId: function () { var cur = currentSession(); return cur ? cur.id : ''; },
+        getContext: function () { return textPlain; },
+      });
     }
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
-    return wrap.querySelector('.bubble');
+    return body.querySelector('.bubble');
   }
   function fallbackCopyText(text) {
     var ta = document.createElement('textarea');
