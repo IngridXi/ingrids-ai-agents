@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('ingrid', {
   getBudgetSync: () => ipcRenderer.sendSync('budget:get-sync'),
   setBudgetSync: (usd) => ipcRenderer.sendSync('budget:set-sync', usd),
 
+  // API 余额监控（各家余额 + 用量汇总 + 低余额提醒）
+  getBalance: () => ipcRenderer.invoke('balance:get'),
+  refreshBalance: () => ipcRenderer.invoke('balance:refresh'),
+  setBalanceThreshold: (engine, threshold) => ipcRenderer.invoke('balance:set-threshold', engine, threshold),
+  setManualBalance: (engine, balance) => ipcRenderer.invoke('balance:set-manual', engine, balance),
+
   // 真正跑一个 Agent（主进程 spawn CLI / 调 API；默认演练不花钱）
   runAgent: (payload) => ipcRenderer.invoke('agent:run', payload),
 

@@ -320,6 +320,7 @@
         <div class="side-sep">系统</div>
         <button class="side-item" id="navTasks"><span class="ic" data-icon="zap"></span><span>任务中心</span><span class="bdot" id="taskDot" hidden></span></button>
         <button class="side-item" id="navDashboard"><span class="ic" data-icon="chart"></span><span>仪表盘</span></button>
+        <button class="side-item" id="navApiUsage"><span class="ic" data-icon="money"></span><span>API 用量</span><span class="bdot" id="apiDot" hidden></span></button>
         <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>调度中枢</span><span class="scnt" id="skillsCount">0</span></button>
         <button class="side-item" id="navSessions"><span class="ic" data-icon="clock"></span><span>会话回放</span></button>
         <button class="side-item" id="navSettings"><span class="ic" data-icon="settings"></span><span>引擎设置</span></button>
@@ -1147,6 +1148,7 @@ document.addEventListener('click', e => {
   if (id === 'navSkills') { if (typeof window.__openOrchestrator === 'function') window.__openOrchestrator(); setActiveNav('navSkills'); return; }
   if (id === 'navTasks') { if (typeof window.__openTasks === 'function') window.__openTasks(); setActiveNav('navTasks'); return; }
   if (id === 'navDashboard') { if (typeof window.__openDashboard === 'function') window.__openDashboard(); setActiveNav('navDashboard'); return; }
+  if (id === 'navApiUsage') { if (typeof window.__openApiUsage === 'function') window.__openApiUsage(); setActiveNav('navApiUsage'); return; }
   if (id === 'navWorkspace') { if (typeof window.__openWorkspace === 'function') window.__openWorkspace(); setActiveNav('navWorkspace'); return; }
   if (id === 'navCalendar') { if (typeof window.__openCalendar === 'function') window.__openCalendar(); return; }
   if (id === 'navInspiration') { if (typeof window.__openInspiration === 'function') window.__openInspiration(); setActiveNav('navInspiration'); return; }
@@ -1189,6 +1191,21 @@ document.querySelectorAll('[data-icon]').forEach(function (el) {
 renderAgents();
 bindAgentShell();
 
+/* API 余额红点：页面加载后查一次，任一引擎低余额则在侧边栏「API 用量」亮红点 */
+function refreshApiDot() {
+  if (!IS_DESKTOP || !window.ingrid.getBalance) return;
+  var dot = document.getElementById('apiDot');
+  window.ingrid.getBalance().then(function (d) {
+    if (!dot) return;
+    var low = false;
+    var engs = (d && d.engines) || {};
+    Object.keys(engs).forEach(function (k) { if (engs[k].low) low = true; });
+    dot.hidden = !low;
+  }).catch(function () {});
+}
+refreshApiDot();
+setInterval(refreshApiDot, 30 * 60 * 1000);
+
 /* 暴露给 orchestrator.js（调度中枢面板） */
 window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents: renderAgents };
 </script>
@@ -1200,6 +1217,7 @@ window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents:
 <script src="knowledge.js"></script>
 <script src="tasks.js"></script>
 <script src="dashboard.js"></script>
+<script src="api-usage.js"></script>
 <script src="workspace.js"></script>
 <script src="inspiration.js"></script>
 <script src="sessions.js"></script>

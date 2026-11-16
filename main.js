@@ -1093,6 +1093,172 @@ function costOf(engine, tin, tout) {
 }
 function approxTokens(s) { return Math.ceil(String(s || '').length / 4); }
 
+/* ---------------- API 余额监控（余额查询 + 用量汇总 + 低余额提醒） ----------------
+ * 参考开源范式：
+ *   - DeepSeek 官方余额接口 GET /user/balance（api-docs.deepseek.com/api/get-user-balance）
+ *   - river291/display-api-balance：低余额阈值变红（默认 ¥20）
+ *   - Rannist/balance-dsh：用「充值额 - 余额」反推总消费，再减工作台用量得「其他用量」
+ *   - dsh-cost-meter / TokenBar：多供应商余额 + 预算提醒
+ * 说明：仅 DeepSeek 有简单公开余额接口（auto）；GPT(OpenAI)/Qwen(DashScope) 无公开余额
+ *       接口，余额需手动填写（manual），「其他用量」仅 DeepSeek 可自动反推。
+ */
+const BALANCE_FILE = 'api-balance.json';
+const USD_TO_CNY = 7.2;   // 工作台成本按 USD 记账（PRICES），展示按 ¥ 近似换算
+
+const BILLING_META = {
+  deepseek: { name: 'DeepSeek', currency: 'CNY', symbol: '¥', auto: true,  defaultThreshold: 20 },
+  gpt:      { name: 'GPT / OpenAI', currency: 'USD', symbol: '$', auto: false, defaultThreshold: 5 },
+  qwen:     { name: 'Qwen / 通义万相', currency: 'CNY', symbol: '¥', auto: false, defaultThreshold: 20 },
+};
+
+function readBalanceState() {
+  const s = readJson(BALANCE_FILE, { balances: {}, thresholds: {}, lastAlert: {} });
+  if (!s.balances) s.balances = {};
+  if (!s.thresholds) s.thresholds = {};
+  if (!s.lastAlert) s.lastAlert = {};
+  return s;
+}
+function writeBalanceState(s) { writeJson(BALANCE_FILE, s); }
+
+function balanceThreshold(engine) {
+  const s = readBalanceState();
+  const t = s.thresholds[engine];
+  return (t != null && t !== '') ? Number(t) : (BILLING_META[engine] || {}).defaultThreshold;
+}
+
+async function queryDeepSeekBalance() {
+  const settings = decryptSettings(readSettingsRaw());
+  const key = settings.deepseek;
+  if (!key) return { ok: false, error: '未配置 DeepSeek API Key' };
+  const resp = await fetch('https://api.deepseek.com/user/balance', {
+    headers: { 'Authorization': 'Bearer ' + key, 'Accept': 'application/json' },
+  });
+  if (!resp.ok) return { ok: false, error: 'HTTP ' + resp.status };
+  const j = await resp.json();
+  const infos = Array.isArray(j.balance_infos) ? j.balance_infos : [];
+  const cny = infos.find((b) => b.currency === 'CNY') || infos[0] || {};
+  return {
+    ok: true,
+    isAvailable: !!j.is_available,
+    currency: String(cny.currency || 'CNY'),
+    totalBalance: Number(cny.total_balance) || 0,
+    grantedBalance: Number(cny.granted_balance) || 0,
+    toppedUpBalance: Number(cny.topped_up_balance) || 0,
+  };
+}
+
+// 用量汇总：按 engine 聚合（本月 / 累计）+ 近 30 天按天成本
+function usageSummary() {
+  const rows = listUsage();
+  const now = new Date();
+  const thisMonth = now.toISOString().slice(0, 7);
+  const perEngine = {};
+  const days = {};
+  const dayLabels = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400000);
+    const key = d.toISOString().slice(0, 10);
+    dayLabels.push(key);
+    days[key] = 0;
+  }
+  let totalCost = 0, totalIn = 0, totalOut = 0;
+  rows.forEach(function (r) {
+    const eng = String(r.engine || 'other');
+    if (!perEngine[eng]) perEngine[eng] = { engine: eng, monthIn: 0, monthOut: 0, monthCost: 0, allIn: 0, allOut: 0, allCost: 0, calls: 0 };
+    const e = perEngine[eng];
+    const tin = Number(r.tokensIn) || 0, tout = Number(r.tokensOut) || 0, cost = Number(r.cost) || 0;
+    e.allIn += tin; e.allOut += tout; e.allCost += cost; e.calls += 1;
+    if ((r.month || '') === thisMonth) { e.monthIn += tin; e.monthOut += tout; e.monthCost += cost; }
+    if (days[r.day] != null) days[r.day] += cost;
+    totalCost += cost; totalIn += tin; totalOut += tout;
+  });
+  return { perEngine, days, dayLabels, thisMonth, totalCost, totalIn, totalOut, calls: rows.length };
+}
+
+// 组装仪表盘完整数据（各家余额 + 用量 + 阈值 + 低余额标记）
+async function buildBillingDashboard() {
+  const state = readBalanceState();
+  const summary = usageSummary();
+  const settings = decryptSettings(readSettingsRaw());
+  const engines = {};
+  for (const id of Object.keys(BILLING_META)) {
+    const meta = BILLING_META[id];
+    const bal = state.balances[id] || {};
+    const usage = summary.perEngine[id] || { monthCost: 0, allCost: 0, monthIn: 0, monthOut: 0, calls: 0 };
+    const threshold = balanceThreshold(id);
+    let other = null;   // 其他用量（仅 DeepSeek 可自动反推）
+    if (id === 'deepseek' && typeof bal.totalBalance === 'number' && typeof bal.grantedBalance === 'number' && typeof bal.toppedUpBalance === 'number') {
+      const totalConsumedCny = bal.grantedBalance + bal.toppedUpBalance - bal.totalBalance;
+      const workbenchCny = usage.allCost * USD_TO_CNY;
+      other = Math.max(0, totalConsumedCny - workbenchCny);
+    }
+    engines[id] = {
+      engine: id, name: meta.name, symbol: meta.symbol, currency: meta.currency,
+      auto: meta.auto, hasKey: !!settings[id], threshold: threshold,
+      balance: (typeof bal.balance === 'number') ? bal.balance : null,
+      totalBalance: bal.totalBalance, grantedBalance: bal.grantedBalance, toppedUpBalance: bal.toppedUpBalance,
+      manual: !!bal.manual, updatedAt: bal.updatedAt || 0,
+      low: (typeof bal.balance === 'number') && threshold > 0 && bal.balance <= threshold,
+      otherUsageCny: other,
+      monthCostUsd: usage.monthCost, allCostUsd: usage.allCost,
+      monthIn: usage.monthIn, monthOut: usage.monthOut, calls: usage.calls,
+    };
+  }
+  return { engines, summary, updatedAt: Date.now() };
+}
+
+// 拉取 DeepSeek 余额 + 低余额检查（供 IPC 刷新与定时器共用）
+async function refreshBalanceAndAlert() {
+  const state = readBalanceState();
+  let deepseekRes = { ok: false, error: '未配置 DeepSeek API Key' };
+  const settings = decryptSettings(readSettingsRaw());
+  if (settings.deepseek) {
+    deepseekRes = await queryDeepSeekBalance();
+    if (deepseekRes.ok) {
+      state.balances.deepseek = {
+        balance: deepseekRes.totalBalance, currency: deepseekRes.currency,
+        totalBalance: deepseekRes.totalBalance, grantedBalance: deepseekRes.grantedBalance,
+        toppedUpBalance: deepseekRes.toppedUpBalance, updatedAt: Date.now(), auto: true,
+      };
+      writeBalanceState(state);
+    }
+  }
+  const alerts = checkLowBalance();
+  return { deepseek: deepseekRes, alerts };
+}
+
+// 低余额检查 + 系统通知（去重：仅在「跌破阈值」或「余额继续下降」时提醒，且 24h 内不重复）
+function checkLowBalance() {
+  const state = readBalanceState();
+  const alerts = [];
+  for (const id of Object.keys(BILLING_META)) {
+    const meta = BILLING_META[id];
+    const threshold = balanceThreshold(id);
+    if (!threshold || threshold <= 0) continue;
+    const b = state.balances[id] || {};
+    if (typeof b.balance !== 'number') continue;
+    if (b.balance > threshold) continue;   // 未低于阈值
+    const last = state.lastAlert[id] || {};
+    if (typeof last.balance === 'number' && b.balance >= last.balance && (Date.now() - (last.at || 0)) < 24 * 3600 * 1000) continue;
+    alerts.push({ engine: id, name: meta.name, symbol: meta.symbol, balance: b.balance, threshold: threshold });
+    state.lastAlert[id] = { balance: b.balance, at: Date.now() };
+  }
+  if (alerts.length) {
+    writeBalanceState(state);
+    for (const a of alerts) {
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: '⚠️ API 余额不足提醒',
+            body: a.name + ' 余额仅剩 ' + a.symbol + a.balance.toFixed(2) + '（阈值 ' + a.symbol + a.threshold + '），请及时充值。',
+          }).show();
+        }
+      } catch (e) { /* 通知失败不阻断 */ }
+    }
+  }
+  return alerts;
+}
+
 function dryRunResult(engine, prompt, reason, soul) {
   // v3：演练也要把注入的技能正文算进输入 token，否则账单会少算一截
   const tin = approxTokens((soul ? soul + '\n\n' : '') + prompt), tout = 120;
@@ -1422,6 +1588,26 @@ ipcMain.handle('usage:clear', () => clearUsage());
 ipcMain.on('budget:get-sync', (e) => { e.returnValue = getBudget(); });
 ipcMain.on('budget:set-sync', (e, usd) => { e.returnValue = setBudget(usd); });
 
+/* ---------------- IPC：API 余额监控 ---------------- */
+ipcMain.handle('balance:get', async () => buildBillingDashboard());
+ipcMain.handle('balance:refresh', async () => { const r = await refreshBalanceAndAlert(); return Object.assign(r, { dashboard: await buildBillingDashboard() }); });
+ipcMain.handle('balance:set-threshold', (_e, engine, threshold) => {
+  const id = String(engine || '');
+  const state = readBalanceState();
+  state.thresholds[id] = Number(threshold) || 0;
+  writeBalanceState(state);
+  return balanceThreshold(id);
+});
+ipcMain.handle('balance:set-manual', (_e, engine, balance) => {
+  const id = String(engine || '');
+  if (!BILLING_META[id]) return { ok: false, error: '未知引擎：' + id };
+  const state = readBalanceState();
+  state.balances[id] = { balance: Number(balance) || 0, currency: BILLING_META[id].currency, manual: true, updatedAt: Date.now() };
+  writeBalanceState(state);
+  checkLowBalance();
+  return { ok: true };
+});
+
 /* ---------------- IPC：会话回放（append-only 事件日志） ---------------- */
 ipcMain.handle('session:log:list', () => sessionLog ? sessionLog.listSessions() : []);
 ipcMain.handle('session:log:replay', (_e, id) => sessionLog ? sessionLog.replay(id) : []);
@@ -1523,7 +1709,7 @@ ipcMain.handle('chat:start', (e, payload) => {
       }
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
-      let buf = '', truncated = false;
+      let buf = '', truncated = false, outChars = 0;
       const toolCalls = {};   // index -> { id, name, arguments } 原生工具调用分片累积
       while (true) {
         const { done, value } = await reader.read();
@@ -1546,7 +1732,7 @@ ipcMain.handle('chat:start', (e, payload) => {
             const text = delta.content || '';
             const thinking = delta.reasoning || delta.reasoning_content || '';
             if (thinking) send('chat:delta', { thinking: thinking, requestId });
-            if (text) send('chat:delta', { text: text, requestId });
+            if (text) { send('chat:delta', { text: text, requestId }); outChars += text.length; }
             // 原生工具调用（OpenAI 兼容流式）：按 index 累积分片（name/arguments 可能分多块到达）
             if (Array.isArray(delta.tool_calls)) {
               for (const tc of delta.tool_calls) {
@@ -1562,6 +1748,16 @@ ipcMain.handle('chat:start', (e, payload) => {
       }
       clearTimeout(stallTimer);
       const assembledCalls = Object.keys(toolCalls).map(function (k) { return toolCalls[k]; }).filter(function (t) { return t.name; });
+      // 聊天自动记账：估算输入/输出 token 并写入用量账本（此前聊天链路从未记账，「本工作台用量」一直是空的）
+      try {
+        const tin = approxTokens(JSON.stringify(messages)), tout = approxTokens(outChars);
+        appendUsage({
+          at: Date.now(), engine: engine, model: model,
+          agentId: '', agentName: '聊天', taskType: 'chat', source: 'chat',
+          tokensIn: tin, tokensOut: tout, cost: costOf(engine, tin, tout),
+          costSource: 'estimated', status: 'ok', dryRun: false,
+        });
+      } catch (e) { /* 记账失败不阻断聊天 */ }
       send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls, requestId });
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err), requestId });
@@ -4522,6 +4718,9 @@ if (gotSingleInstanceLock) {
     startTaskScheduler();
     // 灵感目录：确保内置调研 Agent 与每日调研计划存在
     ensureEcoRadar();
+    // API 余额监控：启动延时检查一次 + 每 60 分钟自动刷新余额并低余额提醒（DeepSeek 可自动查，其余手动填）
+    setTimeout(() => { refreshBalanceAndAlert().catch(() => {}); }, 3000);
+    setInterval(() => { refreshBalanceAndAlert().catch(() => {}); }, 60 * 60 * 1000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });
