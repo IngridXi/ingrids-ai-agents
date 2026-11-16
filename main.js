@@ -1655,7 +1655,7 @@ ipcMain.handle('computer:start', (e, payload) => {
 
   let proc;
   try {
-    proc = spawn(pyBin(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc = spawn(pyBin(), args, { stdio: ['ignore', 'pipe', 'pipe'], env: pyEnv() });
   } catch (err) {
     send({ type: 'error', message: '启动失败：' + String(err && err.message || err) });
     return false;
@@ -2808,9 +2808,14 @@ function browserCdpDir() {
 // 系统自带 python3（独立于 WorkBuddy 的 ~/.workbuddy/binaries python）。用于「只用标准库」或「已把包装进用户级 site-packages」的脚本（doc_edit.py / kb-zotero.py / bin_patch.py / pyc_decompile.py）。
 const SYSTEM_PY3 = process.platform === 'darwin' ? '/usr/bin/python3' : (process.platform === 'win32' ? 'python' : 'python3');
 function pyBin() { return SYSTEM_PY3; }   // 统一走系统 python3（PyObjC 已装用户级），彻底不依赖 WorkBuddy 自带 python
+// 关键坑（2026-11-16 根治）：App 从 Finder/桌面启动时 HOME 环境变量可能不是真实用户目录，
+// 导致 /usr/bin/python3 的「用户级 site-packages」(~/.Library/Python/3.9/lib/python/site-packages，
+// 装 python-pptx / python-docx / PyObjC) 无法被 USER_SITE 按 ~ 展开定位 → import 失败，报「缺 python-pptx」。
+// 统一用 os.homedir() 覆盖 HOME，所有调 SYSTEM_PY3 的子进程都走 pyEnv()，保证 import 稳定。
+function pyEnv() { const e = Object.assign({}, process.env); e.HOME = os.homedir(); return e; }
 function execPy(args, timeoutMs) {
   return new Promise((resolve) => {
-    execFile(pyBin(), args, { timeout: timeoutMs || 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(pyBin(), args, { timeout: timeoutMs || 60000, maxBuffer: 4 * 1024 * 1024, env: pyEnv() }, (err, stdout, stderr) => {
       if (err) resolve({ ok: false, output: String(stderr || '') + '\n' + String(stdout || ''), error: String(err.message || err) });
       else resolve({ ok: true, output: String(stdout || '') });
     });
@@ -2830,7 +2835,7 @@ ipcMain.handle('browser:automate', async (_e, payload) => {
   // 先探测 CDP 是否可达
   const st = await execPy([cdp, 'status'], 8000);
   if (!/CDP_OK/.test(st.output || '')) {
-    try { spawn(pyBin(), [startChrome], { detached: true, stdio: 'ignore' }).unref(); } catch { /* 忽略 */ }
+    try { spawn(pyBin(), [startChrome], { detached: true, stdio: 'ignore', env: pyEnv() }).unref(); } catch { /* 忽略 */ }
     await new Promise((res) => setTimeout(res, 3500));
   }
 
@@ -4013,7 +4018,7 @@ function docEditFindReplace(target, oldStr, newStr) {
   const script = path.join(__dirname, 'scripts', 'doc_edit.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少 docx 编辑脚本 scripts/doc_edit.py' };
   try {
-    const out = execFileSync(SYSTEM_PY3, [script, JSON.stringify({ path: target, old: oldStr, new: newStr })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const out = execFileSync(SYSTEM_PY3, [script, JSON.stringify({ path: target, old: oldStr, new: newStr })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, env: pyEnv() });
     return JSON.parse(out);
   } catch (e) {
     return { ok: false, error: 'docx 编辑失败：' + String(e && e.message || e) };
@@ -4045,7 +4050,7 @@ function _runPyJson(scriptRel, args, timeoutMs) {
   return new Promise((resolve) => {
     const script = path.join(__dirname, 'scripts', scriptRel);
     if (!fs.existsSync(script)) { resolve({ ok: false, error: '缺少脚本 scripts/' + scriptRel }); return; }
-    execFile(SYSTEM_PY3, [script, JSON.stringify(args)], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, timeout: timeoutMs || 60000 },
+    execFile(SYSTEM_PY3, [script, JSON.stringify(args)], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, timeout: timeoutMs || 60000, env: pyEnv() },
       (err, stdout) => {
         if (err) { resolve({ ok: false, error: String(err.message || err) }); return; }
         try { resolve(JSON.parse(String(stdout))); }
@@ -4432,7 +4437,7 @@ function toolBinPatch(p) {
   const script = path.join(__dirname, 'scripts', 'bin_patch.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少补丁脚本 scripts/bin_patch.py' };
   try {
-    const out = execFileSync(SYSTEM_PY3, [script, JSON.stringify({ path: target, offset: p && p.offset, bytes: p && p.bytes })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const out = execFileSync(SYSTEM_PY3, [script, JSON.stringify({ path: target, offset: p && p.offset, bytes: p && p.bytes })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, env: pyEnv() });
     return JSON.parse(out);
   } catch (e) { return { ok: false, error: '补丁失败：' + String((e && e.message) || e) }; }
 }
@@ -4442,7 +4447,7 @@ function toolPyDecompile(p) {
   const script = path.join(__dirname, 'scripts', 'pyc_decompile.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少反编译脚本 scripts/pyc_decompile.py' };
   try {
-    const out = execFileSync(SYSTEM_PY3, [script, target], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024 });
+    const out = execFileSync(SYSTEM_PY3, [script, target], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024, env: pyEnv() });
     return JSON.parse(out);
   } catch (e) { return { ok: false, error: '反编译失败：' + String((e && e.message) || e) }; }
 }

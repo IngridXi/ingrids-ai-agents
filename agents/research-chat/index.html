@@ -2308,6 +2308,34 @@
       var pendingStreak = 0;   // 连续「只说不做」次数，用于兜底：模型声明要动手却没真正调用工具时再催一次
       var driftStreak = 0;     // 实时监事：连续「收尾正文与核心目标零关联」次数，触发目标纠偏
       toolCache = {};          // 每次新任务重置只读工具缓存（同一任务内重复读被拦截，新任务重新开始）
+      // progress detector：检测「换关键词/换文件但结果内容完全相同」的隐性重复（比 toolCache 的「同参数去重」更强，
+      // 能抓到「换 5 种说法搜同一件事」的语义漂移——这正是思考型模型在长任务里反复烧 token 的隐形黑洞）
+      var readResultHashes = {};   // 结果内容指纹 -> true（跨轮累积）
+      var stallCount = 0;          // 连续「无新信息」轮数
+      function strHash(s) { var h = 5381, i, n = Math.min(s.length, 2000); for (i = 0; i < n; i++) { h = ((h << 5) + h + s.charCodeAt(i)) | 0; } return h + '_' + s.length; }
+      function trackReadResult(c, r) {
+        if (!r || r.cached) return;   // 缓存命中不算
+        var body = '';
+        if (c.name === 'fs_read') body = String(r.content || '');
+        else if (c.name === 'fs_list') body = (r.entries || []).map(function (e) { return e.name; }).join('|');
+        else if (c.name === 'fs_search') body = (r.results || []).join('|');
+        else if (c.name === 'web_search') body = (r.results || []).map(function (x) { return x.title + ' ' + x.link; }).join('|');
+        else if (c.name === 'db_query') body = JSON.stringify(r.hits || r.notion || '');
+        else return;
+        if (!body || body.length < 8) return;
+        var fp = strHash(body);
+        if (readResultHashes[fp]) { stallCount += 1; }   // 内容与之前某次完全一致 → 无新信息
+        else { readResultHashes[fp] = true; stallCount = 0; }
+      }
+      function stallHint() {
+        return stallCount >= 2
+          ? '【系统提示 · 重要】检测到连续多次读取/搜索返回的内容与之前完全相同（换了关键词或文件，但没拿到任何新信息）。请立即停止调用工具，基于已经掌握的材料直接给出结论；确实缺失的部分明确标注「待确认」，不要再反复搜索。'
+          : '';
+      }
+      // 混合思考：仅在勾选「深度思考」且为首轮时开思考（首轮深度规划）；工具循环轮关思考——
+      // 工具轮只需「读结果→决定下一步」，不需要深度推理，反而思考链随上下文逐轮膨胀、滚雪球烧 token
+      //（这正是此前 v4-pro 82% 调用零正文、158 万输入 token 只产出 12 字正文的根因）。
+      function thinkingForRound(round) { return thinkOn() ? (round === 0) : false; }
       // 原生工具调用：云端 OpenAI 兼容引擎（deepseek/gpt/qwen）传 tools 参数走 function calling；
       // 本地 Ollama 模型兼容性不稳定，暂沿用文本 <tool> 标签解析
       var useNativeTools = (engine === 'deepseek' || engine === 'gpt' || engine === 'qwen');
@@ -2316,7 +2344,7 @@
       function runToolTurn(msgs, round, contN) {
         live = '';
         liveThinking = '';
-        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId, thinking: thinkOn() }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId, thinking: thinkingForRound(round) }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) { thinking += chunk.thinking; liveThinking += chunk.thinking; }
             if (chunk && chunk.text) live += chunk.text;
@@ -2343,7 +2371,7 @@
               var caps = agentCapabilities();
               Promise.all(calls.map(function (c) {
                 return cachedExecuteTool(c, caps)
-                  .then(function (r) { return formatToolResult(c, r); })
+                  .then(function (r) { trackReadResult(c, r); return formatToolResult(c, r); })
                   .catch(function (e) { return '【工具 ' + c.name + ' 结果】\n工具执行失败：' + String((e && e.message) || e); });
               })).then(function (results) {
                 statusText = '正在思考…';
@@ -2354,6 +2382,8 @@
                 var correction = failStreak >= 2
                   ? '【系统提示 · 重要】连续多次工具调用失败，不要再重复完全相同的尝试。先读上面的错误信息找出原因（路径不对、名称含空格或全角字符、iCloud 文件未下载到位等），换一种办法（先用 fs_list 列目录看真实名称、用 fs_search 搜索、修正路径大小写与空格），或者明确告诉用户你卡在哪、需要什么信息。'
                   : '';
+                var stall = stallHint();
+                if (stall) correction = correction ? (correction + '\n\n' + stall) : stall;
                 var next;
                 if (nativeCalls.length) {
                   // 原生工具调用：用 role:tool 回传结果（OpenAI 规范），模型才能继续

@@ -37,6 +37,38 @@ import time
 import shutil
 
 
+def _ensure_user_site():
+    """兜底：App 从 Finder/桌面启动时 HOME 可能异常，导致用户级 site-packages 不在 sys.path。
+    显式把用户级 site-packages 目录插入 sys.path，保证 python-pptx 可导入。"""
+    try:
+        import site
+        usp = site.getusersitepackages()
+        if usp and os.path.isdir(usp) and usp not in sys.path:
+            sys.path.insert(0, usp)
+    except Exception:
+        pass
+    # 用 pwd 拿真实 home（不依赖 HOME 环境变量，彻底免疫 HOME 异常）
+    home = None
+    try:
+        import pwd
+        home = pwd.getpwuid(os.getuid()).pw_dir
+    except Exception:
+        home = None
+    if not home:
+        home = os.path.expanduser('~')
+    try:
+        for v in ('3.9', '3.10', '3.11', '3.12', '3.13'):
+            for p in (os.path.join(home, 'Library', 'Python', v, 'lib', 'python', 'site-packages'),
+                      os.path.join(home, '.local', 'lib', 'python' + v, 'site-packages')):
+                if os.path.isdir(p) and p not in sys.path:
+                    sys.path.insert(0, p)
+    except Exception:
+        pass
+
+
+_ensure_user_site()
+
+
 def _safe_replace_paragraph(paragraph, replacements):
     """在单个 paragraph 内做跨 run 安全的替换：拼接全部 run → 替换 → 写回首个 run。"""
     runs = paragraph.runs
@@ -146,10 +178,10 @@ def main():
     except ImportError:
         print(json.dumps({
             'ok': False,
-            'error': '当前 Python 缺少 python-pptx（本机其实已装，见 README；若真缺请运行: %s -m pip install --user python-pptx）' % sys.executable,
+            'error': '套模板依赖 python-pptx 未安装（本机环境异常）。请在终端运行以下命令后重试：%s -m pip install --user python-pptx' % sys.executable,
             'python': sys.executable,
             'pythonVersion': sys.version.split()[0],
-            'hint': '若你是在「套模板」，可改用 doc_generate 直接生成新版式 PPT（无需 python-pptx）；若确实要套模板，请把上面 pip 命令交给用户在终端执行后再试',
+            'fix': '%s -m pip install --user python-pptx' % sys.executable,
         }, ensure_ascii=False))
         return
 
