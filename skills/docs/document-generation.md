@@ -1,6 +1,6 @@
 ---
 name: 文档生成
-description: 把内容生成 PPT/Word/Excel/Markdown 文件并保存到「导出」目录：什么场景选哪种格式、内容怎么组织、PPT 怎么做成有图表/表格/学术配色的学术级幻灯片，用 doc_generate 工具执行。
+description: 把内容生成 PPT/Word/Excel/Markdown 文件并保存到「导出」目录：什么场景选哪种格式、内容怎么组织；PPT 默认「分板块 + 智能图形版式」（blocks 自动匹配卡片/流程/金字塔/对比，文字嵌进图形、绝不纯文字罗列）+ 图表/表格 + 剑桥学术配色，用 doc_generate 工具执行。
 category: office
 boards: docs, research
 source: workbuddy-pptx / workbuddy-docx / workbuddy-sheetagent（适配工作台 doc_generate 工具）

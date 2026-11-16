@@ -145,6 +145,7 @@
 
 ## 8. 历次关键修复记录（时间线，供追溯）
 
+- **2026-11-16**：**PPT「分板块 + 智能图形版式」设为默认铁律（用户不说也照做）**——根因：工具 schema 里已写了 `blocks` 智能图形，但注入每条消息的「PPT 制作规范」默认规则还是旧版（只讲 bullets/charts，没提 blocks），且 dev/ethics 的系统提示词压根没有这条规范 → 三 agent 的 `buildSystemPrompt` 统一重写/补入「PPT 制作规范 · 默认规则」：内容一律 `blocks` 分板块 + 渲染器按板块数量自动匹配智能图形（2 分栏/3 三栏/4 2×2/更多网格 + flow/pyramid/compare），文字嵌进图形、绝不纯文字罗列；仅单要点才用 bullets 兜底；charts/table 按需。同步改 `skills/docs/document-generation.md` 的 frontmatter description（这条会经 `scanSkillsSync` 注入系统提示词，让默认规则跨板块生效）。验证：三 agent 内联 JS `node --check` 全过、`s += '\n\n【PPT 制作规范` 各 1 处、字面转义正确。
 - **2026-11-16**：研究助手联网搜索**默认开启**（研究需核验文献/DOI/录用发表状态），`webEnabled=true` + 按钮初始 active。
 - **2026-11-16**：**彻底独立**——docx 编辑（`doc_edit.py`）改用系统 `/usr/bin/python3`（python-docx 已装到用户级 `~/Library/Python/3.9/site-packages`）；kb-zotero.py / bin_patch.py / pyc_decompile.py 等纯标准库脚本统一改用 `SYSTEM_PY3`（`/usr/bin/python3`），不再依赖 WorkBuddy 自带 python。
 - **2026-11-16**：**彻底独立（补完）**——PyObjC（Quartz/AppKit，pyobjc-core 11.1）已装进系统 python3.9 用户级；`pyBin()` 统一返回 `SYSTEM_PY3`，电脑操作（`computer-use.py`）与浏览器自动化（`cdp.py`，纯标准库）均不再依赖 WorkBuddy 自带 python。
