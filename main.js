@@ -3556,6 +3556,62 @@ function toolImageProcess(payload) {
   // 抠图（rembg 推理）较慢，给足超时；其余动作快
   return _runPyJson('image_tools.py', args, action === 'remove_bg' ? 300000 : 60000);
 }
+/* ---------------- 文生图（通义万相 · DashScope 异步任务，复用 Qwen 的 DashScope Key） ---------------- */
+const WANX_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis';
+const WANX_TASK_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/tasks/';
+async function toolImageGenerate(payload) {
+  const prompt = String((payload && payload.prompt) || '').trim();
+  if (!prompt) return { ok: false, error: '缺少 prompt（画面描述）' };
+  const settings = decryptSettings(readSettingsRaw());
+  const key = settings.qwen; // 通义万相与 Qwen 共用一个 DashScope Key（引擎设置里的「Qwen · API Key」）
+  if (!key) return { ok: false, error: '尚未配置通义万相 Key：请到「引擎设置」填写「Qwen · API Key」（万相与 Qwen 共用同一个 DashScope Key）' };
+  const model = String((payload && payload.model) || 'wanx2.1-t2i-turbo');
+  const size = String((payload && payload.size) || '1024*1024');
+  const n = Math.max(1, Math.min(4, Number((payload && payload.n) || 1)));
+  const negative = String((payload && payload.negative_prompt) || '');
+  const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'X-DashScope-Async': 'enable' };
+  try {
+    // 1) 提交异步任务
+    const input = { prompt: prompt };
+    if (negative) input.negative_prompt = negative;
+    const submit = await fetch(WANX_ENDPOINT, {
+      method: 'POST', headers, signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ model: model, input: input, parameters: { n: n, size: size } }),
+    });
+    let sj = {};
+    try { sj = await submit.json(); } catch { /* 非 JSON */ }
+    if (!submit.ok) return { ok: false, error: '万相提交失败：' + (sj && sj.message ? sj.message : ('HTTP ' + submit.status)) };
+    const taskId = sj && sj.output && sj.output.task_id;
+    if (!taskId) return { ok: false, error: '万相未返回 task_id：' + String(JSON.stringify(sj)).slice(0, 200) };
+
+    // 2) 轮询任务直到完成（最长约 90s，每次间隔 3s）
+    const deadline = Date.now() + 90000;
+    let url = '';
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const q = await fetch(WANX_TASK_ENDPOINT + taskId, { headers: { Authorization: 'Bearer ' + key }, signal: AbortSignal.timeout(20000) });
+      let qj = {};
+      try { qj = await q.json(); } catch { /* 非 JSON */ }
+      const st = qj && qj.output && qj.output.task_status;
+      if (st === 'SUCCEEDED') { const rs = (qj.output.results || []); url = rs[0] && rs[0].url; break; }
+      if (st === 'FAILED' || st === 'CANCELED') return { ok: false, error: '万相生成失败：' + ((qj.output && qj.output.message) || st) };
+      // PENDING / RUNNING 继续等
+    }
+    if (!url) return { ok: false, error: '万相生成超时（90s），请重试' };
+
+    // 3) 结果 URL 有有效期，必须落盘到「导出」目录
+    const imgResp = await fetch(url, { headers: { 'User-Agent': 'Ingrid-AI-Agents/1.0' }, signal: AbortSignal.timeout(60000) });
+    if (!imgResp.ok) return { ok: false, error: '图片下载失败：HTTP ' + imgResp.status };
+    const buf = Buffer.from(await imgResp.arrayBuffer());
+    const ct = String(imgResp.headers.get('content-type') || '');
+    const ext = ct.indexOf('png') >= 0 ? 'png' : 'jpg';
+    const file = path.join(exportDir(), safeFilename('万相_' + prompt.slice(0, 24)) + '_' + Date.now() + '.' + ext);
+    fs.writeFileSync(file, buf);
+    return { ok: true, name: path.basename(file), path: file, size: buf.length };
+  } catch (err) {
+    return { ok: false, error: '文生图请求失败：' + String((err && err.message) || err) };
+  }
+}
 /* ---------------- 第二大脑（second-brain：收件箱→结构化 wiki→双向链接） ---------------- */
 function brainVault(payload) {
   const explicit = String((payload && payload.vault) || '').trim();
@@ -3779,6 +3835,7 @@ ipcMain.handle('tool:fs:move', (_e, p) => toolFsMove(p));
 ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
 ipcMain.handle('tool:pptx:fill', (_e, p) => toolPptxFill(p));
 ipcMain.handle('tool:image:process', (_e, p) => toolImageProcess(p));
+ipcMain.handle('tool:image:generate', (_e, p) => toolImageGenerate(p));
 ipcMain.handle('tool:brain:ingest', (_e, p) => toolBrainIngest(p));
 ipcMain.handle('tool:brain:lint', (_e, p) => toolBrainLint(p));
 ipcMain.handle('tool:brain:index', (_e, p) => toolBrainIndex(p));

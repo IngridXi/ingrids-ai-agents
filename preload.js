@@ -188,6 +188,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolFsDelete: (payload) => ipcRenderer.invoke('tool:fs:delete', payload),
   toolPptxFill: (payload) => ipcRenderer.invoke('tool:pptx:fill', payload),
   toolImageProcess: (payload) => ipcRenderer.invoke('tool:image:process', payload),
+  toolImageGenerate: (payload) => ipcRenderer.invoke('tool:image:generate', payload),
   toolBrainIngest: (payload) => ipcRenderer.invoke('tool:brain:ingest', payload),
   toolBrainLint: (payload) => ipcRenderer.invoke('tool:brain:lint', payload),
   toolBrainIndex: (payload) => ipcRenderer.invoke('tool:brain:index', payload),
