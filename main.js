@@ -1493,6 +1493,7 @@ ipcMain.handle('chat:start', (e, payload) => {
         method: 'POST', headers, signal: ctrl.signal,
         body: JSON.stringify(Object.assign(
           { model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 },
+          samplingForModel(model),
           tools ? { tools: tools, tool_choice: 'auto' } : {}
         )),
       });
@@ -1682,7 +1683,7 @@ async function callBgChat(engine, model, messages, tools) {
     const ctrl = new AbortController();
     let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
     const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
-    const body = { model: model || cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 };
+    const body = Object.assign({ model: model || cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 }, samplingForModel(model || cfg.model));
     if (tools && tools.length) { body.tools = tools; body.tool_choice = 'auto'; }
     const resp = await fetch(cfg.url, { method: 'POST', headers, signal: ctrl.signal, body: JSON.stringify(body) });
     if (!resp.ok) {
@@ -2201,6 +2202,22 @@ function clearReviewCheckpoint(agent) {
 ipcMain.handle('review:checkpoint:load', (_e, agent) => loadReviewCheckpoint(agent));
 ipcMain.handle('review:checkpoint:clear', (_e, agent) => { clearReviewCheckpoint(agent); return true; });
 
+// 去道德化（abliteration）模型会顺带削弱「简洁 / 聚焦 / 知道何时停笔」能力，
+// 这里不换模型、不重训，只靠采样参数强约束补回：抑制重复 + 限制长度 + 适度降温。
+// 仅在命中 uncensored/abliterat 模型时生效（本地 Ollama），其余引擎不受影响。
+function samplingForModel(model) {
+  const m = String(model || '');
+  if (/uncensored|abliterat/i.test(m)) {
+    return {
+      temperature: 0.6,           // 适度降温：减少发散，收敛到主线
+      max_tokens: 1600,           // 硬上限：从 8000 压到 1600，杜绝没完没了
+      frequency_penalty: 0.6,     // 惩罚重复 token，抑制「车轱辘话」
+      presence_penalty: 0.5,      // 惩罚已出现内容，鼓励推进而非原地打转
+    };
+  }
+  return {};
+}
+
 // 通用流式调用：向 CHAT_ENDPOINTS 引擎发请求，累积完整文本，逐块回调 onChunk(text, thinking)
 async function completeChatStream(engine, messages, onChunk, opts) {
   const cfg = CHAT_ENDPOINTS[engine];
@@ -2224,11 +2241,11 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
   const resp = await fetch(cfg.url, {
     method: 'POST', headers, signal: ctrl.signal,
-    body: JSON.stringify({
+    body: JSON.stringify(Object.assign({
       model: model, messages: messages, stream: true,
       temperature: o.temperature != null ? o.temperature : 0.7,
       max_tokens: o.maxTokens || 8000,
-    }),
+    }, samplingForModel(model))),
   });
   if (!resp.ok) {
     clearTimeout(stallTimer);
