@@ -2210,7 +2210,7 @@ function samplingForModel(model) {
   if (/uncensored|abliterat/i.test(m)) {
     return {
       temperature: 0.6,           // 适度降温：减少发散，收敛到主线
-      max_tokens: 1600,           // 硬上限：从 8000 压到 1600，杜绝没完没了
+      max_tokens: 3600,           // 硬上限：从 8000 压到 3600（约 2000 字），杜绝没完没了
       frequency_penalty: 0.6,     // 惩罚重复 token，抑制「车轱辘话」
       presence_penalty: 0.5,      // 惩罚已出现内容，鼓励推进而非原地打转
     };
