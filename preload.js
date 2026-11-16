@@ -189,6 +189,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolPptxFill: (payload) => ipcRenderer.invoke('tool:pptx:fill', payload),
   toolImageProcess: (payload) => ipcRenderer.invoke('tool:image:process', payload),
   toolImageGenerate: (payload) => ipcRenderer.invoke('tool:image:generate', payload),
+  toolSkillInstall: (payload) => ipcRenderer.invoke('tool:skill:install', payload),
+  toolSkillInstallFromUrl: (payload) => ipcRenderer.invoke('tool:skill:install-from-url', payload),
   toolBrainIngest: (payload) => ipcRenderer.invoke('tool:brain:ingest', payload),
   toolBrainLint: (payload) => ipcRenderer.invoke('tool:brain:lint', payload),
   toolBrainIndex: (payload) => ipcRenderer.invoke('tool:brain:index', payload),

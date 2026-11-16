@@ -3612,6 +3612,116 @@ async function toolImageGenerate(payload) {
     return { ok: false, error: '文生图请求失败：' + String((err && err.message) || err) };
   }
 }
+/* ---------------- 自扩展：agent 把一段 markdown 知识写成新 skill 并热加载 ---------------- */
+// 分类 → 默认板块映射（无默认板块的分类，需要调用方显式传 boards）
+const CAT2BOARD = { research: 'research', office: 'docs', design: 'design', finance: 'finance', browser: 'automation' };
+const VALID_CATS = SkillsCore.CATEGORY_RULES.map((c) => c.id);
+// 把一段知识落成 skills/<category>/<slug>.md（builtin scope，默认启用 + 随 git 沉淀），并热加载
+function writeSkillFile(name, description, category, boards, markdown) {
+  const dir = path.join(__dirname, 'skills', category);
+  fs.mkdirSync(dir, { recursive: true });
+  const slug = String(name).replace(/[\\/:*?"<>|\r\n\t]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'skill';
+  let file = path.join(dir, slug + '.md');
+  let i = 2;
+  while (fs.existsSync(file)) { file = path.join(dir, slug + '-' + i + '.md'); i++; }
+  const fm = '---\n' +
+    'name: ' + String(name).replace(/\r?\n/g, ' ').trim() + '\n' +
+    'description: ' + String(description).replace(/\r?\n/g, ' ').trim() + '\n' +
+    'category: ' + category + '\n' +
+    (boards.length ? 'boards: ' + boards.join(', ') + '\n' : '') +
+    'source: self-installed（agent 自装）\n' +
+    '---\n\n';
+  fs.writeFileSync(file, fm + String(markdown).trim() + '\n', 'utf8');
+  scanSkills(); // 热加载：重建 SKILL_PATHS 与 records，下一条消息的 buildSystemPrompt 自动纳入
+  const rel = path.relative(path.join(__dirname, 'skills'), file).split(path.sep).join('/').replace(/\.md$/i, '');
+  return { id: 'builtin:' + rel, path: file };
+}
+function toolSkillInstall(payload) {
+  const name = String((payload && payload.name) || '').trim();
+  const description = String((payload && payload.description) || '').trim();
+  const markdown = String((payload && payload.markdown) || '').trim();
+  if (!name) return { ok: false, error: '缺少 name（skill 名称）' };
+  if (!description) return { ok: false, error: '缺少 description（一句话说明）' };
+  if (!markdown) return { ok: false, error: '缺少 markdown（skill 正文）' };
+  if (markdown.length > 12000) return { ok: false, error: '正文超过 12000 字符上限（当前 ' + markdown.length + '），请精简' };
+  let category = String((payload && payload.category) || '').trim();
+  if (VALID_CATS.indexOf(category) < 0) category = SkillsCore.classify(name + ' ' + description).category;
+  let boards = String((payload && payload.boards) || '').split(/[,，\s]+/).filter(Boolean);
+  if (!boards.length && CAT2BOARD[category]) boards = [CAT2BOARD[category]];
+  try {
+    const r = writeSkillFile(name, description, category, boards, markdown);
+    return {
+      ok: true, id: r.id, path: r.path, name: name, category: category, boards: boards,
+      note: boards.length ? '' : '⚠️ 该分类无默认板块，未挂载到任何板块（不会自动注入任何 agent），请显式指定 boards（如 research/docs/dev/design/finance/automation）',
+    };
+  } catch (err) { return { ok: false, error: '写 skill 失败：' + String((err && err.message) || err) }; }
+}
+/* ---------------- installer：从 GitHub 拉纯提示词 .md skill（绝不下载/执行代码） ---------------- */
+async function fetchText(url) {
+  const resp = await fetch(url, { headers: { 'User-Agent': 'Ingrid-AI-Agents/1.0' }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+  if (!resp.ok) return null;
+  const ct = String(resp.headers.get('content-type') || '');
+  if (ct && ct.indexOf('text/html') >= 0 && ct.indexOf('text/markdown') < 0 && ct.indexOf('text/plain') < 0) {
+    // GitHub 的 raw 会返回 text/plain；普通网页可能返回 text/html，拒绝以跳过非原始文本
+    if (ct.indexOf('text/plain') < 0) return null;
+  }
+  const t = await resp.text();
+  return t;
+}
+async function toolSkillInstallFromUrl(payload) {
+  let url = String((payload && payload.url) || '').trim().replace(/#.*$/, '');
+  if (!url) return { ok: false, error: '缺少 url（GitHub 上 skill 的 .md 链接或仓库地址）' };
+  const explicitBoards = String((payload && payload.boards) || '').split(/[,，\s]+/).filter(Boolean);
+  const explicitCategory = String((payload && payload.category) || '').trim();
+  const candidates = [];
+  // 1) blob → raw
+  const blobM = url.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/([^\/]+)\/(.+\.md)$/i);
+  if (blobM) {
+    candidates.push('https://raw.githubusercontent.com/' + blobM[1] + '/' + blobM[2] + '/' + blobM[3] + '/' + blobM[4]);
+  }
+  // 2) 已是 raw / 直接 .md 链接
+  if (/\.md$/i.test(url) && url.indexOf('raw.githubusercontent.com') >= 0) candidates.push(url);
+  else if (/\.md$/i.test(url)) candidates.push(url);
+  // 3) 仓库主页 → 猜常见 skill 文件路径（main/master 分支 × 常见文件名）
+  const repoM = url.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/?$/i);
+  if (repoM) {
+    ['main', 'master'].forEach(function (br) {
+      ['SKILL.md', 'skill.md', 'skills/SKILL.md', 'README.md'].forEach(function (p) {
+        candidates.push('https://raw.githubusercontent.com/' + repoM[1] + '/' + repoM[2] + '/' + br + '/' + p);
+      });
+    });
+  }
+  if (!candidates.length) return { ok: false, error: '无法识别该 URL：请给 GitHub 上某个 .md 文件的链接（blob 或 raw 均可），或仓库主页地址' };
+
+  let text = null, usedUrl = '';
+  for (const c of candidates) {
+    const t = await fetchText(c);
+    if (t && t.trim()) { text = t; usedUrl = c; break; }
+  }
+  if (!text) return { ok: false, error: '下载失败或未找到 .md 文件（试了 ' + candidates.length + ' 个路径）。建议直接给 raw .md 链接最可靠' };
+  if (text.length > 12000) text = text.slice(0, 12000);
+
+  // 提取 name/description：优先 frontmatter，否则文件名 / 首个 # 标题
+  const parsed = SkillsCore.parseFrontmatter(text);
+  const meta = parsed.meta || {};
+  const body = (parsed.body || text).trim();
+  const fromFile = decodeURIComponent(usedUrl.split('/').pop() || '').replace(/\.md$/i, '');
+  const name = String((payload && payload.name) || meta.name || meta.display_name || fromFile || 'imported-skill').trim();
+  const description = String((payload && payload.description) || meta.description || meta.description_zh || '从 ' + usedUrl + ' 导入').trim();
+  let category = explicitCategory;
+  if (VALID_CATS.indexOf(category) < 0) category = VALID_CATS.indexOf(String(meta.category || '')) >= 0 ? String(meta.category) : SkillsCore.classify(name + ' ' + description).category;
+  let boards = explicitBoards;
+  if (!boards.length && CAT2BOARD[category]) boards = [CAT2BOARD[category]];
+  if (!body) return { ok: false, error: '下载的内容为空' };
+  try {
+    const r = writeSkillFile(name, description, category, boards, body);
+    return {
+      ok: true, id: r.id, path: r.path, name: name, category: category, boards: boards,
+      sourceUrl: usedUrl, imported: true,
+      note: '已从 GitHub 导入为纯提示词 skill 并热加载' + (boards.length ? '' : '（未挂载板块，请指定 boards）'),
+    };
+  } catch (err) { return { ok: false, error: '导入失败：' + String((err && err.message) || err) }; }
+}
 /* ---------------- 第二大脑（second-brain：收件箱→结构化 wiki→双向链接） ---------------- */
 function brainVault(payload) {
   const explicit = String((payload && payload.vault) || '').trim();
@@ -3836,6 +3946,8 @@ ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
 ipcMain.handle('tool:pptx:fill', (_e, p) => toolPptxFill(p));
 ipcMain.handle('tool:image:process', (_e, p) => toolImageProcess(p));
 ipcMain.handle('tool:image:generate', (_e, p) => toolImageGenerate(p));
+ipcMain.handle('tool:skill:install', (_e, p) => toolSkillInstall(p));
+ipcMain.handle('tool:skill:install-from-url', (_e, p) => toolSkillInstallFromUrl(p));
 ipcMain.handle('tool:brain:ingest', (_e, p) => toolBrainIngest(p));
 ipcMain.handle('tool:brain:lint', (_e, p) => toolBrainLint(p));
 ipcMain.handle('tool:brain:index', (_e, p) => toolBrainIndex(p));

@@ -1225,6 +1225,8 @@
     tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}');
     tools.push('image_process：本地图片处理（图片不出本机）。参数 {"action":"remove_bg|resize|convert|info","input":"图片绝对路径","output":"输出路径","width":800,"height":600}。remove_bg 用 rembg 抠图去背景输出透明 PNG（首次会下载 u2net 模型）；resize 缩放；convert 转格式；info 查尺寸');
     tools.push('image_generate：文生图（通义万相，云端，需已配「Qwen/通义」DashScope Key）。参数 {"prompt":"画面描述(中文效果好)","size":"1024*1024|1280*720|720*1280","n":1,"negative_prompt":"不要出现的元素(可选)"}。生成后自动下载保存到「下载」目录并返回图片绝对路径');
+    tools.push('skill_install：自扩展——把一段 markdown 知识写成工作台新 skill 并立即热加载（下一条消息即生效，无需重启）。参数 {"name":"skill名称","description":"一句话说明","category":"research|writing|design|finance|office|browser|media|code|general(可选,默认自动分类)","boards":"挂载板块,逗号分隔(research/design/finance/docs/automation)","markdown":"skill正文(纯提示词/方法论,≤12000字)"}。只装纯提示词知识，不含代码');
+    tools.push('skill_install_from_url：从 GitHub 拉取一个纯提示词 skill 并热加载。参数 {"url":"GitHub 上 .md 文件的 blob/raw 链接，或仓库主页地址","boards":"板块(可选)"}。只导入 .md 文本、绝不下载/执行代码；含代码的 skill 需人工接入');
     if (webEnabled) tools.push('web_search：联网搜索，参数 {"query":"搜索关键词"}（返回标题、链接、摘要；查实时信息/最新事实/SOTA 进展时用它，不要凭记忆编造）');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
@@ -1270,6 +1272,8 @@
     fn('pptx_fill_template', '把内容套进已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 查看模板每页形状名与占位符，再 action=fill 填空', { action: { type: 'string', description: 'inspect（查看模板结构）或 fill（填空，默认）' }, template: { type: 'string', description: '模板 .pptx 绝对路径' }, output: { type: 'string', description: '输出 .pptx 路径（可选，默认另存为 *_filled_*.pptx）' }, replacements: { type: 'object', description: '全局文本替换 {"{{占位符}}":"新文字"}' }, byName: { type: 'array', description: '按形状名填空 [{name,text}]' } });
     fn('image_process', '本地图片处理（rembg 抠图去背景 / 缩放 / 格式转换 / 信息查询，图片不出本机）', { action: { type: 'string', description: 'remove_bg / resize / convert / info' }, input: { type: 'string', description: '输入图片绝对路径' }, output: { type: 'string', description: '输出路径（可选）' }, width: { type: 'integer', description: 'resize 目标宽（可选）' }, height: { type: 'integer', description: 'resize 目标高（可选）' } });
     fn('image_generate', '文生图（通义万相，云端调用，需已配「Qwen/通义」DashScope Key）。生成图片并保存到「下载」目录，返回本地路径', { prompt: { type: 'string', description: '画面描述，中文效果好' }, size: { type: 'string', description: '1024*1024 / 1280*720 / 720*1280（默认 1024*1024）' }, n: { type: 'integer', description: '生成张数 1-4（默认 1）' }, negative_prompt: { type: 'string', description: '负面提示词：不要出现的元素（可选）' } });
+    fn('skill_install', '自扩展：把一段 markdown 知识写成一个新 skill 并热加载（下一条消息即生效）', { name: { type: 'string', description: 'skill 名称' }, description: { type: 'string', description: '一句话说明' }, category: { type: 'string', description: 'research/writing/design/finance/office/browser/media/code/general（可选，默认自动分类）' }, boards: { type: 'string', description: '挂载板块，逗号分隔：research/design/finance/docs/automation（可选，默认按分类映射）' }, markdown: { type: 'string', description: 'skill 正文（纯提示词/方法论知识，≤12000 字）' } });
+    fn('skill_install_from_url', '从 GitHub 拉取纯提示词 .md skill 并热加载（不下载/执行代码）', { url: { type: 'string', description: 'GitHub 上 .md 的 blob/raw 链接，或仓库主页地址' }, boards: { type: 'string', description: '挂载板块（可选）' }, name: { type: 'string', description: '自定义名称（可选，默认从文件提取）' }, category: { type: 'string', description: '分类（可选）' } });
     return defs;
   }
   function parseToolArgs(s) {
@@ -1295,6 +1299,8 @@
     if (n === 'pptx_fill_template') return window.ingrid.toolPptxFill(call.args);
     if (n === 'image_process') return window.ingrid.toolImageProcess(call.args);
     if (n === 'image_generate') return window.ingrid.toolImageGenerate(call.args);
+    if (n === 'skill_install') return window.ingrid.toolSkillInstall(call.args);
+    if (n === 'skill_install_from_url') return window.ingrid.toolSkillInstallFromUrl(call.args);
     if (n === 'web_search' && webEnabled) return window.ingrid.webSearch({ query: String((call.args && call.args.query) || ''), n: 5 });
     // 写类操作：先请求用户审批，批准后执行
     if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
@@ -1426,6 +1432,8 @@
       else if (call.name === 'pptx_fill_template') body = (res && res.ok) ? (res.action === 'inspect' ? ('模板结构：\n' + JSON.stringify(res.pages, null, 2)) : ('已套模板：' + res.output + '（替换 ' + res.replaced + ' 处）')) : ('套模板失败：' + ((res && res.error) || '未知错误'));
       else if (call.name === 'image_process') body = (res && res.ok) ? ('图片处理完成：' + (res.output || res.path) + (res.width ? '（' + res.width + '×' + res.height + '）' : '')) : ('图片处理失败：' + ((res && res.error) || '未知错误'));
       else if (call.name === 'image_generate') body = (res && res.ok) ? ('已生成图片：' + (res.path || res.name) + (res.size ? '（' + Math.round(res.size / 1024) + ' KB）' : '')) : ('文生图失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'skill_install') body = (res && res.ok) ? ('已自装 skill「' + res.name + '」→ ' + res.id + (res.boards && res.boards.length ? '（挂载：' + res.boards.join('、') + '）' : '') + (res.note ? '\n' + res.note : '')) : ('自装失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'skill_install_from_url') body = (res && res.ok) ? ('已从 GitHub 导入 skill「' + res.name + '」→ ' + res.id + (res.note ? '\n' + res.note : '')) : ('导入失败：' + ((res && res.error) || '未知错误'));
       else if (call.name === 'web_search') {
         if (res && res.ok && res.results && res.results.length) {
           body = '搜索「' + (res.query || '') + '」得到 ' + res.results.length + ' 条结果：\n' +
