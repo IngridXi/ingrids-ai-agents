@@ -596,16 +596,6 @@ const SEED_AGENTS = [
       route: [],
     },
   },
-  {
-    name: '数据分析', emoji: '📊', tag: '表格 · 图表 · 洞察',
-    status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
-    detail: { sub: '敬请期待', desc: '数据处理与可视化助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
-  },
-  {
-    name: '翻译助手', emoji: '🌐', tag: '多语种互译 · 术语一致',
-    status: 'soon', engine: 'local-llm', engineLabel: '待绑定',
-    detail: { sub: '敬请期待', desc: '多语言翻译助手，接入 LLM 后端后启用。', workflow: [], capabilities: [], route: [] },
-  },
 ];
 
 /* ---------- 存储后端：桌面走文件系统，浏览器回退 localStorage ---------- */
@@ -672,6 +662,11 @@ SEED_AGENTS.forEach(function (seed) {
   if (tools.indexOf('fs') < 0) { tools.push('fs'); changed = true; }
   if (tools.indexOf('db') < 0) { tools.push('db'); changed = true; }
   if (changed) registry.update(a.id, { tools: tools });
+});
+// v9 迁移：删除「数据分析」「翻译助手」两个占位卡片（功能已并入通用助手/研究助手）
+['数据分析', '翻译助手'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (a) registry.remove(a.id);
 });
 window.__reg = registry;
 
@@ -769,10 +764,10 @@ function updateBoardCount() {
 
 function renderAgents() {
   grid.innerHTML = '';
-  // 首页不显示「调度中枢」（它是控制面板，从左侧导航进入），其余 Agent 正常展示
-  const agents = registry.list().filter(a => a.role !== 'orchestrator');
+  // 首页不显示「调度中枢」（控制面板）与「灵感目录」（生态雷达，仅侧边栏入口），其余 Agent 正常展示
+  const agents = registry.list().filter(a => a.role !== 'orchestrator' && a.id !== 'eco-radar');
   // featured（主力）排最前，其余按固定顺序（通用助手排在音乐创作之前）
-  const ORDER = ['会议纪要官', '研究助手', '通用助手', '界面设计师', '音乐创作', '数据分析', '翻译助手'];
+  const ORDER = ['会议纪要官', '研究助手', '通用助手', '软件工程', '伦理agent', '界面设计师', '音乐创作'];
   agents.sort((x, y) => {
     const fx = x.featured ? 1 : 0, fy = y.featured ? 1 : 0;
     if (fx !== fy) return fy - fx;

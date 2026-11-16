@@ -1,5 +1,7 @@
 # Ingrid's AI Agents
 
+> 📖 **维护前必读**：本项目的规则、约定、模型选型结论、踩坑经验与红线，统一沉淀在 **[`docs/RULES.md`](docs/RULES.md)**（工作台唯一权威，独立于宿主工具）。改代码前先看它。
+
 个人 AI 工作台 —— 横屏方形按钮网格启动器,把常用的 AI Agent 集中到一个桌面应用里。除了「点开某个 Agent」,还能**让一个 Agent 指挥其他 Agent 干活**,并在派活时按板块临时挂载常用 Skill。
 
 以开源项目 [OpenMausBot](https://github.com/milind-soni/OpenMausBot)(Apache 2.0)为架构底座构建:每个 Agent 是一个独立的"数字员工",有自己的名字、人设(soul)、记忆、技能、定时任务,以及各自绑定的模型引擎。

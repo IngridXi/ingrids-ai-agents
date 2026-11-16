@@ -10,7 +10,7 @@
  *
  * 环境变量：
  *   OLLAMA_URL        覆盖 Ollama 地址（默认 http://127.0.0.1:11434）
- *   KB_DIGEST_MODEL   覆盖生成模型（默认 qwen3:32b）
+ *   KB_DIGEST_MODEL   覆盖生成模型（默认 qwen3.8:27b）
  *
  * 产物落盘位置：<Obsidian 库>/_AI整理/ 目录
  */
@@ -22,7 +22,7 @@ const path = require('path');
 const { detectObsidianVaults } = require('./kb-engine.js');
 
 const OLLAMA = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-const MODEL = process.env.KB_DIGEST_MODEL || 'qwen3:32b';
+const MODEL = process.env.KB_DIGEST_MODEL || 'qwen3.8:27b';
 
 /* ---------------- Zotero 元数据（快速，--meta-only 跳过 PDF 全文） ---------------- */
 function getZoteroItems() {

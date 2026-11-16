@@ -408,7 +408,7 @@ const CHAT_ENDPOINTS = {
   deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-flash', keyField: 'deepseek' },
   gpt:      { url: 'https://api.openai.com/v1/chat/completions',    model: 'gpt-4o-mini',    keyField: 'gpt' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus', keyField: 'qwen' },
-  ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3:32b',      keyField: null },
+  ollama:   { url: 'http://127.0.0.1:11434/v1/chat/completions',    model: 'qwen3.8:27b',      keyField: null },
   'ollama-review': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'deepseek-r1:32b', keyField: null },  // 审稿专用（本地深度推理模型，跨模型对抗）
   'ollama-vision': { url: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen2.5vl:7b', keyField: null },   // 识图专用（本地视觉模型，支持图片输入）
 };
@@ -1265,22 +1265,23 @@ ipcMain.handle('agent:run', async (_e, payload) => {
 /* ---------------- IPC：研究助手聊天（流式） ---------------- */
 // 渲染进程 invoke('chat:start', {engine, messages}) 后，主进程把结果以
 // 'chat:delta'（逐块正文）和 'chat:done'（结束/错误）事件推回，Key 不经过渲染层。
-let activeChatAbort = null;   // 当前流式请求的 AbortController，供「停止生成」使用
-ipcMain.on('chat:stop', () => { if (activeChatAbort) { try { activeChatAbort.abort(); } catch { /* 忽略 */ } } });
+const activeChatAborts = new Set();   // 活跃流式请求的 AbortController 集合，供「停止生成」统一 abort
+ipcMain.on('chat:stop', () => { for (const ctrl of activeChatAborts) { try { ctrl.abort(); } catch { /* 忽略 */ } } });
 ipcMain.handle('chat:start', (e, payload) => {
   const p = payload || {};
+  const requestId = String(p.requestId || '');   // 请求级标识：前端据此只认自己的 delta/done，避免并发串线
   const engine = String(p.engine || 'ollama');
   const messages = Array.isArray(p.messages) ? p.messages : [];
   const cfg = CHAT_ENDPOINTS[engine];
-  if (!cfg) { e.sender.send('chat:done', { ok: false, error: '未知引擎：' + engine }); return true; }
-  if (messages.length === 0) { e.sender.send('chat:done', { ok: false, error: '消息为空' }); return true; }
+  if (!cfg) { e.sender.send('chat:done', { ok: false, error: '未知引擎：' + engine, requestId }); return true; }
+  if (messages.length === 0) { e.sender.send('chat:done', { ok: false, error: '消息为空', requestId }); return true; }
   const model = String(p.model || cfg.model);   // 前端可指定模型（如 deepseek-flash / deepseek-v4-pro）
   const tools = Array.isArray(p.tools) && p.tools.length ? p.tools : null;   // 原生工具调用（OpenAI tools 参数）
 
   const settings = decryptSettings(readSettingsRaw());
   const key = cfg.keyField ? settings[cfg.keyField] : '';
   if (cfg.keyField && !key) {
-    e.sender.send('chat:done', { ok: false, error: '尚未在「引擎设置」配置 ' + engine + ' 的 API Key' });
+    e.sender.send('chat:done', { ok: false, error: '尚未在「引擎设置」配置 ' + engine + ' 的 API Key', requestId });
     return true;
   }
 
@@ -1295,7 +1296,7 @@ ipcMain.handle('chat:start', (e, payload) => {
       // 只有真正卡死（连续无数据）才会中断。
       const STALL_MS = 120000;
       ctrl = new AbortController();
-      activeChatAbort = ctrl;   // 供「停止生成」按钮 abort
+      activeChatAborts.add(ctrl);   // 供「停止生成」按钮 abort
       let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
       const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
       const resp = await fetch(cfg.url, {
@@ -1309,7 +1310,7 @@ ipcMain.handle('chat:start', (e, payload) => {
         clearTimeout(stallTimer);
         let msg = 'HTTP ' + resp.status;
         try { const j = await resp.json(); msg = j && j.error && j.error.message ? j.error.message : msg; } catch { /* 非 JSON */ }
-        send('chat:done', { ok: false, error: msg });
+        send('chat:done', { ok: false, error: msg, requestId });
         return;
       }
       const reader = resp.body.getReader();
@@ -1336,8 +1337,8 @@ ipcMain.handle('chat:start', (e, payload) => {
             // 思考型模型（如 qwen3）先流 reasoning 再流 content，两者都要透传
             const text = delta.content || '';
             const thinking = delta.reasoning || delta.reasoning_content || '';
-            if (thinking) send('chat:delta', { thinking: thinking });
-            if (text) send('chat:delta', { text: text });
+            if (thinking) send('chat:delta', { thinking: thinking, requestId });
+            if (text) send('chat:delta', { text: text, requestId });
             // 原生工具调用（OpenAI 兼容流式）：按 index 累积分片（name/arguments 可能分多块到达）
             if (Array.isArray(delta.tool_calls)) {
               for (const tc of delta.tool_calls) {
@@ -1353,11 +1354,11 @@ ipcMain.handle('chat:start', (e, payload) => {
       }
       clearTimeout(stallTimer);
       const assembledCalls = Object.keys(toolCalls).map(function (k) { return toolCalls[k]; }).filter(function (t) { return t.name; });
-      send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls });
+      send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls, requestId });
     } catch (err) {
-      send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err) });
+      send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err), requestId });
     } finally {
-      if (activeChatAbort === ctrl) activeChatAbort = null;
+      activeChatAborts.delete(ctrl);
     }
   })();
   return true;
@@ -1369,7 +1370,7 @@ ipcMain.handle('chat:start', (e, payload) => {
 
 const BG_TOOLS = [
   { type: 'function', function: { name: 'fs_list', description: '列出目录内容（文件名、是否目录、大小）', parameters: { type: 'object', properties: { dir: { type: 'string', description: '目录绝对路径，默认主目录' } } } } },
-  { type: 'function', function: { name: 'fs_read', description: '读取文件内容：txt/md 等文本直接读；docx/doc/rtf/odt 自动提取正文；其他二进制会报错提示', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'fs_read', description: '读取文件内容（原文）：txt/md 等文本直接读；docx/doc/rtf/odt 自动提取正文；pdf 自动提取全文；pptx 自动提取每页幻灯片文本；旧版 .ppt 二进制需先转 .pptx', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'fs_search', description: '按文件名搜索文件', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, root: { type: 'string', description: '搜索根目录，默认主目录' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'fs_write', description: '写入文本文件（覆盖前自动备份，仅主目录内）', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
   { type: 'function', function: { name: 'fs_edit', description: '替换文件中的一段文字（原文须唯一）。Word .docx/.doc 也能直接改（自动用 python-docx 精确替换并备份）', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' }, old: { type: 'string', description: '要替换的原文' }, new: { type: 'string', description: '替换成的新文' } }, required: ['path', 'old', 'new'] } } },
@@ -2003,7 +2004,7 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   // 空闲超时：有数据持续流入就不中断，120 秒无数据才 abort；不设总时长上限，长时间任务可持续工作
   const STALL_MS = 120000;
   const ctrl = new AbortController();
-  activeChatAbort = ctrl;   // 注册，供「停止生成」abort（审稿闭环同样生效）
+  activeChatAborts.add(ctrl);   // 注册，供「停止生成」abort（审稿闭环同样生效）
   let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
   const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
   const resp = await fetch(cfg.url, {
@@ -2048,7 +2049,7 @@ async function completeChatStream(engine, messages, onChunk, opts) {
     }
   }
   clearTimeout(stallTimer);
-  if (activeChatAbort === ctrl) activeChatAbort = null;
+  activeChatAborts.delete(ctrl);
   return { text: text, thinking: thinking, truncated: truncated };
 }
 
@@ -2060,7 +2061,7 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
   const rounds = Math.min(Math.max(parseInt(p.rounds, 10) || 2, 1), 4);
   const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
 
-  // 审稿引擎：跨模型对抗——干活是本地 ollama(qwen3:32b) 时默认用本地 deepseek-r1:32b 审稿；否则选已配 Key 的不同 API 引擎
+  // 审稿引擎：跨模型对抗——干活是本地 ollama(qwen3.8:27b) 时默认用本地 deepseek-r1:32b 审稿；否则选已配 Key 的不同 API 引擎
   const settings = decryptSettings(readSettingsRaw());
   let reviewerEngine = String(p.reviewer || '');
   if (!reviewerEngine) {
@@ -2113,18 +2114,21 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
   return true;
 });
 
-/* ---------------- IPC：浏览器自动化（安全白名单） ---------------- */
-// 复用本机 browser-automation-cdp skill 的 CDP 脚本，只做只读操作（打开/截图/提取文本）。
-// 合规红线（明确不做）：验证码绕过、2FA/OTP 绕过、账号密码自动登录。
+/* ---------------- IPC：浏览器自动化（只读白名单） ---------------- */
+// 优先用本仓库 scripts/browser-cdp 的 CDP 脚本（彻底独立），回退到 ~/.workbuddy 的 skill。
+// 只做只读操作（open 打开 / text 提取文本 / shot 截图）。
 function browserCdpDir() {
   const home = app.getPath('home');
   const candidates = [
+    path.join(__dirname, 'scripts', 'browser-cdp'),
     path.join(home, '.workbuddy', 'skills', 'browser-automation-cdp', 'scripts'),
   ];
   for (const d of candidates) if (fs.existsSync(path.join(d, 'cdp.py'))) return d;
   return null;
 }
-function pyBin() { return process.platform === 'win32' ? 'python' : 'python3'; }
+// 系统自带 python3（独立于 WorkBuddy 的 ~/.workbuddy/binaries python）。用于「只用标准库」或「已把包装进用户级 site-packages」的脚本（doc_edit.py / kb-zotero.py / bin_patch.py / pyc_decompile.py）。
+const SYSTEM_PY3 = process.platform === 'darwin' ? '/usr/bin/python3' : (process.platform === 'win32' ? 'python' : 'python3');
+function pyBin() { return SYSTEM_PY3; }   // 统一走系统 python3（PyObjC 已装用户级），彻底不依赖 WorkBuddy 自带 python
 function execPy(args, timeoutMs) {
   return new Promise((resolve) => {
     execFile(pyBin(), args, { timeout: timeoutMs || 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -2668,6 +2672,8 @@ function startKbWatcher() {
 }
 
 ipcMain.handle('kb:scan', (_e, force) => kbEngine.scan({ force: !!force }));
+// 手动同步 OneDrive 参考库（pptx/pdf/docx）：默认不自动扫，用户点击才提取更新
+ipcMain.handle('kb:scan-reference', () => kbEngine.scan({ manual: true }));
 ipcMain.handle('kb:search', (_e, query, k) => kbEngine.search(String(query || ''), k));
 ipcMain.handle('kb:status', () => kbEngine.status());
 ipcMain.handle('kb:configure', (_e, patch) => {
@@ -2765,7 +2771,7 @@ ipcMain.handle('kb:terms:build', async (e, opts) => {
 
   let items = [];
   try {
-    const stdout = await execFileP('python3', [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
+    const stdout = await execFileP(SYSTEM_PY3, [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
     if (stdout) items = JSON.parse(stdout);
   } catch (err) { return { ok: false, error: '读取 Zotero 数据失败：' + String(err && err.message || err) }; }
   if (!Array.isArray(items) || !items.length) return { ok: false, error: 'Zotero 里没有文献（请先在 Zotero 添加文献）' };
@@ -2905,6 +2911,52 @@ async function toolFsSearch(payload) {
   return { ok: true, query: q, count: results.length, results: results.slice(0, 50) };
 }
 
+// PDF 原文提取：用 macOS 自带 PDFKit（/usr/bin/swift + 系统框架），不依赖任何第三方 Python/npm 包。
+function toolPdfRead(target, st) {
+  const script = path.join(__dirname, 'scripts', 'pdf_extract.swift');
+  if (!fs.existsSync(script)) return { ok: false, error: '缺少 PDF 提取脚本 scripts/pdf_extract.swift' };
+  try {
+    const out = execFileSync('/usr/bin/swift', [script, target], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024, timeout: 120000 });
+    let r; try { r = JSON.parse(out); } catch (e) { return { ok: false, error: 'PDF 提取返回异常：' + String(out).slice(0, 200) }; }
+    if (!r.ok) return r;
+    return { ok: true, path: target, size: st.size, format: 'pdf', pages: r.pages, content: r.content };
+  } catch (e) {
+    if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
+    return { ok: false, error: 'PDF 提取失败：' + String(e && e.message || e) };
+  }
+}
+// PPTX 原文提取：解包 ppt/slides/slideN.xml（macOS 自带 /usr/bin/unzip），cheerio 提取 <a:t> 文本，逐页组织。
+function toolPptxRead(target, st) {
+  try {
+    const list = execFileSync('/usr/bin/unzip', ['-Z1', target], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+    const slides = list.split('\n').map(function (l) { return l.trim(); })
+      .filter(function (l) { return /^ppt\/slides\/slide\d+\.xml$/i.test(l); })
+      .sort(function (a, b) {
+        var na = parseInt((a.match(/slide(\d+)/) || ['', '0'])[1], 10);
+        var nb = parseInt((b.match(/slide(\d+)/) || ['', '0'])[1], 10);
+        return na - nb;
+      });
+    if (!slides.length) return { ok: false, error: '未在演示文稿中找到幻灯片内容（可能是空文件或格式异常）' };
+    const cheerio = require('cheerio');
+    const parts = [];
+    slides.forEach(function (s) {
+      const xml = execFileSync('/usr/bin/unzip', ['-p', target, s], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+      const $ = cheerio.load(xml, { xmlMode: true });
+      var texts = [];
+      $('a\\:t').each(function (_i, el) { texts.push($(el).text()); });
+      if (!texts.length) $('*').each(function (_i, el) { if (el.tagName === 'a:t') texts.push($(el).text()); });
+      var n = parseInt((s.match(/slide(\d+)/) || ['', '0'])[1], 10);
+      parts.push('【第 ' + n + ' 页】' + texts.join(' '));
+    });
+    const content = parts.join('\n\n');
+    if (!content.trim()) return { ok: false, error: 'PPTX 中未提取到文本（可能全部由图片组成）' };
+    return { ok: true, path: target, size: st.size, format: 'pptx', slides: slides.length, content: content };
+  } catch (e) {
+    if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
+    return { ok: false, error: 'PPTX 提取失败：' + String(e && e.message || e) };
+  }
+}
+
 function toolFsRead(payload) {
   const target = path.resolve(String((payload && payload.path) || ''));
   if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在：' + String((payload && payload.path) || '') };
@@ -2921,6 +2973,11 @@ function toolFsRead(payload) {
       return { ok: false, error: '提取文档正文失败：' + String(e && e.message || e) };
     }
   }
+  // PDF：macOS 自带 PDFKit 提取全文（见 toolPdfRead）
+  if (ext === '.pdf') return toolPdfRead(target, st);
+  // PPTX：解包提取幻灯片文本（见 toolPptxRead）；旧版 .ppt 二进制不支持，提示转换
+  if (ext === '.pptx') return toolPptxRead(target, st);
+  if (ext === '.ppt') return { ok: false, error: '.ppt 是旧版二进制格式，暂不支持直接读。请用 PowerPoint 另存为 .pptx 后再读。' };
   if (st.size > 200 * 1024) return { ok: false, error: '文件过大（>200KB），暂不支持读取' };
   try {
     const buf = fs.readFileSync(target);
@@ -2977,7 +3034,7 @@ function docEditFindReplace(target, oldStr, newStr) {
   const script = path.join(__dirname, 'scripts', 'doc_edit.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少 docx 编辑脚本 scripts/doc_edit.py' };
   try {
-    const out = execFileSync('python3', [script, JSON.stringify({ path: target, old: oldStr, new: newStr })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const out = execFileSync(SYSTEM_PY3, [script, JSON.stringify({ path: target, old: oldStr, new: newStr })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     return JSON.parse(out);
   } catch (e) {
     return { ok: false, error: 'docx 编辑失败：' + String(e && e.message || e) };
@@ -3126,7 +3183,7 @@ function toolBinPatch(p) {
   const script = path.join(__dirname, 'scripts', 'bin_patch.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少补丁脚本 scripts/bin_patch.py' };
   try {
-    const out = execFileSync('python3', [script, JSON.stringify({ path: target, offset: p && p.offset, bytes: p && p.bytes })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const out = execFileSync(SYSTEM_PY3, [script, JSON.stringify({ path: target, offset: p && p.offset, bytes: p && p.bytes })], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     return JSON.parse(out);
   } catch (e) { return { ok: false, error: '补丁失败：' + String((e && e.message) || e) }; }
 }
@@ -3136,7 +3193,7 @@ function toolPyDecompile(p) {
   const script = path.join(__dirname, 'scripts', 'pyc_decompile.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少反编译脚本 scripts/pyc_decompile.py' };
   try {
-    const out = execFileSync('python3', [script, target], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024 });
+    const out = execFileSync(SYSTEM_PY3, [script, target], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024 });
     return JSON.parse(out);
   } catch (e) { return { ok: false, error: '反编译失败：' + String((e && e.message) || e) }; }
 }
@@ -3436,7 +3493,7 @@ function toolDbWorkspaceList() {
 async function toolDbZoteroReport() {
   const zdir = detectZoteroDir();
   if (!zdir) return { ok: false, error: '未检测到 Zotero 数据目录（~/Zotero 不存在）' };
-  const stdout = await execFileP('python3', [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
+  const stdout = await execFileP(SYSTEM_PY3, [path.join(__dirname, 'kb-zotero.py'), '--meta-only']);
   if (!stdout) return { ok: false, error: '读取 Zotero 数据失败（请确认 ~/Zotero/zotero.sqlite 可访问）' };
   let items; try { items = JSON.parse(stdout); } catch { return { ok: false, error: '解析 Zotero 数据失败' }; }
   const noTags = items.filter((i) => !(i.tags && i.tags.length));
@@ -3587,7 +3644,8 @@ if (gotSingleInstanceLock) {
     createMainWindow();
     // 知识库：首次运行自动检测源 + 后台增量索引 + 文件监听自动更新
     kbEngine.ensureConfig();
-    kbEngine.scan().catch(() => {});
+    // 扫描延迟到首屏渲染后再跑，避免启动时同步遍历大目录/提取文件阻塞主进程（窗口秒开，索引后台增量）
+    setTimeout(() => { kbEngine.scan().catch(() => {}); }, 2000);
     startKbWatcher();
     // 日历自动同步：启动即同步一次 + 每 30 分钟定时同步（凭据已加密持久化，一次登录永久生效）
     runCalendarSync().catch(() => {});

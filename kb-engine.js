@@ -390,7 +390,12 @@ class KbEngine {
   }
 
   /* ---------------- 参考库源遍历（pptx/pdf/docx → markdown 内容 + 风格画像） ---------------- */
-  _walkReference(src) {
+  // 性能关键：用「mtime+size」做稳定签名，文件未变则跳过昂贵的全文提取
+  // （旧实现每次启动都对全部 PDF/PPTX/DOCX 用 execFileSync 同步提取全文，数百文件会阻塞主进程数分钟）
+  _walkReference(src, oldFiles, opts) {
+    opts = opts || {};
+    oldFiles = oldFiles || {};
+    const readonly = !!opts.readonly; // 只读模式：只列文件、保留旧索引、不提取、不判变更（内容等手动同步更新）
     if (!src.path || !fs.existsSync(src.path)) return [];
     const self = this;
     const out = [];
@@ -403,14 +408,29 @@ class KbEngine {
         const full = path.join(dir, ent.name);
         if (ent.isDirectory()) { if (!skipDirs.has(ent.name)) walk(full); }
         else if (ent.isFile() && exts.test(ent.name)) {
+          const rel = path.relative(src.path, full).split(path.sep).join('/');
+          let st;
+          try { st = fs.statSync(full); } catch { continue; }
+          // 稳定签名：mtime + size；与索引一致则视为未变，跳过全文提取
+          const sig = md5(String(st.mtimeMs) + ':' + String(st.size));
+          if (readonly) {
+            // 只读：已索引文件保留旧 md5（不判变更、不提取）；新文件等手动同步再索引
+            if (oldFiles[rel] !== undefined) {
+              out.push({ rel, path: full, md5: oldFiles[rel], content: '', sourceId: src.id, sourceLabel: src.label || src.type, type: 'reference', _unchanged: true });
+            }
+            continue;
+          }
+          if (oldFiles[rel] === sig) {
+            out.push({ rel, path: full, md5: sig, content: '', sourceId: src.id, sourceLabel: src.label || src.type, type: 'reference', _unchanged: true });
+            continue;
+          }
           const ext = path.extname(ent.name).toLowerCase();
           let content = '';
           if (ext === '.pptx') content = self._pptxToMarkdown(ent.name, extractPptx(full));
           else if (ext === '.pdf') { const t = extractPdfText(full); if (t) content = '# ' + ent.name + '\n\n' + t; }
           else { const t = extractDocxText(full); if (t) content = '# ' + ent.name + '\n\n' + t; }
           if (!content.trim()) continue;
-          const rel = path.relative(src.path, full).split(path.sep).join('/');
-          out.push({ rel, path: full, md5: md5(content), content, sourceId: src.id, sourceLabel: src.label || src.type, type: 'reference' });
+          out.push({ rel, path: full, md5: sig, content, sourceId: src.id, sourceLabel: src.label || src.type, type: 'reference' });
         }
       }
     }
@@ -469,7 +489,11 @@ class KbEngine {
     this.chunkSize = cfg.chunkSize || this.chunkSize;
     this.chunkOverlap = cfg.chunkOverlap || this.chunkOverlap;
 
-    const sources = (cfg.sources || []).filter((s) => s.enabled && s.path);
+    // reference 源（OneDrive 参考库：pptx/pdf/docx）较大较慢，默认不自动提取、手动同步（manual=true）才完整提取
+    const manualOnly = !!opts.manual;
+    // 自动扫描：所有源都遍历，reference 走「只读」分支（保留旧索引、不提取）；手动同步：只扫 reference 并完整提取
+    const allSources = (cfg.sources || []).filter((s) => s.enabled && s.path);
+    const activeSources = manualOnly ? allSources.filter((s) => s.type === 'reference') : allSources;
     const idx = this._loadIndex();
     const oldFiles = idx.files || {};
 
@@ -477,15 +501,26 @@ class KbEngine {
     const dirty = [];
     const seen = new Set();
 
-    for (const src of sources) {
+    for (const src of activeSources) {
       const files = src.type === 'zotero' ? await this._walkZotero(src)
         : src.type === 'notion' ? await this._walkNotion(src, opts.force)
-        : src.type === 'reference' ? this._walkReference(src)
+        : src.type === 'reference' ? this._walkReference(src, oldFiles, { readonly: !manualOnly })
         : this._walkSource(src);
       for (const f of files) {
         seen.add(f.rel);
         newFiles[f.rel] = f.md5;
         if (oldFiles[f.rel] !== f.md5) dirty.push(f);
+      }
+    }
+
+    // 保留「本次未扫描」源的旧索引，避免误删（手动同步只扫 reference 时，Obsidian/Zotero/Notion 等需原样保留）
+    const scannedIds = new Set(activeSources.map((s) => s.id));
+    const relSource = {};
+    for (const c of (idx.chunks || [])) { if (!relSource[c.relPath]) relSource[c.relPath] = c.sourceId; }
+    for (const rel of Object.keys(oldFiles)) {
+      if (!seen.has(rel)) {
+        const sid = relSource[rel];
+        if (sid && !scannedIds.has(sid)) { seen.add(rel); newFiles[rel] = oldFiles[rel]; }
       }
     }
 
@@ -529,7 +564,7 @@ class KbEngine {
       files: newFiles,
       meta: {
         scannedAt: new Date().toISOString(),
-        sources: sources.map((s) => ({ type: s.type, label: s.label, path: s.path })),
+        sources: allSources.map((s) => ({ type: s.type, label: s.label, path: s.path })),
         totalFiles: Object.keys(newFiles).length,
         totalChunks: chunks.length,
         embedded: chunks.filter((c) => c.embedding).length,

@@ -421,7 +421,7 @@
   var liveTaskGoal = '';   // 实时监事：当前任务核心目标（本轮用户输入），防目标漂移
 
   var ENGINE_META = {
-    ollama:   { label: '本地 Ollama · qwen3:32b（免费）' },
+    ollama:   { label: '本地 Ollama · qwen3.8:27b（免费）' },
     'ollama-vision': { label: '本地视觉模型 · qwen2.5vl:7b（识图）' },
     deepseek: { label: 'DeepSeek · API Key' },
     gpt:      { label: 'GPT · API Key' },
@@ -863,7 +863,7 @@
     if (caps.fs) {
       tools.push('fs_list：列出某目录下的文件与子目录，参数 {"dir":"/绝对路径"}（省略则列主目录）');
       tools.push('fs_search：按文件名搜索，参数 {"query":"关键词","root":"可选起始目录"}');
-      tools.push('fs_read：读取文件内容，参数 {"path":"/绝对路径"}。txt/md 等文本直接读；docx/doc/rtf/odt 会自动提取正文（可读 Word 原文）；pdf/pptx 等二进制读不了正文');
+      tools.push('fs_read：读取文件内容，参数 {"path":"/绝对路径"}。txt/md 等文本直接读；docx/doc/rtf/odt 会自动提取正文（可读 Word 原文）；pdf 自动提取全文、pptx 自动提取每页幻灯片文本（可读原文）；旧版 .ppt 需先转 .pptx');
       tools.push('fs_write：写入/覆盖文件，参数 {"path":"/绝对路径","content":"完整内容"}（覆盖前自动备份原文件）');
       tools.push('fs_append：向文件末尾追加内容，参数 {"path":"/绝对路径","content":"内容"}');
       tools.push('fs_edit：替换文件中的一段文字，参数 {"path":"/绝对路径","old":"原文","new":"新文"}（原文须唯一）');
@@ -898,7 +898,7 @@
     if (caps.fs) {
       fn('fs_list', '列出某目录下的文件与子目录（省略 dir 则列主目录）', { dir: { type: 'string', description: '绝对路径，可选' } });
       fn('fs_search', '按文件名/关键词搜索文件', { query: { type: 'string', description: '关键词' }, root: { type: 'string', description: '可选起始目录' } });
-      fn('fs_read', '读取文件内容（txt/md 直读；docx/doc/rtf/odt 自动提取正文；pdf/pptx 读不了）', { path: { type: 'string', description: '绝对路径' } });
+      fn('fs_read', '读取文件内容（txt/md 直读；docx/doc/rtf/odt 自动提取正文；pdf 提取全文；pptx 提取每页文本；.ppt 需转 .pptx）', { path: { type: 'string', description: '绝对路径' } });
       fn('fs_write', '写入/覆盖文件（覆盖前自动备份原文件）', { path: { type: 'string' }, content: { type: 'string' } });
       fn('fs_append', '向文件末尾追加内容', { path: { type: 'string' }, content: { type: 'string' } });
       fn('fs_edit', '替换文件中的一段文字（原文须唯一）', { path: { type: 'string' }, old: { type: 'string' }, new: { type: 'string' } });

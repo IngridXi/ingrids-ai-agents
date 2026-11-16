@@ -302,11 +302,33 @@
           r.path ? '<code>' + esc(r.path) + '</code>' : '',
           [{ kind: 'ref:' + r.id, label: '打开文件夹' }]);
       });
+      if (refs.length) {
+        html += '<div class="src-card"><div class="top"><div class="ic">🔄</div><div class="nm">OneDrive 参考库同步</div><span class="st ok">默认不自动同步</span></div>' +
+          '<div class="meta">OneDrive 上的 PPT / PDF / DOCX 只在点击按钮时提取更新，避免拖慢启动。</div>' +
+          '<div class="acts"><button class="btn" id="refSyncBtn">🔄 手动同步参考库</button><span class="hint" id="refSyncHint"></span></div></div>';
+      }
       var box = el('kbSources');
       box.innerHTML = html;
       box.querySelectorAll('[data-kind]').forEach(function (b) {
         b.addEventListener('click', function () { openSource(b.getAttribute('data-kind')); });
       });
+      var refSyncBtn = el('refSyncBtn');
+      if (refSyncBtn) {
+        refSyncBtn.addEventListener('click', function () {
+          if (!DESKTOP) { alert('请在桌面版使用'); return; }
+          if (!ing.kbScanReference) { alert('当前版本不支持手动同步，请重启应用后重试'); return; }
+          refSyncBtn.disabled = true;
+          var hint = el('refSyncHint');
+          if (hint) hint.textContent = '同步中（提取 PDF/PPT/DOCX 全文，可能需要几分钟）…';
+          ing.kbScanReference().then(function (r) {
+            refSyncBtn.disabled = false;
+            if (hint) hint.textContent = (r && r.changed !== undefined) ? ('完成：' + r.files + ' 个文件 · ' + r.changed + ' 个变化') : '同步完成';
+          }).catch(function (e) {
+            refSyncBtn.disabled = false;
+            if (hint) hint.textContent = '同步失败：' + (e && e.message || e);
+          });
+        });
+      }
       if (kb.totalFiles) {
         box.insertAdjacentHTML('beforeend', '<div class="hint">本地索引：' + kb.totalFiles + ' 个文件 · ' + kb.totalChunks + ' 个分块' + (kb.embedReady ? ' · 已向量化' : ' · 关键词检索') + '</div>');
       }

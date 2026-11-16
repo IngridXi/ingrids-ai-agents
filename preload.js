@@ -41,18 +41,22 @@ contextBridge.exposeInMainWorld('ingrid', {
   // 真正跑一个 Agent（主进程 spawn CLI / 调 API；默认演练不花钱）
   runAgent: (payload) => ipcRenderer.invoke('agent:run', payload),
 
-  // 研究助手聊天（流式）：invoke 开始后，主进程推 chat:delta / chat:done 事件
+  // 研究助手聊天（流式）：invoke 开始后，主进程推 chat:delta / chat:done 事件。
+  // 关键：每个请求带 requestId，前端只认自己的事件——否则主聊天/自动标题/图片识别并发时，
+  // 会互相收到对方的 chat:done 而提前中断（串线 bug）。
   chatStream: (payload, handlers) => {
     const h = handlers || {};
-    const onDelta = (_e, d) => { if (h.onDelta) h.onDelta(d || {}); };
+    const reqId = (payload && payload.requestId) || ('req-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+    const onDelta = (_e, d) => { if (d && d.requestId && d.requestId !== reqId) return; if (h.onDelta) h.onDelta(d || {}); };
     const onDone = (_e, d) => {
+      if (d && d.requestId && d.requestId !== reqId) return;   // 忽略非本请求的完成信号
       ipcRenderer.removeListener('chat:delta', onDelta);
       ipcRenderer.removeListener('chat:done', onDone);
       if (h.onDone) h.onDone(d || {});
     };
     ipcRenderer.on('chat:delta', onDelta);
     ipcRenderer.on('chat:done', onDone);
-    return ipcRenderer.invoke('chat:start', payload);
+    return ipcRenderer.invoke('chat:start', Object.assign({}, payload, { requestId: reqId }));
   },
 
   // 停止当前研究助手的流式生成（主进程 abort 正在进行的请求）
@@ -134,6 +138,7 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // 知识库（本地 RAG：扫描 / 检索 / 状态 / 配置）
   kbScan: (force) => ipcRenderer.invoke('kb:scan', !!force),
+  kbScanReference: () => ipcRenderer.invoke('kb:scan-reference'),
   kbSearch: (query, k) => ipcRenderer.invoke('kb:search', query, k),
   kbStatus: () => ipcRenderer.invoke('kb:status'),
   kbConfigure: (patch) => ipcRenderer.invoke('kb:configure', patch),
