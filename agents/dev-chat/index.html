@@ -323,6 +323,8 @@
   .img-preview .nm { font-size: 12px; color: var(--ink-soft); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .img-preview .x { border: none; background: none; color: var(--ink-faint); cursor: pointer; font-size: 16px; }
   .img-preview .x:hover { color: var(--danger); }
+  .img-preview .fchip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; color: var(--ink); max-width: 260px; }
+  .img-preview .fchip .x { font-size: 14px; }
   .user-img { margin-bottom: 8px; }
   .user-img img { max-width: 220px; max-height: 180px; border-radius: 10px; display: block; }
   .foot-note { text-align: center; font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
@@ -1526,6 +1528,7 @@
     });
   }
   var pendingImage = null;   // { dataUrl, name } 待发送图片
+  var pendingFiles = [];     // [{ path, name, content? }] 拖入的文档/文件（非图片），发送时把路径交给模型用 fs_read 读原文
   var recognition = null;    // 语音识别实例
 
   var el = function (id) { return document.getElementById(id); };
@@ -1571,12 +1574,25 @@
   /* ---------- 图片输入（上传 / 粘贴） ---------- */
   function renderImgPreview() {
     var p = el('imgPreview');
-    if (!pendingImage) { p.hidden = true; p.innerHTML = ''; return; }
+    var hasImg = !!pendingImage;
+    var hasFiles = pendingFiles.length > 0;
+    if (!hasImg && !hasFiles) { p.hidden = true; p.innerHTML = ''; return; }
     p.hidden = false;
-    p.innerHTML = '<img src="' + pendingImage.dataUrl + '">' +
-      '<span class="nm">' + esc(pendingImage.name) + '</span>' +
-      '<button class="x" id="imgClear" title="移除图片">✕</button>';
-    el('imgClear').addEventListener('click', function () { pendingImage = null; renderImgPreview(); });
+    var html = '';
+    if (hasImg) {
+      html += '<img src="' + pendingImage.dataUrl + '">' +
+        '<span class="nm">' + esc(pendingImage.name) + '</span>' +
+        '<button class="x" id="imgClear" title="移除图片">✕</button>';
+    }
+    for (var i = 0; i < pendingFiles.length; i++) {
+      html += '<span class="fchip">📄 ' + esc(pendingFiles[i].name) + ' <button class="x" data-f="' + i + '" title="移除文件">✕</button></span>';
+    }
+    p.innerHTML = html;
+    if (hasImg) el('imgClear').addEventListener('click', function () { pendingImage = null; renderImgPreview(); });
+    var fbtns = p.querySelectorAll('button[data-f]');
+    for (var j = 0; j < fbtns.length; j++) {
+      (function (idx) { fbtns[idx].addEventListener('click', function () { pendingFiles.splice(idx, 1); renderImgPreview(); }); })(parseInt(fbtns[j].getAttribute('data-f'), 10));
+    }
   }
 
   function attachImage(file) {
@@ -1585,6 +1601,27 @@
     var reader = new FileReader();
     reader.onload = function () { pendingImage = { dataUrl: reader.result, name: file.name || '图片' }; renderImgPreview(); };
     reader.readAsDataURL(file);
+  }
+
+  // 拖入非图片文件：优先取磁盘真实路径（模型可用 fs_read 读原文）；拿不到路径就小文件直读文本
+  function attachFile(file) {
+    if (!file) return;
+    if (file.type && file.type.indexOf('image/') === 0) { attachImage(file); return; }
+    var p = '';
+    if (IS_DESKTOP && window.ingrid.getFilePath) { try { p = window.ingrid.getFilePath(file); } catch (e) { p = ''; } }
+    if (p) {
+      pendingFiles.push({ path: p, name: file.name || '文件' });
+      renderImgPreview();
+    } else if (file.size < 2 * 1024 * 1024) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        pendingFiles.push({ path: '', name: file.name || '文件', content: String(reader.result || '').slice(0, 4000) });
+        renderImgPreview();
+      };
+      reader.readAsText(file);
+    } else {
+      alert('拖入的文件无法读取路径（请改用「粘贴文件路径」的方式，或直接拖图片）');
+    }
   }
 
   function bindImageInputs() {
@@ -1599,7 +1636,15 @@
       }
     });
     document.addEventListener('dragover', function (e) { e.preventDefault(); });
-    document.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) attachImage(e.dataTransfer.files[0]); });
+    document.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var fs = e.dataTransfer && e.dataTransfer.files;
+      if (!fs || !fs.length) return;
+      for (var i = 0; i < fs.length; i++) {
+        if (fs[i].type && fs[i].type.indexOf('image/') === 0) attachImage(fs[i]);
+        else attachFile(fs[i]);
+      }
+    });
   }
 
   /* ---------- 语音输入（Web Speech API） ---------- */
@@ -1972,7 +2017,8 @@
   function send() {
     var text = input.value.trim();
     var img = pendingImage;
-    if (!text && !img) return;
+    var files = pendingFiles.slice();
+    if (!text && !img && !files.length) return;
     var cur = currentSession();
     var jobSessionId = cur ? cur.id : '';
     // 生成中发送：仅当「当前会话」有任务在跑才排队补充说明；切到别的会话则可正常发起新任务（多会话并发）
@@ -1982,7 +2028,7 @@
     }
     delete stopRequested[jobSessionId];   // 新一轮，重置当前会话的停止标志
     input.value = ''; autoGrow();
-    pendingImage = null; renderImgPreview();
+    pendingImage = null; pendingFiles = []; renderImgPreview();
 
     // 识别「补充说明」前缀（/note、/n、/补充、/备注 或 【补充】、[note]、[补充]）：
     // 这类消息发给模型时会被标注为「附加约束/偏好」，不作为新任务、不打断当前工作
@@ -1991,6 +2037,16 @@
     var nm = text.match(/^\/(?:note|n|补充|备注)\s+([\s\S]*)$/i);
     if (!nm) nm = text.match(/^(?:【补充】|\[note\]|\[补充\])\s*([\s\S]*)$/i);
     if (nm && nm[1] && nm[1].trim()) { isNote = true; body = nm[1].trim(); }
+
+    // 拖入的文件：把磁盘路径/文本内容附加到消息，让模型用 fs_read 读原文
+    if (files.length) {
+      var fparts = [];
+      for (var _fi = 0; _fi < files.length; _fi++) {
+        if (files[_fi].path) fparts.push('文件路径：' + files[_fi].path);
+        else if (files[_fi].content) fparts.push('文件内容（' + files[_fi].name + '）：\n' + files[_fi].content);
+      }
+      if (fparts.length) body = (body ? body + '\n\n' : '') + '【用户拖入的文件】\n' + fparts.join('\n\n');
+    }
 
     // 立即把用户消息入账到发起时的会话（多会话并发下，切换会话也能正确归属；finish 只补 assistant 消息）
     if (cur) {

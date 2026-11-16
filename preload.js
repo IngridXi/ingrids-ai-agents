@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 /**
  * 只暴露固定方法（OpenMausBot 同款安全模型）：
@@ -186,6 +186,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolFsEdit: (payload) => ipcRenderer.invoke('tool:fs:edit', payload),
   toolFsMove: (payload) => ipcRenderer.invoke('tool:fs:move', payload),
   toolFsDelete: (payload) => ipcRenderer.invoke('tool:fs:delete', payload),
+  // 拖拽文件 → 取磁盘真实路径（Electron 32+ 用 webUtils.getPathForFile 替代已废弃的 File.path）
+  getFilePath: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
   toolPptxFill: (payload) => ipcRenderer.invoke('tool:pptx:fill', payload),
   toolImageProcess: (payload) => ipcRenderer.invoke('tool:image:process', payload),
   toolImageGenerate: (payload) => ipcRenderer.invoke('tool:image:generate', payload),
