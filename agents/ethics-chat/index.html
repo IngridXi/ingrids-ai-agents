@@ -608,12 +608,14 @@
   }
 
   // 会话状态
-  var history = [];      // [{role:'user'|'assistant', content}]
-  var streaming = false;
-  var stopRequested = false;   // 用户点了「停止生成」
-  var pendingNotes = [];       // 生成中排队待发的「补充说明」（无需 /note 前缀）
+  var history = [];      // [{role:'user'|'assistant', content}]（指向当前 active 会话的 messages）
+  var streaming = false; // 语义：当前 active 会话是否有任务在跑（供发送/停止按钮二态）
+  var stopRequested = {};   // { sessionId: true } 会话级「停止生成」标志（多会话并发不串扰）
+  var pendingNotes = {};    // { sessionId: [text] } 会话级「生成中补充说明」队列
   var suppressUserBubble = false;  // 自动续发补充说明时，用户气泡已提前显示，跳过重复添加
   var writeAuthMode = 'per-item';  // 'per-item' 逐个审批 | 'session' 会话级批量授权
+  var runningJobs = {};     // { sessionId: true } 每个会话是否有后台任务在跑
+  var jobProgress = {};     // { sessionId: { text, thinking } } 进行中进度，供切回会话时显示
 
   /* ---------- 记忆持久化 + 工具能力（能力化：每个 Agent 都能挂文件/数据库/电脑操作） ---------- */
   var AGENT_NAME = '伦理agent';
@@ -801,10 +803,22 @@
     });
     inp.addEventListener('blur', function () { finish(true); });
   }
+  // 渲染「后台任务进行中」的占位气泡（切回正在生成的会话时，实时显示进度）
+  function renderRunningBubble(p) {
+    var b = addBubble('assistant', '');
+    b.innerHTML = renderThinking((p && p.thinking) || '', true) +
+      '<div class="streaming">' + esc((p && p.text) || '').replace(/\n/g, '<br>') + '</div>' +
+      '<span class="cursor"></span>';
+    renderMermaidIn(b);
+  }
   function renderActiveSession() {
     messages.innerHTML = '';
     var s = currentSession();
-    if (!s || !s.messages.length) { welcome(); return; }
+    if (!s || !s.messages.length) {
+      if (s && runningJobs[s.id] && jobProgress[s.id]) renderRunningBubble(jobProgress[s.id]);
+      else welcome();
+      return;
+    }
     s.messages.forEach(function (m) {
       var body = m.role === 'assistant' ? mdToHtml(stripToolMarkers(m.content)) : esc(m.content);
       var b = addBubble(m.role, body);
@@ -813,10 +827,11 @@
         renderMermaidIn(b);
       }
     });
+    // 该会话有后台任务在跑时，追加「生成中」占位，实时显示最新进度
+    if (runningJobs[s.id] && jobProgress[s.id]) renderRunningBubble(jobProgress[s.id]);
     messages.scrollTop = messages.scrollHeight;
   }
   function newChat() {
-    if (streaming) return;
     var cur = currentSession();
     if (cur && cur.messages.length === 0) { activeId = cur.id; }
     else {
@@ -829,10 +844,10 @@
     renderSessionList();
     welcome();
     persistSessions();
+    refreshStreaming();
     input.focus();
   }
   function switchSession(id) {
-    if (streaming) return;
     activeId = id;
     var s = currentSession();
     history = s ? s.messages : [];
@@ -840,10 +855,18 @@
     renderSessionList();
     renderActiveSession();
     persistSessions();
+    refreshStreaming();
     input.focus();
   }
   function deleteSession(id) {
-    if (streaming) return;
+    // 删除正在运行的会话前，先停止它的后台任务，避免结果写回已删除的会话
+    if (runningJobs[id]) {
+      stopRequested[id] = true;
+      if (IS_DESKTOP && window.ingrid.stopChat) window.ingrid.stopChat(id);
+      delete runningJobs[id];
+      delete jobProgress[id];
+      refreshStreaming();
+    }
     var idx = -1;
     for (var i = 0; i < sessions.length; i++) if (sessions[i].id === id) { idx = i; break; }
     if (idx < 0) return;
@@ -855,6 +878,7 @@
     renderSessionList();
     renderActiveSession();
     persistSessions();
+    refreshStreaming();
   }
   function loadSessions() {
     if (!IS_DESKTOP) { newChat(); return; }
@@ -1366,8 +1390,15 @@
     }
   }
   function stopGeneration() {
-    stopRequested = true;
-    if (IS_DESKTOP && window.ingrid.stopChat) window.ingrid.stopChat();
+    var cur = currentSession();
+    if (cur) stopRequested[cur.id] = true;
+    if (IS_DESKTOP && window.ingrid.stopChat) window.ingrid.stopChat(cur ? cur.id : null);
+  }
+  // 按「当前 active 会话是否有后台任务」刷新发送/停止按钮二态
+  function refreshStreaming() {
+    var cur = currentSession();
+    streaming = !!(cur && runningJobs[cur.id]);
+    setSendBtnState(streaming);
   }
   function avatarHtml(role) {
     if (role === 'user') return '<div class="avatar">' + window.iconSvg('user') + '</div>';
@@ -1681,7 +1712,10 @@
     input.value = ''; autoGrow();
     var html = '<span class="note-tag">补充说明</span>' + esc(text);
     addBubble('user', html);
-    pendingNotes.push(text);
+    var cur = currentSession();
+    var sid = cur ? cur.id : '';
+    if (!pendingNotes[sid]) pendingNotes[sid] = [];
+    pendingNotes[sid].push(text);
   }
 
   // 用视觉模型把图片转成详细文字描述（供纯文本推理模型使用，双模型协同）
@@ -1704,13 +1738,14 @@
     var text = input.value.trim();
     var img = pendingImage;
     if (!text && !img) return;
-    // 生成中发送：文字自动当作「补充说明」排队，当前回复结束后自动续发（像 Claude 一样无需 /note 前缀）。
-    // 审稿闭环模式下暂保持忽略（其多阶段流程不适用即时补充）。
-    if (streaming) {
+    var cur = currentSession();
+    var jobSessionId = cur ? cur.id : '';
+    // 生成中发送：仅当「当前会话」有任务在跑才排队补充说明；切到别的会话则可正常发起新任务（多会话并发）
+    if (runningJobs[jobSessionId]) {
       if (text && !reviewMode) queueNote(text);
       return;
     }
-    stopRequested = false;   // 新一轮，重置停止标志
+    delete stopRequested[jobSessionId];   // 新一轮，重置当前会话的停止标志
     input.value = ''; autoGrow();
     pendingImage = null; renderImgPreview();
 
@@ -1721,6 +1756,15 @@
     var nm = text.match(/^\/(?:note|n|补充|备注)\s+([\s\S]*)$/i);
     if (!nm) nm = text.match(/^(?:【补充】|\[note\]|\[补充\])\s*([\s\S]*)$/i);
     if (nm && nm[1] && nm[1].trim()) { isNote = true; body = nm[1].trim(); }
+
+    // 立即把用户消息入账到发起时的会话（多会话并发下，切换会话也能正确归属；finish 只补 assistant 消息）
+    if (cur) {
+      cur.messages.push({ role: 'user', content: isNote ? noteWrap(body) : (body || (img ? '（图片）' : '')) });
+      while (cur.messages.length > 24) cur.messages.shift();
+      cur.updatedAt = Date.now();
+      persistSessions();
+      renderSessionList();
+    }
 
     // 带图片时：当前模型原生支持视觉则直接带图；否则（纯文本推理模型，如 V4-Pro）
     // 先用视觉模型识别图片转文字，文字推理仍用当前模型，无需手动切换
@@ -1750,7 +1794,8 @@
 
     // 审稿闭环模式：产出 → 审稿 → 返修（独立多气泡渲染）
     if (reviewMode && IS_DESKTOP) {
-      streaming = true; setSendBtnState(true);
+      runningJobs[jobSessionId] = true;
+      refreshStreaming();
       if (isNote) {
         sendReviewLoop(noteWrap(body), engineSelect.value || 'ollama');
       } else {
@@ -1767,7 +1812,8 @@
     var thinking = '';
     var live = '';
     var statusText = '正在思考…';   // 当前状态提示（首字延迟 / 工具调用往返）
-    streaming = true; setSendBtnState(true);
+    runningJobs[jobSessionId] = true;
+    refreshStreaming();
 
     // engine / model 已在上面确定（含图片自动切换逻辑）
 
@@ -1781,7 +1827,7 @@
       if (now - __lastSave < 3000) return;   // 每 3 秒落盘一次「进行中」快照，强制中断也能恢复
       __lastSave = now;
       try {
-        var s = currentSession();
+        var s = sessionById(jobSessionId);
         if (!s) return;
         localStorage.setItem('rc_stream_progress', JSON.stringify({
           sessionId: s.id, agent: AGENT_NAME,
@@ -1803,6 +1849,7 @@
         bubble.innerHTML = thinkHtml + status + (acc ? mdToHtml(acc) : '') + liveHtml + '<span class="cursor"></span>';
         messages.scrollTop = messages.scrollHeight;
         maybeSaveProgress();
+        jobProgress[jobSessionId] = { text: stripToolMarkers(acc) + (live ? live : ''), thinking: thinking };
       });
     }
     // 首字延迟期间先显示状态（用户点发送后立刻有反馈）
@@ -1811,12 +1858,23 @@
     function finish(finalText, err) {
       if (__streamRaf) { cancelAnimationFrame(__streamRaf); __streamRaf = null; }
       try { localStorage.removeItem('rc_stream_progress'); } catch (e) {}
-      var userContent = isNote ? noteWrap(body) : (body || (img ? '（图片）' : ''));
-      history.push({ role: 'user', content: userContent });
-      if (finalText) history.push({ role: 'assistant', content: finalText, thinking: thinking });
-      while (history.length > 24) history.shift();
-      touchCurrentSession();
-      autoTitle(currentSession());
+      var jobSess = sessionById(jobSessionId);
+      var jobMsgs = jobSess ? jobSess.messages : history;
+      if (finalText) jobMsgs.push({ role: 'assistant', content: finalText, thinking: thinking });
+      while (jobMsgs.length > 24) jobMsgs.shift();
+      if (jobSess) {
+        jobSess.updatedAt = Date.now();
+        if (jobSess.title === '新对话') {
+          for (var i = 0; i < jobMsgs.length; i++) {
+            var mm = jobMsgs[i];
+            if (mm.role === 'user' && mm.content) {
+              var tt = String(mm.content).replace(/\s+/g, ' ').trim();
+              if (tt) { jobSess.title = tt.slice(0, 24); break; }
+            }
+          }
+        }
+        autoTitle(jobSess);
+      }
       persistSessions();
       renderSessionList();
       var thinkHtml = renderThinking(thinking, false);
@@ -1826,12 +1884,16 @@
       bubble.classList.remove('err');
       if (err) bubble.classList.add('err');
       if (!err) renderMermaidIn(bubble);
-      streaming = false; setSendBtnState(false);
+      delete runningJobs[jobSessionId];
+      delete jobProgress[jobSessionId];
+      refreshStreaming();
       input.focus();
-      // 正常结束后若有排队的补充说明，自动当作 /note 续发，让约束立即生效
-      if (!err && pendingNotes.length) {
+      // 正常结束后若有排队的补充说明，自动当作 /note 续发（仅当前仍停留在此会话时）
+      var sidNotes = pendingNotes[jobSessionId];
+      if (!err && sidNotes && sidNotes.length && activeId === jobSessionId) {
         suppressUserBubble = true;
-        input.value = '/note ' + pendingNotes.shift();
+        input.value = '/note ' + sidNotes.shift();
+        if (!sidNotes.length) delete pendingNotes[jobSessionId];
         setTimeout(send, 0);
       }
     }
@@ -1846,7 +1908,7 @@
         statusText = '正在思考…';
         run(enriched);
       }).catch(function (e) {
-        if (stopRequested) { finish('', '已手动停止'); return; }
+        if (stopRequested[jobSessionId]) { finish('', '已手动停止'); return; }
         finish('', '图片识别失败：' + (e && e.message || e));
       });
     }
@@ -1891,7 +1953,7 @@
           },
           onDone: function (d) {
             var rawRound = live;
-            if (stopRequested) { finish(acc + stripToolMarkers(rawRound), '已手动停止'); return; }
+            if (stopRequested[jobSessionId]) { finish(acc + stripToolMarkers(rawRound), '已手动停止'); return; }
             if (d && !d.ok) { finish(acc + stripToolMarkers(rawRound), d && d.error); return; }
             // 工具调用：优先原生 tool_calls（OpenAI tools 参数），退回文本 <tool> 标签解析
             var nativeCalls = (d && Array.isArray(d.tool_calls)) ? d.tool_calls : [];
@@ -2067,6 +2129,8 @@
     var bubble = null;       // 当前正文气泡（初稿 / 修订版）
     var reviewEl = null;     // 当前审稿意见块
     var curText = '', curThink = '';
+    // 绑定发起时的会话，切换会话后结果仍写回正确会话
+    var sid = currentSession() ? currentSession().id : '';
 
     var __reviewRaf = null;
     function render() {
@@ -2100,7 +2164,7 @@
       .concat(history.slice(-12).map(function (m) { return { role: m.role, content: m.content }; }))
       .concat([{ role: 'user', content: text }]);
 
-    window.ingrid.reviewLoop({ engine: engine, model: currentModelId(), messages: reqMessages, rounds: 2 }, {
+    window.ingrid.reviewLoop({ engine: engine, model: currentModelId(), messages: reqMessages, rounds: 2, sessionId: sid, agent: AGENT_NAME }, {
       onPhase: function (d) {
         close();
         if (d.phase === 'draft') {
@@ -2122,27 +2186,41 @@
         }
       },
       onDelta: function (txt, think) {
-        if (stopRequested) return;
+        if (stopRequested[sid]) return;
         if (txt) curText += txt;
         if (think) curThink += think;
         render();
       },
       onDone: function (d) {
         close();
-        if (stopRequested) {
+        if (stopRequested[sid]) {
           var s2 = document.createElement('div');
           s2.className = 'loop-status';
           s2.textContent = '⚙ 已手动停止';
           messages.appendChild(s2);
           messages.scrollTop = messages.scrollHeight;
-          streaming = false; setSendBtnState(false);
+          delete runningJobs[sid];
+          delete jobProgress[sid];
+          refreshStreaming();
           input.focus();
           return;
         }
-        history.push({ role: 'user', content: text });
-        if (d && d.finalText) history.push({ role: 'assistant', content: d.finalText });
-        while (history.length > 24) history.shift();
-        touchCurrentSession();
+        var jobSess = sessionById(sid);
+        var jobMsgs = jobSess ? jobSess.messages : history;
+        if (d && d.finalText) jobMsgs.push({ role: 'assistant', content: d.finalText });
+        while (jobMsgs.length > 24) jobMsgs.shift();
+        if (jobSess) {
+          jobSess.updatedAt = Date.now();
+          if (jobSess.title === '新对话') {
+            for (var i = 0; i < jobMsgs.length; i++) {
+              var mm = jobMsgs[i];
+              if (mm.role === 'user' && mm.content) {
+                var tt2 = String(mm.content).replace(/\s+/g, ' ').trim();
+                if (tt2) { jobSess.title = tt2.slice(0, 24); break; }
+              }
+            }
+          }
+        }
         persistSessions();
         renderSessionList();
         var status = document.createElement('div');
@@ -2155,7 +2233,9 @@
         }
         messages.appendChild(status);
         messages.scrollTop = messages.scrollHeight;
-        streaming = false; setSendBtnState(false);
+        delete runningJobs[sid];
+        delete jobProgress[sid];
+        refreshStreaming();
         input.focus();
       },
     });
@@ -2436,6 +2516,8 @@
   });
   el('slidesGoBtn').addEventListener('click', generateAcademicSlides);
   function generateAcademicSlides() {
+    var cur = currentSession();
+    var sid = cur ? cur.id : '';
     var topic = el('slidesTopic').value.trim();
     var srcText = topic;
     if (!srcText) {
@@ -2452,7 +2534,8 @@
     addBubble('user', '🎓 生成学术 PPT' + (topic ? '：' + esc(topic) : '（基于当前对话）'));
     var bubble = addBubble('assistant', '<div class="status-line">正在设计演示结构…<span class="dots"><i></i><i></i><i></i></span></div>');
     messages.scrollTop = messages.scrollHeight;
-    streaming = true; setSendBtnState(true);
+    runningJobs[sid] = true;
+    refreshStreaming();
 
     var sys = '你是资深学术演讲教练。请把用户给的研究内容设计成一份结构完整的学术演示文稿（用于组会汇报 / 学术会议 / 论文答辩）。\n'
       + '必须只输出一个 JSON 对象（不要任何解释、不要 markdown 代码围栏），结构为：\n'
@@ -2463,10 +2546,11 @@
 
     var reqMessages = [{ role: 'system', content: sys }].concat([{ role: 'user', content: srcText }]);
     var acc = '';
-    window.ingrid.chatStream({ engine: engineSelect.value || 'ollama', model: currentModelId(), messages: reqMessages }, {
+    window.ingrid.chatStream({ engine: engineSelect.value || 'ollama', model: currentModelId(), messages: reqMessages, sessionId: sid }, {
       onDelta: function (chunk) { if (chunk && chunk.text) acc += chunk.text; },
       onDone: function (d) {
-        streaming = false; setSendBtnState(false);
+        delete runningJobs[sid];
+        refreshStreaming();
         if (!d || !d.ok) { bubble.innerHTML = '生成失败：' + esc((d && d.error) || '未知错误'); return; }
         var parsed = parseSlidesJson(acc);
         if (!parsed) {

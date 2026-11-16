@@ -136,6 +136,7 @@
 5. **历史混入的真相**：聊天记录本身按 agent 分文件、隔离正确；「记得别的对话」的真凶是知识库 RAG 默认自动注入共享索引。已改默认关。
 6. **思考流超时**：Ollama 思考型模型流式输出 `reasoning`，不会触发 120s 空闲超时；真凶是串线（见第 3 条）。
 7. **写操作安全边界**（`isSafeWritePath`，代码内的纯技术机制）：仅允许主目录内，拒系统目录/Library/隐藏目录，覆盖前备份，删除走废纸篓。
+8. **多会话并发 + 切会话不断流**：全局单例状态（`streaming`/`stopRequested`/`pendingNotes`）全部改为**会话级**（`runningJobs`/`jobProgress`/`stopRequested[sid]`/`pendingNotes[sid]`）；`send()` 绑定 `jobSessionId`，`finish()` 用 `sessionById(jobSessionId).messages` 写回（而非全局 history）；`switchSession` 不再 `if(streaming) return`，切走时用 `renderRunningBubble` 显示后台进度；删除运行中会话先 `stopChat(id)` 再清 `runningJobs[id]`。后端 `activeChatAborts` 升级为 `Map<sessionId, Set<AbortController>>`，停止按钮只 abort 当前会话。
 
 ---
 
@@ -150,6 +151,7 @@
 - **2026-11-16**：审稿闭环（研究/软件 agent）补中断恢复——`sendReviewLoop` 每 3 秒落盘 `{phase,round,text,thinking}` 快照（key `research/dev_review_progress`），启动 `restoreReviewProgress` 恢复中断前初稿/审稿意见/修订版；SOUL_UNALIGNED 删除所有边界、保留「标注性质与后果」。
 - **2026-11-16**：研究/软件 agent 补「主动联网搜索 `web_search`」工具 + 提示词声明联网能力；知识库自动检索改默认关。
 - **2026-11-16**：审稿闭环升级为**阶段级 checkpoint 续跑**——后端 `runReviewLoop` 显式状态机 + 每阶段落盘 `data/review-checkpoint/<agent>.json`，前端启动时读 checkpoint 重放已完成阶段并自动 `resume` 续跑（只重跑中断阶段，不再从头再来）；替代原「前端 localStorage 快照」方案（保留 legacy 兜底）。
+- **2026-11-16**：**多会话并发 + 切会话不断流**——研究/软件/伦理三个 chat agent 把全局单例状态（`streaming`/`stopRequested`/`pendingNotes`）改为会话级（`runningJobs`/`jobProgress`/`stopRequested[sid]`/`pendingNotes[sid]`），结果写回从全局 history 改为 `sessionById(jobSessionId).messages`；后端 `activeChatAborts` 从 `Set` 升级为 `Map<sessionId, Set<AbortController>>` 按会话精确 abort；`stopChat` 前传 `sessionId`。不同对话可同时跑，切会话不再截断后台任务。
 - **2026-11-15~16**：性能修复（rAF 节流 + 流式轻量转义）；知识库启动懒加载 + OneDrive 手动同步。
 - **更早**：伦理 agent 去道德化（SOUL_UNALIGNED + abliteration 落地）、模式-模型联动、主页面图标/排序优化、删除「敬请期待」占位。
 

@@ -59,8 +59,8 @@ contextBridge.exposeInMainWorld('ingrid', {
     return ipcRenderer.invoke('chat:start', Object.assign({}, payload, { requestId: reqId }));
   },
 
-  // 停止当前研究助手的流式生成（主进程 abort 正在进行的请求）
-  stopChat: () => ipcRenderer.send('chat:stop'),
+  // 停止流式生成（主进程按 sessionId 精确 abort 该会话的请求；不传则全停）
+  stopChat: (sessionId) => ipcRenderer.send('chat:stop', sessionId),
 
   // 研究助手「审稿闭环」：invoke 开始后，主进程推 review:phase / review:delta / review:done 事件
   reviewLoop: (payload, handlers) => {

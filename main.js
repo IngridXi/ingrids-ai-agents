@@ -1265,11 +1265,16 @@ ipcMain.handle('agent:run', async (_e, payload) => {
 /* ---------------- IPC：研究助手聊天（流式） ---------------- */
 // 渲染进程 invoke('chat:start', {engine, messages}) 后，主进程把结果以
 // 'chat:delta'（逐块正文）和 'chat:done'（结束/错误）事件推回，Key 不经过渲染层。
-const activeChatAborts = new Set();   // 活跃流式请求的 AbortController 集合，供「停止生成」统一 abort
-ipcMain.on('chat:stop', () => { for (const ctrl of activeChatAborts) { try { ctrl.abort(); } catch { /* 忽略 */ } } });
+const activeChatAborts = new Map();   // sessionId -> Set<AbortController>：按会话精确 abort（多会话并发时「停止」只停当前会话）
+ipcMain.on('chat:stop', (_e, sessionId) => {
+  const abortSet = (set) => { if (set) for (const ctrl of set) { try { ctrl.abort(); } catch { /* 忽略 */ } } };
+  if (sessionId) { abortSet(activeChatAborts.get(String(sessionId))); }
+  else { for (const set of activeChatAborts.values()) abortSet(set); }
+});
 ipcMain.handle('chat:start', (e, payload) => {
   const p = payload || {};
   const requestId = String(p.requestId || '');   // 请求级标识：前端据此只认自己的 delta/done，避免并发串线
+  const sessionId = String(p.sessionId || '');   // 会话级标识：供「停止生成」按会话 abort
   const engine = String(p.engine || 'ollama');
   const messages = Array.isArray(p.messages) ? p.messages : [];
   const cfg = CHAT_ENDPOINTS[engine];
@@ -1296,7 +1301,9 @@ ipcMain.handle('chat:start', (e, payload) => {
       // 只有真正卡死（连续无数据）才会中断。
       const STALL_MS = 120000;
       ctrl = new AbortController();
-      activeChatAborts.add(ctrl);   // 供「停止生成」按钮 abort
+      let set = activeChatAborts.get(sessionId);
+      if (!set) { set = new Set(); activeChatAborts.set(sessionId, set); }
+      set.add(ctrl);   // 供「停止生成」按钮按会话 abort
       let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
       const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
       const resp = await fetch(cfg.url, {
@@ -1358,7 +1365,8 @@ ipcMain.handle('chat:start', (e, payload) => {
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err), requestId });
     } finally {
-      activeChatAborts.delete(ctrl);
+      const s2 = activeChatAborts.get(sessionId);
+      if (s2) { s2.delete(ctrl); if (!s2.size) activeChatAborts.delete(sessionId); }
     }
   })();
   return true;
@@ -2022,10 +2030,13 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   if (key) headers.Authorization = 'Bearer ' + key;
   const o = opts || {};
   const model = String(o.model || cfg.model);   // 允许调用方覆盖模型
+  const sessionId = String(o.sessionId || '');   // 会话级标识：审稿闭环绑定会话，支持按会话停止
   // 空闲超时：有数据持续流入就不中断，120 秒无数据才 abort；不设总时长上限，长时间任务可持续工作
   const STALL_MS = 120000;
   const ctrl = new AbortController();
-  activeChatAborts.add(ctrl);   // 注册，供「停止生成」abort（审稿闭环同样生效）
+  let set = activeChatAborts.get(sessionId);
+  if (!set) { set = new Set(); activeChatAborts.set(sessionId, set); }
+  set.add(ctrl);   // 注册，供「停止生成」abort（审稿闭环同样生效）
   let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
   const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
   const resp = await fetch(cfg.url, {
@@ -2070,7 +2081,8 @@ async function completeChatStream(engine, messages, onChunk, opts) {
     }
   }
   clearTimeout(stallTimer);
-  activeChatAborts.delete(ctrl);
+  const s2 = activeChatAborts.get(sessionId);
+  if (s2) { s2.delete(ctrl); if (!s2.size) activeChatAborts.delete(sessionId); }
   return { text: text, thinking: thinking, truncated: truncated };
 }
 
@@ -2083,7 +2095,7 @@ async function runReviewLoop(st, send) {
   while (st.stage !== 'done') {
     if (st.stage === 'draft') {
       send('review:phase', { phase: 'draft', round: 0, engine: engine, reviewer: reviewerEngine });
-      const d = await completeChatStream(engine, messages, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
+      const d = await completeChatStream(engine, messages, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model, sessionId: st.sessionId });
       st.finalText = d.text;
       st.draft = d.text;
       st.stage = 'review'; st.round = 1;
@@ -2095,7 +2107,7 @@ async function runReviewLoop(st, send) {
         { role: 'system', content: REVIEWER_SYSTEM },
         { role: 'user', content: '【原始任务】\n' + question + '\n\n【待审稿的内容】\n' + st.finalText },
       ];
-      const rv = await completeChatStream(reviewerEngine, reviewMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { temperature: 0.4 });
+      const rv = await completeChatStream(reviewerEngine, reviewMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { temperature: 0.4, sessionId: st.sessionId });
       const review = String(rv.text || '').trim();
       st.reviews.push({ round: r, text: review });
 
@@ -2116,7 +2128,7 @@ async function runReviewLoop(st, send) {
         { role: 'assistant', content: st.finalText },
         { role: 'user', content: '【审稿人意见】\n' + review + '\n\n请据此返修：只修正审稿人指出的问题，保留原有优点，输出完整修订版（只输出修订后的正文，不要输出审稿意见）。' },
       ];
-      const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model });
+      const rv2 = await completeChatStream(engine, reviseMsgs, (t, th) => send('review:delta', { text: t, thinking: th }), { model: model, sessionId: st.sessionId });
       st.finalText = rv2.text;
       st.revises.push(rv2.text);
 
