@@ -1263,6 +1263,8 @@
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
     tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片、标题页/章节页/双栏布局、剑桥学术配色），slides 每页可含 title/subtitle/layout(title标题/section章节/content正文/twoCol双栏/blank空白)/bullets/charts/table/image/notes，顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
+    tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}');
+    tools.push('image_process：本地图片处理（图片不出本机）。参数 {"action":"remove_bg|resize|convert|info","input":"图片绝对路径","output":"输出路径","width":800,"height":600}。remove_bg 用 rembg 抠图去背景输出透明 PNG（首次会下载 u2net 模型）；resize 缩放；convert 转格式；info 查尺寸');
     if (webEnabled) tools.push('web_search：联网搜索，参数 {"query":"搜索关键词"}（返回标题、链接、摘要；查实时信息/最新事实/技术文档时用它，不要凭记忆编造）');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
@@ -1313,6 +1315,8 @@
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
     fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片、标题页/章节页/双栏布局、剑桥学术配色），slides 每页 {title, subtitle, layout, bullets, charts, table, image, notes}；type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank), bullets:[字符串或{text,sub:[...]}], charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     if (webEnabled) fn('web_search', '联网搜索（返回标题、链接、摘要）。查实时信息、最新事实、技术文档、外部资料时调用，不要凭记忆编造最新数据', { query: { type: 'string', description: '搜索关键词' } });
+    fn('pptx_fill_template', '把内容套进已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 查看模板每页形状名与占位符，再 action=fill 填空', { action: { type: 'string', description: 'inspect（查看模板结构）或 fill（填空，默认）' }, template: { type: 'string', description: '模板 .pptx 绝对路径' }, output: { type: 'string', description: '输出 .pptx 路径（可选，默认另存为 *_filled_*.pptx）' }, replacements: { type: 'object', description: '全局文本替换 {"{{占位符}}":"新文字"}' }, byName: { type: 'array', description: '按形状名填空 [{name,text}]' } });
+    fn('image_process', '本地图片处理（rembg 抠图去背景 / 缩放 / 格式转换 / 信息查询，图片不出本机）', { action: { type: 'string', description: 'remove_bg / resize / convert / info' }, input: { type: 'string', description: '输入图片绝对路径' }, output: { type: 'string', description: '输出路径（可选）' }, width: { type: 'integer', description: 'resize 目标宽（可选）' }, height: { type: 'integer', description: 'resize 目标高（可选）' } });
     return defs;
   }
   function parseToolArgs(s) {
@@ -1342,6 +1346,8 @@
     if (n === 'db_zotero_report' && caps.db) return window.ingrid.toolDbZoteroReport();
     if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
     if (n === 'doc_generate') return window.ingrid.docGenerate(call.args);
+    if (n === 'pptx_fill_template') return window.ingrid.toolPptxFill(call.args);
+    if (n === 'image_process') return window.ingrid.toolImageProcess(call.args);
     if (n === 'web_search' && webEnabled) return window.ingrid.webSearch({ query: String((call.args && call.args.query) || ''), n: 5 });
     // 写类操作：先请求用户审批，批准后执行
     if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
@@ -1468,6 +1474,8 @@
       }
       else if (call.name === 'computer') body = res.summary;
       else if (call.name === 'doc_generate') body = (res && res.ok) ? ('已生成文档：' + res.name + '（' + res.path + '）') : ('生成失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'pptx_fill_template') body = (res && res.ok) ? (res.action === 'inspect' ? ('模板结构：\n' + JSON.stringify(res.pages, null, 2)) : ('已套模板：' + res.output + '（替换 ' + res.replaced + ' 处）')) : ('套模板失败：' + ((res && res.error) || '未知错误'));
+      else if (call.name === 'image_process') body = (res && res.ok) ? ('图片处理完成：' + (res.output || res.path) + (res.width ? '（' + res.width + '×' + res.height + '）' : '')) : ('图片处理失败：' + ((res && res.error) || '未知错误'));
       else if (call.name === 'web_search') {
         if (res && res.ok && res.results && res.results.length) {
           body = '搜索「' + (res.query || '') + '」得到 ' + res.results.length + ' 条结果：\n' +

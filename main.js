@@ -3518,6 +3518,110 @@ function toolFsEdit(payload) {
     return { ok: true, path: target, replaced: 1, backup: bak };
   } catch (e) { return { ok: false, error: '修改失败：' + String(e && e.message || e) }; }
 }
+/* ---------------- pptx 套模板（打开已有模板→按占位符/形状名填空，保留母版/背景/主题/SmartArt） ---------------- */
+function _runPyJson(scriptRel, args, timeoutMs) {
+  return new Promise((resolve) => {
+    const script = path.join(__dirname, 'scripts', scriptRel);
+    if (!fs.existsSync(script)) { resolve({ ok: false, error: '缺少脚本 scripts/' + scriptRel }); return; }
+    execFile(SYSTEM_PY3, [script, JSON.stringify(args)], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, timeout: timeoutMs || 60000 },
+      (err, stdout) => {
+        if (err) { resolve({ ok: false, error: String(err.message || err) }); return; }
+        try { resolve(JSON.parse(String(stdout))); }
+        catch { resolve({ ok: false, error: '脚本输出异常' }); }
+      });
+  });
+}
+function toolPptxFill(payload) {
+  const template = path.resolve(String((payload && payload.template) || ''));
+  if (!template) return Promise.resolve({ ok: false, error: '缺少 template（模板 .pptx 绝对路径）' });
+  const action = String((payload && payload.action) || 'fill');
+  const args = { action, template };
+  if (action !== 'inspect') {
+    if (payload && payload.output) args.output = String(payload.output);
+    if (payload && payload.replacements && typeof payload.replacements === 'object') args.replacements = payload.replacements;
+    if (Array.isArray(payload && payload.byName)) args.byName = payload.byName;
+  }
+  return _runPyJson('pptx_fill_template.py', args, 60000);
+}
+function toolImageProcess(payload) {
+  const action = String((payload && payload.action) || 'info');
+  const input = path.resolve(String((payload && payload.input) || ''));
+  if (!input) return Promise.resolve({ ok: false, error: '缺少 input（图片绝对路径）' });
+  const args = { action, input };
+  if (payload && payload.output) args.output = String(payload.output);
+  if (payload && payload.width != null) args.width = payload.width;
+  if (payload && payload.height != null) args.height = payload.height;
+  if (payload && payload.quality != null) args.quality = payload.quality;
+  if (payload && payload.alpha_matting != null) args.alpha_matting = payload.alpha_matting;
+  // 抠图（rembg 推理）较慢，给足超时；其余动作快
+  return _runPyJson('image_tools.py', args, action === 'remove_bg' ? 300000 : 60000);
+}
+/* ---------------- 第二大脑（second-brain：收件箱→结构化 wiki→双向链接） ---------------- */
+function brainVault(payload) {
+  const explicit = String((payload && payload.vault) || '').trim();
+  if (explicit) return path.resolve(explicit);
+  return vaultPath() || workspaceVaultPath();
+}
+function brainLlmEngine() {
+  const settings = decryptSettings(readSettingsRaw());
+  if (settings.deepseek) return { engine: 'deepseek', model: CHAT_ENDPOINTS.deepseek.model };
+  if (settings.gpt) return { engine: 'gpt', model: CHAT_ENDPOINTS.gpt.model };
+  if (settings.qwen) return { engine: 'qwen', model: CHAT_ENDPOINTS.qwen.model };
+  return { engine: 'ollama', model: CHAT_ENDPOINTS.ollama.model };
+}
+function buildBrainIngestPrompt(content, filename) {
+  return '你是「第二大脑」知识整理助手。把下面这份原始材料提炼成一个结构化 wiki 页面。\n\n' +
+    '只输出一个 JSON 对象（不要 markdown 代码块、不要多余文字），格式：\n' +
+    '{"title":"页面标题(≤20字)","category":"sources|entities|concepts|synthesis","markdown":"页面正文"}\n\n' +
+    '规则：\n' +
+    '1. category 四选一：sources(对来源/文章的整体总结) / entities(核心是一个人物/组织/产品/工具) / concepts(核心是一个概念/框架/理论/方法) / synthesis(多来源对比/分析/主题综合)。\n' +
+    '2. markdown 用中文：先写 2-3 句核心要点，再分节展开（可用 ## 小节）。\n' +
+    '3. 用 [[双链]] 把文中关键概念/实体链接起来（每篇 2-6 个链接，链接写简短名词，不要带路径）。\n' +
+    '4. markdown 里不要放 frontmatter，系统会自动加。\n\n' +
+    '原始材料（来源：' + filename + '）：\n---\n' + String(content || '').slice(0, 12000) + '\n---';
+}
+function parseBrainPage(text, filename) {
+  let s = String(text || '').trim();
+  // 1) 直接 JSON
+  try { const o = JSON.parse(s); if (o && o.markdown) return o; } catch { /* 继续 */ }
+  // 2) 剥 ```json ... ``` 包裹
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) { try { const o = JSON.parse(fence[1].trim()); if (o && o.markdown) return o; } catch { /* 继续 */ } }
+  // 3) 逐字段正则提取
+  const title = (s.match(/"title"\s*:\s*"([^"]+)"/) || [])[1] || filename.replace(/\.md$/i, '');
+  const category = (s.match(/"category"\s*:\s*"([^"]+)"/) || [])[1] || 'sources';
+  const mm = s.match(/"markdown"\s*:\s*"([\s\S]*)"/);
+  if (mm) return { title, category, markdown: mm[1].replace(/\\n/g, '\n') };
+  return null;
+}
+function brainLlm() {
+  const { engine, model } = brainLlmEngine();
+  return async function (content, filename) {
+    try {
+      const r = await callBgChat(engine, model, [{ role: 'user', content: buildBrainIngestPrompt(content, filename) }]);
+      if (!r || !r.ok || !r.text) return null;
+      return parseBrainPage(r.text, filename);
+    } catch { return null; }
+  };
+}
+async function toolBrainIngest(payload) {
+  const vault = brainVault(payload);
+  if (!vault || !fs.existsSync(vault)) return { ok: false, error: '未指定 vault 且未检测到 Obsidian 库（请传 vault 参数或先安装 Obsidian）' };
+  const SB = require('./second-brain-core.js');
+  return SB.ingest(vault, { llm: brainLlm() });
+}
+function toolBrainLint(payload) {
+  const vault = brainVault(payload);
+  if (!vault || !fs.existsSync(vault)) return { ok: false, error: '未指定 vault 且未检测到 Obsidian 库' };
+  const SB = require('./second-brain-core.js');
+  return SB.lint(vault);
+}
+function toolBrainIndex(payload) {
+  const vault = brainVault(payload);
+  if (!vault || !fs.existsSync(vault)) return { ok: false, error: '未指定 vault 且未检测到 Obsidian 库' };
+  const SB = require('./second-brain-core.js');
+  return SB.rebuildIndex(vault);
+}
 function toolFsMove(payload) {
   const from = path.resolve(String((payload && payload.from) || ''));
   const to = path.resolve(String((payload && payload.to) || ''));
@@ -3673,6 +3777,11 @@ ipcMain.handle('tool:fs:append', (_e, p) => toolFsAppend(p));
 ipcMain.handle('tool:fs:edit', (_e, p) => toolFsEdit(p));
 ipcMain.handle('tool:fs:move', (_e, p) => toolFsMove(p));
 ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
+ipcMain.handle('tool:pptx:fill', (_e, p) => toolPptxFill(p));
+ipcMain.handle('tool:image:process', (_e, p) => toolImageProcess(p));
+ipcMain.handle('tool:brain:ingest', (_e, p) => toolBrainIngest(p));
+ipcMain.handle('tool:brain:lint', (_e, p) => toolBrainLint(p));
+ipcMain.handle('tool:brain:index', (_e, p) => toolBrainIndex(p));
 
 /* ---- 会议纪要官：朗读纪要（macOS 原生 TTS `say`，零安装、本地合成、不上云） ---- */
 // 吸收 VoiceStudio 的「语音合成」能力，但不引入其 10GB+ 依赖：直接复用 macOS 自带 TTS，

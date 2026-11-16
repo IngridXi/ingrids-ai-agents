@@ -35,15 +35,22 @@ npm start
 
 > Windows/Linux 也能跑大部分功能，但 PDF/PPTX 提取、电脑操作、浏览器自动化这几个依赖 macOS 系统命令的能力会降级（`main.js` 里 `SYSTEM_PY3` 已按平台回退到 `python` / `python3`）。
 
-### 系统 Python 的两个可选包（按需安装）
+### 系统 Python 的可选包（按需安装）
 
-只在你用到「Word 编辑」「电脑操作 / 浏览器自动化」时需要，装到**用户级**（无需 sudo）：
+只在你用到「Word 编辑」「PPT 套模板」「图片处理（抠图）」「电脑操作 / 浏览器自动化」时需要，装到**用户级**（无需 sudo）：
 
 ```bash
-/usr/bin/python3 -m pip install --user python-docx pyobjc-framework-Quartz pyobjc-framework-Cocoa
+/usr/bin/python3 -m pip install --user python-docx python-pptx Pillow rembg onnxruntime pyobjc-framework-Quartz pyobjc-framework-Cocoa
 ```
 
-没装也不影响工作台启动，只是对应能力（`doc_edit` / `computer` / `cdp`）会提示不可用。
+- `python-docx`：Word 编辑（`doc_edit`）
+- `python-pptx`：PPT 套模板（`pptx_fill_template`，保留母版/背景/主题/SmartArt）
+- `Pillow` + `rembg` + `onnxruntime`：图片处理（`image_process`，抠图去背景；rembg 首次抠图会下载 u2net 模型约 176MB）
+- `pyobjc-framework-*`：电脑操作 / 浏览器自动化
+
+没装也不影响工作台启动，只是对应能力（`doc_edit` / `pptx_fill_template` / `image_process` / `computer` / `cdp`）会提示不可用。
+
+> **本地第二大脑**（`second-brain-core.js`）是纯 Node 零额外依赖，开箱即用，无需装任何 Python 包。
 
 ### 模型引擎（可选，不配也能跑演练模式）
 
