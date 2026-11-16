@@ -144,7 +144,13 @@ def main():
     try:
         from pptx import Presentation
     except ImportError:
-        print(json.dumps({'ok': False, 'error': '缺少 python-pptx，请先运行: python3 -m pip install --user python-pptx'}))
+        print(json.dumps({
+            'ok': False,
+            'error': '当前 Python 缺少 python-pptx（本机其实已装，见 README；若真缺请运行: %s -m pip install --user python-pptx）' % sys.executable,
+            'python': sys.executable,
+            'pythonVersion': sys.version.split()[0],
+            'hint': '若你是在「套模板」，可改用 doc_generate 直接生成新版式 PPT（无需 python-pptx）；若确实要套模板，请把上面 pip 命令交给用户在终端执行后再试',
+        }, ensure_ascii=False))
         return
 
     action = str(args.get('action', 'fill')).strip().lower()
