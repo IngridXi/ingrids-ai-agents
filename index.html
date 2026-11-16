@@ -596,6 +596,29 @@ const SEED_AGENTS = [
       route: [],
     },
   },
+  {
+    name: 'Agent 总控台', emoji: '🖥️',
+    tag: '知识沉淀 · 治理巡检 · 实时监控',
+    status: 'active', badge: '后台',
+    engine: 'local-llm', engineLabel: '本地 · 控制面',
+    href: 'agents/agent-console/index.html',
+    tools: [],
+    soul: '你是工作台后台总控：管理经验沉淀（知识沉淀官）与 Agent 治理巡检，人工在环。',
+    fallbacks: [],
+    detail: {
+      sub: 'Agent Ops Console · 后台总控',
+      desc: '工作台后台「控制面」：知识沉淀官把已解决的问题复盘成可复用经验（方法论/结论分库，人工审批入库）；Agent 治理官只读盘点各 Agent 的职责、重叠与空壳孤儿。借鉴海归海平台「后台 Agent 总控」设计。',
+      workflow: [
+        { t: '待审批', s: '经验提案：批准入库 / 忽略' },
+        { t: '手动沉淀', s: '现象 · 根因 · 修复 → 提案' },
+        { t: '经验库', s: '方法论 / 结论分层浏览' },
+        { t: '治理巡检', s: '职责盘点 · 重叠 · 对账' },
+        { t: '检索复用', s: '新问题先查历史经验' },
+      ],
+      capabilities: ['知识沉淀官', '人工在环审批', '方法论/结论分库', 'Agent 治理巡检', '经验检索复用'],
+      route: [],
+    },
+  },
 ];
 
 /* ---------- 存储后端：桌面走文件系统，浏览器回退 localStorage ---------- */

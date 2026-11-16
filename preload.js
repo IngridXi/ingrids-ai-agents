@@ -237,6 +237,20 @@ contextBridge.exposeInMainWorld('ingrid', {
   // 数据仪表盘：聚合本地多源数据（笔记 / 聊天 / 任务 / 日历 / 术语）
   dashboardGet: () => ipcRenderer.invoke('dashboard:get'),
 
+  // 知识沉淀官（经验沉淀：提案待审批 → 人工 approve 分层入库 → 检索复用）
+  settlerReport: () => ipcRenderer.invoke('settler:report'),
+  settlerProposals: (status) => ipcRenderer.invoke('settler:proposals', status),
+  settlerLibrary: () => ipcRenderer.invoke('settler:library'),
+  settlerApprove: (id, opts) => ipcRenderer.invoke('settler:approve', id, opts),
+  settlerIgnore: (id) => ipcRenderer.invoke('settler:ignore', id),
+  settlerSubmit: (item) => ipcRenderer.invoke('settler:submit', item),
+  settlerSuggest: (q) => ipcRenderer.invoke('settler:suggest', q),
+  settlerRunOnce: () => ipcRenderer.invoke('settler:run-once'),
+
+  // Agent 治理官（只读盘点 + 重叠检测 + 对账）
+  governanceReport: () => ipcRenderer.invoke('governance:report'),
+  governanceRun: () => ipcRenderer.invoke('governance:run'),
+
   // 灵感目录（生态雷达：每日调研 DSH 插件生态）
   ecoRadarRun: () => ipcRenderer.invoke('eco:radar:run'),
   ecoRadarStatus: () => ipcRenderer.invoke('eco:radar:status'),

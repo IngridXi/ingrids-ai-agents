@@ -37,6 +37,8 @@ require('./eco-radar.js');
 const EcoRadar = globalThis.EcoRadar;
 require('./permission-core.js');
 const PermissionCore = globalThis.PermissionCore;
+const KnowledgeSettlerCore = require('./knowledge-settler-core.js');
+const agentGovernance = require('./agent-governance.js');
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -173,6 +175,23 @@ function readJson(name, fallback) {
 }
 function writeJson(name, data) {
   fs.writeFileSync(path.join(dataDir(), name), JSON.stringify(data, null, 2), 'utf8');
+}
+
+/* ---------------- 知识沉淀官（借鉴海归海 experience_settler）----------------
+ * 常驻后台「经验沉淀官」：把「已解决」的问题复盘成可复用经验。
+ * 人工在环：只提案（pending_approval）、分类预标注，approve() 才分层入库
+ * （方法论 / 结论分库），suggest_for() 供新问题检索复用。
+ * local-first：落盘 data/experience-library.json。
+ */
+let knowledgeSettler = null;
+function getKnowledgeSettler() {
+  if (!knowledgeSettler) {
+    knowledgeSettler = new KnowledgeSettlerCore.KnowledgeSettler({
+      load: () => readJson('experience-library.json', KnowledgeSettlerCore.emptyState()),
+      save: (state) => writeJson('experience-library.json', state),
+    });
+  }
+  return knowledgeSettler;
 }
 
 /* ---------------- 秘书状态串行化写入 ----------------
@@ -1027,6 +1046,37 @@ ipcMain.handle('agents:save', (_e, agents) => {
   writeJson('agents.json', agents); return true;
 });
 ipcMain.on('agents:list-sync', (e) => { e.returnValue = readJson('agents.json', []); });
+
+/* ---------------- IPC：知识沉淀官（经验沉淀）---------------- */
+ipcMain.handle('settler:report', () => getKnowledgeSettler().report());
+ipcMain.handle('settler:proposals', (_e, status) => getKnowledgeSettler().proposals(status));
+ipcMain.handle('settler:library', () => getKnowledgeSettler().state.library);
+ipcMain.handle('settler:approve', (_e, id, opts) => getKnowledgeSettler().approve(id, opts));
+ipcMain.handle('settler:ignore', (_e, id) => getKnowledgeSettler().ignore(id));
+ipcMain.handle('settler:submit', (_e, item) => getKnowledgeSettler().submit(item));
+ipcMain.handle('settler:suggest', (_e, q) => getKnowledgeSettler().suggestFor(q));
+// 从后台任务队列的「已完成」任务复盘提炼候选经验（自动发现，仍停在待审批）
+ipcMain.handle('settler:run-once', () => {
+  try {
+    const done = getTaskQueue().list('done').map((t) => ({
+      source: 'task-queue',
+      rule: t.agent || t.title || '',
+      title: t.title || '已完成任务',
+      evidence: t.goal || '',
+      rootCause: '',
+      fixApproach: t.result || '',
+    }));
+    return getKnowledgeSettler().runOnce(done);
+  } catch (e) { return { consumed: 0, created: 0, pending_approval: getKnowledgeSettler().report().pending_approval }; }
+});
+
+/* ---------------- IPC：Agent 治理官（只读盘点 + 重叠检测 + 对账）---------------- */
+ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
+ipcMain.handle('governance:run', () => {
+  const report = agentGovernance.run(__dirname, dataDir());
+  writeJson('agent-governance.json', report);
+  return report;
+});
 
 /* ---------------- IPC：打开 agent（单窗口，用 BrowserView 内嵌，不新开窗口） ---------------- */
 function layoutAgentView() {

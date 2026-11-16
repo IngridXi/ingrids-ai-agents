@@ -152,6 +152,7 @@
 - **2026-11-16**：研究/软件 agent 补「主动联网搜索 `web_search`」工具 + 提示词声明联网能力；知识库自动检索改默认关。
 - **2026-11-16**：审稿闭环升级为**阶段级 checkpoint 续跑**——后端 `runReviewLoop` 显式状态机 + 每阶段落盘 `data/review-checkpoint/<agent>.json`，前端启动时读 checkpoint 重放已完成阶段并自动 `resume` 续跑（只重跑中断阶段，不再从头再来）；替代原「前端 localStorage 快照」方案（保留 legacy 兜底）。
 - **2026-11-16**：**多会话并发 + 切会话不断流**——研究/软件/伦理三个 chat agent 把全局单例状态（`streaming`/`stopRequested`/`pendingNotes`）改为会话级（`runningJobs`/`jobProgress`/`stopRequested[sid]`/`pendingNotes[sid]`），结果写回从全局 history 改为 `sessionById(jobSessionId).messages`；后端 `activeChatAborts` 从 `Set` 升级为 `Map<sessionId, Set<AbortController>>` 按会话精确 abort；`stopChat` 前传 `sessionId`。不同对话可同时跑，切会话不再截断后台任务。
+- **2026-11-16**：**借鉴海归海后台 Agent 体系，落地「知识沉淀 + 治理 + 总控台」**——从海归海 `experience_settler`（经验沉淀官）/ `agent_governance`（治理官）/ `agents-console`（总控台）三处提炼，用工作台栈重写：① `knowledge-settler-core.js` 知识沉淀官核心（提案 pending/approved/ignored、方法论/结论分层库、启发式分类、`suggest_for` 检索复用、`verification` 验证清单、人工在环只提案不自动写库）；② `agent-governance.js` Agent 治理官（扫 agents 前端 + SEED_AGENTS + agents.json 做职责盘点/重叠检测/孤儿空壳对账，报告落 `data/agent-governance.json`）；③ `agents/agent-console/index.html` 总控台页面（概览 KPI + 流水线 + 待审批 + 手动沉淀 + 经验库 + 治理巡检 + 检索复用）。main.js 加 9 个 IPC、经验库落 `data/experience-library.json`；preload 暴露 `settler*`/`governance*`；首页 SEED_AGENTS 加「Agent 总控台」入口。借鉴对照全文见 `docs/agent-ops-design.md`。
 - **2026-11-15~16**：性能修复（rAF 节流 + 流式轻量转义）；知识库启动懒加载 + OneDrive 手动同步。
 - **更早**：伦理 agent 去道德化（SOUL_UNALIGNED + abliteration 落地）、模式-模型联动、主页面图标/排序优化、删除「敬请期待」占位。
 
