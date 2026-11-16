@@ -1085,11 +1085,14 @@ function setBudget(usd) {
 const PRICES = {
   'claude-code': { in: 3, out: 15 }, codex: { in: 2, out: 10 }, grok: { in: 2, out: 6 },
   dsh: { in: 0.28, out: 0.42 },
-  deepseek: { in: 0.28, out: 0.42 }, gpt: { in: 2, out: 10 }, qwen: { in: 0.4, out: 1.2 },
+  deepseek: { in: 0.15, out: 0.60 },          // deepseek-flash off-peak（默认、最便宜的 Agent 模型）
+  'deepseek-flash': { in: 0.15, out: 0.60 },
+  'deepseek-v4-pro': { in: 0.66, out: 1.98 },  // v4-pro off-peak（深度推理专用，输出价是 flash 的 3.3 倍）
+  gpt: { in: 2, out: 10 }, qwen: { in: 0.4, out: 1.2 },
   'local-llm': { in: 0, out: 0 }, funasr: { in: 0, out: 0 },
 };
-function costOf(engine, tin, tout) {
-  const p = PRICES[engine] || { in: 0, out: 0 };
+function costOf(engine, tin, tout, model) {
+  const p = PRICES[model] || PRICES[engine] || { in: 0, out: 0 };
   return ((tin * p.in) + (tout * p.out)) / 1e6;
 }
 function approxTokens(s) { return Math.ceil(String(s || '').length / 4); }
@@ -1456,7 +1459,10 @@ async function runApiAgent(engine, prompt, soul, key) {
     const resp = await fetch(cfg.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-      body: JSON.stringify({ model: cfg.model, messages, max_tokens: maxTokensForModel(cfg.model) }),
+      body: JSON.stringify(Object.assign(
+        { model: cfg.model, messages, max_tokens: maxTokensForModel(cfg.model, false) },
+        thinkingControl(cfg.model, {})   // 单轮 agent 执行默认关闭思考，省 token
+      )),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
@@ -1472,7 +1478,7 @@ async function runApiAgent(engine, prompt, soul, key) {
     const tin = Number(u.prompt_tokens) || approxTokens(prompt);
     const tout = Number(u.completion_tokens) || approxTokens(text);
     return { text: text.slice(0, 20000), engine, model: cfg.model, tokensIn: tin, tokensOut: tout,
-      cost: costOf(engine, tin, tout), costSource: 'estimated', status: 'ok', dryRun: false, error: '' };
+      cost: costOf(engine, tin, tout, cfg.model), costSource: 'estimated', status: 'ok', dryRun: false, error: '' };
   } catch (e) {
     return { text: '', engine, tokensIn: approxTokens(prompt), tokensOut: 0, cost: 0,
       costSource: 'metered', status: 'error', dryRun: false,
@@ -1835,11 +1841,13 @@ ipcMain.handle('chat:start', (e, payload) => {
       set.add(ctrl);   // 供「停止生成」按钮按会话 abort
       let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
       const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
+      const thinkingOn = p.thinking === true;   // 默认关闭思考（省 token）；仅显式请求才开启深度推理
       const resp = await fetch(cfg.url, {
         method: 'POST', headers, signal: ctrl.signal,
         body: JSON.stringify(Object.assign(
-          { model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 },
+          { model: model, messages: messages, stream: true, temperature: 0.7, max_tokens: maxTokensForModel(model, thinkingOn) },
           samplingForModel(model),
+          thinkingControl(model, { thinking: thinkingOn }),
           tools ? { tools: tools, tool_choice: 'auto' } : {}
         )),
       });
@@ -1891,13 +1899,14 @@ ipcMain.handle('chat:start', (e, payload) => {
       }
       clearTimeout(stallTimer);
       const assembledCalls = Object.keys(toolCalls).map(function (k) { return toolCalls[k]; }).filter(function (t) { return t.name; });
-      // 聊天自动记账：估算输入/输出 token 并写入用量账本（此前聊天链路从未记账，「本工作台用量」一直是空的）
+      // 聊天自动记账：估算输入/输出 token 并写入用量账本。
+      // 思考链 reasoning 也计入输出——它才是思考型模型烧钱的大头（此前只算正文，严重低估真实费用）
       try {
-        const tin = approxTokens(JSON.stringify(messages)), tout = approxTokens(outChars);
+        const tin = approxTokens(JSON.stringify(messages)), tout = approxTokens(outChars + reasoning);
         appendUsage({
           at: Date.now(), engine: engine, model: model,
           agentId: '', agentName: '聊天', taskType: 'chat', source: 'chat',
-          tokensIn: tin, tokensOut: tout, cost: costOf(engine, tin, tout),
+          tokensIn: tin, tokensOut: tout, cost: costOf(engine, tin, tout, model),
           costSource: 'estimated', status: 'ok', dryRun: false,
         });
       } catch (e) { /* 记账失败不阻断聊天 */ }
@@ -2039,7 +2048,11 @@ async function callBgChat(engine, model, messages, tools) {
     const ctrl = new AbortController();
     let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
     const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
-    const body = Object.assign({ model: model || cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: 8000 }, samplingForModel(model || cfg.model));
+    const body = Object.assign(
+      { model: model || cfg.model, messages: messages, stream: true, temperature: 0.7, max_tokens: maxTokensForModel(model || cfg.model, false) },
+      samplingForModel(model || cfg.model),
+      thinkingControl(model || cfg.model, {})   // 后台任务带 tools，关闭思考（思考+工具=烧钱死循环）
+    );
     if (tools && tools.length) { body.tools = tools; body.tool_choice = 'auto'; }
     const resp = await fetch(cfg.url, { method: 'POST', headers, signal: ctrl.signal, body: JSON.stringify(body) });
     if (!resp.ok) {
@@ -2569,11 +2582,28 @@ function isThinkingModel(model) {
   return /deepseek|v4|reasoner|\br1\b|o1|o3|thinking/i.test(m);
 }
 
-// 输出 token 上限：思考型模型的「思考链」本身就很耗 token，硬编码 8000 会把正文挤掉，
-// 表现为 finish_reason=length 截断（回答说到一半就断）或「只有思考、没有正文」的空回复。
-// DeepSeek V4 思考模式官方默认输出上限 64K，这里放宽到 32000 留足思考+正文空间。
-function maxTokensForModel(model) {
-  if (isThinkingModel(model)) return 32000;
+// 是否 DeepSeek V4 系模型（支持 thinking 开关参数）
+function isDeepSeekModel(model) {
+  return /deepseek/.test(String(model || ''));
+}
+
+// 思考模式控制：DeepSeek V4 默认「思考开启」，思考链按输出价计费、极耗 token。
+// 官方建议：chat / routing / extraction / tool-use 应关闭思考；只有深度推理（多步编码/数学）才值得开。
+// 实测教训（2026-11-16）：v4-pro 思考模式 + 工具循环 = 烧钱死循环——73 次调用 158 万输入 token、
+// 正文仅 12 token、82% 调用零正文，纯烧钱没产出。故规则如下：
+//   - 默认关闭思考（普通对话 / Agent / 后台任务一律非思考模式）
+//   - 带 tools（工具循环）时同样关闭——思考 + 工具调用是烧钱死循环的根源
+//   - 仅当显式 opts.thinking === true 才开启思考（保留深度推理入口）
+function thinkingControl(model, opts) {
+  const o = opts || {};
+  if (!isDeepSeekModel(model)) return {};   // 其他引擎不支持该参数，跳过
+  if (o.thinking === true) return { thinking: { type: 'enabled' } };
+  return { thinking: { type: 'disabled' } };
+}
+
+// 输出 token 上限：思考模式要同时容纳「思考链 + 正文」，放宽到 32000；非思考模式 8000 足够。
+function maxTokensForModel(model, thinking) {
+  if (thinking) return 32000;
   return 8000;
 }
 
@@ -2582,12 +2612,12 @@ function samplingForModel(model) {
   if (/uncensored|abliterat/i.test(m)) {
     return {
       temperature: 0.6,           // 适度降温：减少发散，收敛到主线
-      max_tokens: 3600,           // 硬上限：从 8000 压到 3600（约 2000 字），杜绝没完没了
+      max_tokens: 3600,           // 去道德化模型易啰嗦，压到 3600（约 2000 字）杜绝没完没了
       frequency_penalty: 0.6,     // 惩罚重复 token，抑制「车轱辘话」
       presence_penalty: 0.5,      // 惩罚已出现内容，鼓励推进而非原地打转
     };
   }
-  return { max_tokens: maxTokensForModel(m) };
+  return {};
 }
 
 // 通用流式调用：向 CHAT_ENDPOINTS 引擎发请求，累积完整文本，逐块回调 onChunk(text, thinking)
@@ -2611,14 +2641,15 @@ async function completeChatStream(engine, messages, onChunk, opts) {
   set.add(ctrl);   // 注册，供「停止生成」abort（审稿闭环同样生效）
   let stallTimer = setTimeout(() => ctrl.abort(), STALL_MS);
   const resetStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => ctrl.abort(), STALL_MS); };
+  const thinkingOn = o.thinking === true;   // 默认关闭思考；显式 opts.thinking 才开启深度推理
   const resp = await fetch(cfg.url, {
     method: 'POST', headers, signal: ctrl.signal,
     body: JSON.stringify(Object.assign({
       model: model, messages: messages, stream: true,
       temperature: o.temperature != null ? o.temperature : 0.7,
     }, samplingForModel(model), {
-      max_tokens: o.maxTokens || maxTokensForModel(model),
-    })),
+      max_tokens: o.maxTokens || maxTokensForModel(model, thinkingOn),
+    }, thinkingControl(model, o))),
   });
   if (!resp.ok) {
     clearTimeout(stallTimer);

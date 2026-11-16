@@ -413,6 +413,9 @@
     <div class="spacer"></div>
     <select id="engineSelect" title="选择聊天引擎"></select>
     <select id="modelSelect" title="选择模型"></select>
+    <label id="thinkToggleWrap" title="思考模式：模型先深度推理再作答，质量更高但极烧 token（思考链按输出价计费，V4-Pro 输出价是 Flash 的 3.3 倍）。默认关闭；仅深度推理 / 复杂编程 / 数学难题才建议开启" style="display:inline-flex;align-items:center;gap:5px;padding:7px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.14);color:#fff;font-size:12.5px;cursor:pointer;white-space:nowrap;flex:none">
+      <input type="checkbox" id="thinkToggle" style="margin:0"> 深度思考
+    </label>
     <span id="modelHint" title=""></span>
   </div>
   <div class="toolbar">
@@ -1837,6 +1840,7 @@
     try { localStorage.setItem('rc_model_' + (engineSelect.value || 'ollama'), modelSelect.value); } catch (e) {}
   });
   function currentModelId() { return (modelSelect && modelSelect.value) || ''; }
+  function thinkOn() { var t = document.getElementById('thinkToggle'); return !!(t && t.checked); }
   function defaultModelId(engine) {
     var list = ENGINE_MODELS[engine] || ENGINE_MODELS.ollama || [];
     return (list[0] && list[0].id) || '';
@@ -2248,7 +2252,7 @@
       function runToolTurn(msgs, round, contN) {
         live = '';
         liveThinking = '';
-        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId, thinking: thinkOn() }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) { thinking += chunk.thinking; liveThinking += chunk.thinking; }
             if (chunk && chunk.text) live += chunk.text;
