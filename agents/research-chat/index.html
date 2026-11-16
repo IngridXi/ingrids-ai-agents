@@ -139,7 +139,7 @@
   header .clear-btn.active { background: rgba(255,255,255,.34); border-color: rgba(255,255,255,.8); }
 
   /* 消息区 */
-  #messages { flex: 1; overflow-y: auto; padding: 22px 20px 10px; scroll-behavior: smooth; }
+  #messages { flex: 1; overflow-y: auto; padding: 22px 20px 10px; scroll-behavior: auto; }
   .msg { display: flex; margin-bottom: 18px; position: relative; }
   .msg .avatar {
     width: 34px; height: 34px; border-radius: 10px; flex: none;
@@ -235,6 +235,23 @@
   .msg .bubble .think .think-tag.warn   { background: #fdf0dc; color: #b45309; }
   .msg .bubble .think .think-tag.done   { background: #e4f4e6; color: #15803d; }
   .msg .bubble .think .think-tag.think  { background: #efedf4; color: #6b6575; }
+  /* 流式期间思考过程折叠成一行，避免把正文挤到屏外、滚动失控 */
+  .msg .bubble .think-live { margin-bottom: 9px; }
+  .msg .bubble .think-live summary {
+    cursor: pointer; list-style: none; user-select: none;
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 9px; border-radius: 8px; background: var(--accent-soft);
+    font-size: 12.5px; color: var(--ink-soft); font-weight: 500; line-height: 1.4;
+  }
+  .msg .bubble .think-live summary::-webkit-details-marker { display: none; }
+  .msg .bubble .think-live summary .think-arrow { flex: 0 0 auto; color: var(--accent); font-size: 11px; transition: transform .12s; }
+  .msg .bubble .think-live[open] summary .think-arrow { transform: rotate(90deg); }
+  .msg .bubble .think-live .think-title { flex: 1; min-width: 0; }
+  .msg .bubble .think-live .think-body {
+    margin: 4px 0 0 16px; padding: 6px 9px;
+    background: rgba(255,255,255,.62); border-radius: 6px;
+    font-size: 12px; color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+  }
   .msg .bubble .status-line { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
   .msg .bubble .status-line .dots { display: inline-flex; gap: 3px; }
   .msg .bubble .status-line .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; animation: blink 1.2s infinite; }
@@ -825,7 +842,7 @@
     });
     // 该会话有后台任务在跑时，追加「生成中」占位，实时显示最新进度
     if (runningJobs[s.id] && jobProgress[s.id]) renderRunningBubble(jobProgress[s.id]);
-    messages.scrollTop = messages.scrollHeight;
+    autoScroll(true);
   }
   function newChat() {
     var cur = currentSession();
@@ -955,7 +972,7 @@
         renderMermaidIn(b2);
       }
     }
-    messages.scrollTop = messages.scrollHeight;
+    autoScroll(true);
   }
 
   function restoreReviewProgress() {
@@ -1362,7 +1379,7 @@
     row.className = 'auto-exec';
     row.innerHTML = '🔓 已自动执行 · ' + esc(d.title) + '：' + esc(d.body);
     messages.appendChild(row);
-    messages.scrollTop = messages.scrollHeight;
+    autoScroll(false);
   }
   function setBatchAuth(on) {
     writeAuthMode = on ? 'session' : 'per-item';
@@ -1387,7 +1404,7 @@
         (d.extra ? '<div class="ap-extra">' + esc(d.extra) + '</div>' : '') +
         '<div class="ap-actions"><button class="ap-yes">✅ 批准执行</button><button class="ap-all">⏩ 全部允许</button><button class="ap-no">✖ 拒绝</button></div>';
       messages.appendChild(card);
-      messages.scrollTop = messages.scrollHeight;
+      autoScroll(true);
       function decide(ok) {
         card.classList.add('decided');
         var btns = card.querySelectorAll('button');
@@ -1479,6 +1496,12 @@
 
   var el = function (id) { return document.getElementById(id); };
   var messages = el('messages'), input = el('input'), sendBtn = el('sendBtn');
+
+  /* ---------- 智能自动滚动：用户上滚查看历史时暂停跟随，回到底部才恢复（不再强行拉到底） ---------- */
+  var stickBottom = true;   // 是否「贴底」：在底部附近才自动跟随，用户上滚即暂停
+  function nearBottom() { return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80; }
+  function autoScroll(force) { if (force || stickBottom) { var mv = messages; mv.scrollTop = mv.scrollHeight; } }
+  messages.addEventListener('scroll', function () { stickBottom = nearBottom(); });
   var engineSelect = el('engineSelect');
   var modelSelect = el('modelSelect');
 
@@ -1877,7 +1900,7 @@
       }
     }
     messages.appendChild(wrap);
-    messages.scrollTop = messages.scrollHeight;
+    autoScroll(true);
     return wrap.querySelector('.bubble');
   }
   function fallbackCopyText(text) {
@@ -2053,6 +2076,7 @@
 
     // 助手气泡（流式填充）
     var bubble = addBubble('assistant', '<span class="cursor"></span>');
+    stickBottom = true; autoScroll(true);   // 用户刚点发送，一定在底部，此后流式增量走「贴底才跟随」
     var acc = '';
     var thinking = '';
     var live = '';
@@ -2091,7 +2115,7 @@
         // 流式期间正文用轻量转义（保留换行），不做逐 token 的 markdown 全量解析；完成后 finish() 再一次性排版
         var liveHtml = live ? '<div class="streaming">' + esc(live).replace(/\n/g, '<br>') + '</div>' : '';
         bubble.innerHTML = thinkHtml + status + (acc ? mdToHtml(acc) : '') + liveHtml + '<span class="cursor"></span>';
-        messages.scrollTop = messages.scrollHeight;
+        autoScroll(false);
         maybeSaveProgress();
         jobProgress[jobSessionId] = { text: stripToolMarkers(acc) + (live ? live : ''), thinking: thinking };
       });
@@ -2384,7 +2408,7 @@
       } else if (reviewEl) {
         reviewEl.innerHTML = reviewEl._summary + (curText ? mdToHtml(curText) : '') + '<span class="cursor"></span>';
       }
-      messages.scrollTop = messages.scrollHeight;
+      autoScroll(false);
     }
 
     function close() {
@@ -2420,7 +2444,7 @@
           st.className = 'loop-status';
           st.textContent = '⚙ 已从断点续跑（自第 ' + (d.round || 0) + ' 轮起，仅重跑中断阶段）';
           messages.appendChild(st);
-          messages.scrollTop = messages.scrollHeight;
+          autoScroll(true);
           return;
         }
         if (d.phase === 'draft') {
@@ -2455,7 +2479,7 @@
           s2.className = 'loop-status';
           s2.textContent = '⚙ 已手动停止';
           messages.appendChild(s2);
-          messages.scrollTop = messages.scrollHeight;
+          autoScroll(true);
           delete runningJobs[sid];
           delete jobProgress[sid];
           refreshStreaming();
@@ -2489,7 +2513,7 @@
           status.textContent = '⚙ 审稿闭环中断：' + (d && d.error ? d.error : '未知错误');
         }
         messages.appendChild(status);
-        messages.scrollTop = messages.scrollHeight;
+        autoScroll(true);
         delete runningJobs[sid];
         delete jobProgress[sid];
         refreshStreaming();
@@ -2547,7 +2571,15 @@
   function renderThinking(text, openLast) {
     var steps = splitThinking(text);
     if (!steps.length) return '';
-    var html = '<div class="think"><div class="think-head">思考过程<span class="think-count">' + steps.length + ' 步</span></div>';
+    var count = steps.length;
+    // 流式期间（openLast=true）：只显示一行可折叠的「思考过程 · N 步」，不逐条展开，
+    // 避免思考块越积越多把正文挤到屏外、导致滚动失控；点开只看最新一步
+    if (openLast) {
+      var last = steps[steps.length - 1];
+      return '<details class="think think-live"><summary><span class="think-arrow">▸</span><span class="think-tag think">思考</span><span class="think-title">思考过程 · ' + count + ' 步（点击展开最新）</span></summary>'
+        + '<div class="think-body">' + esc(last) + '</div></details>';
+    }
+    var html = '<div class="think"><div class="think-head">思考过程<span class="think-count">' + count + ' 步</span></div>';
     steps.forEach(function (b, i) {
       var c = classifyThinking(b);
       var open = (openLast && i === steps.length - 1) ? ' open' : '';
@@ -2667,7 +2699,7 @@
 
     addBubble('user', '🎓 生成学术 PPT' + (topic ? '：' + esc(topic) : '（基于当前对话）'));
     var bubble = addBubble('assistant', '<div class="status-line">正在设计演示结构…<span class="dots"><i></i><i></i><i></i></span></div>');
-    messages.scrollTop = messages.scrollHeight;
+    autoScroll(true);
     runningJobs[sid] = true;
     refreshStreaming();
 
@@ -2699,13 +2731,13 @@
           st.className = 'loop-status';
           st.textContent = (r && r.ok) ? '🎓 已生成演示文稿：' + r.path : '⚠ 文件生成失败：' + ((r && r.error) || '未知错误') + '（大纲已在上方展示，可点「导出 MD」保存）';
           messages.appendChild(st);
-          messages.scrollTop = messages.scrollHeight;
+          autoScroll(true);
         }).catch(function (e) {
           var st = document.createElement('div');
           st.className = 'loop-status';
           st.textContent = '⚠ 文件生成失败：' + String(e && e.message || e);
           messages.appendChild(st);
-          messages.scrollTop = messages.scrollHeight;
+          autoScroll(true);
         });
       }
     });
