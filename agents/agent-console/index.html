@@ -95,6 +95,39 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 .badge-mini{font-size:11px;padding:0 8px;border-radius:10px;border:1px solid;white-space:nowrap;color:var(--dim)}
 .tabs{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* 情绪/偏好可视化 */
+.pref-dist{display:flex;height:30px;border-radius:8px;overflow:hidden;margin:14px 0 6px;border:1px solid var(--line)}
+.pref-dist .seg{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;min-width:0}
+.pref-dist .seg.do{background:linear-gradient(90deg,#238636,#3fb950)}
+.pref-dist .seg.avoid{background:linear-gradient(90deg,#b62324,#f85149)}
+.dist-legend{display:flex;gap:16px;font-size:12px;color:var(--dim);margin:4px 0 12px;flex-wrap:wrap}
+.dist-legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.dist-legend .sw.do{background:var(--ok)}.dist-legend .sw.avoid{background:var(--err)}
+.pref-item{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:13px 15px;margin-bottom:12px}
+.pref-item.do{border-left-color:var(--ok)}
+.pref-item.avoid{border-left-color:var(--err)}
+.pref-item .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pref-item .dir{font-size:11px;font-weight:600;padding:1px 10px;border-radius:10px;border:1px solid;white-space:nowrap}
+.pref-item.do .dir{color:var(--ok);border-color:var(--ok)}
+.pref-item.avoid .dir{color:var(--err);border-color:var(--err)}
+.pref-item .title{font-weight:600;font-size:14px;flex:1;min-width:140px}
+.pref-item .acts{display:flex;gap:6px}
+.pref-item .acts button{padding:3px 11px;font-size:12px}
+.pref-item .acts button.danger{color:var(--err)}
+.pref-item .acts button.danger:hover{border-color:var(--err)}
+.pref-item .action{font-size:13px;margin-top:7px;color:#c9d1d9}
+.pref-item .reason{font-size:12px;color:var(--dim);margin-top:4px}
+.pref-item .meta{display:flex;align-items:center;gap:10px;margin-top:10px}
+.pref-item .meta .cnt{font-size:12px;color:var(--dim);white-space:nowrap}
+.conf-bar{flex:1;height:6px;background:var(--bg);border-radius:3px;overflow:hidden;min-width:70px}
+.conf-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:3px;transition:width .2s}
+.pref-item.avoid .conf-fill{background:linear-gradient(90deg,var(--warn),var(--err))}
+.pref-item .conf-pct{font-size:12px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.pref-edit{margin-top:12px;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.pref-edit .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pref-edit select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px 10px;font:13px/1.6 inherit}
+.pref-edit input[type=range]{accent-color:var(--accent)}
+.pref-edit .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 </style>
 </head>
 <body>
@@ -296,7 +329,10 @@ async function loadLibrary() {
 
 /* ---------------- 情绪 / 偏好 Agent ---------------- */
 let sentiTab = 'do';
+let editingId = null;   // 正在编辑的偏好 id（null = 浏览态）
 const VAL_LABEL = { positive: '👍 积极', negative: '👎 消极', neutral: '中性' };
+const DIR_LABEL = { do: '保持 / 多做', avoid: '避免 / 少做' };
+
 async function loadSentiment() {
   const box = $('#sentimentBox');
   if (!API.sentimentReport) { box.innerHTML = '<div class="empty">—</div>'; return; }
@@ -315,17 +351,85 @@ async function loadSentiment() {
       }).join('');
       return;
     }
-    const dir = sentiTab;
-    const list = prefs.filter(p => p.direction === dir);
-    if (!list.length) { box.innerHTML = '<div class="empty">暂无「' + (dir === 'do' ? '保持 / 多做' : '避免 / 少做') + '」偏好。同场景同方向反馈累计 ≥2 次会自动提炼，也可点下方「立即提炼」。</div>'; return; }
-    box.innerHTML = list.map(p => {
-      return '<div class="lib-item"><div class="head"><span class="cat ' + (dir === 'do' ? 'methodology' : 'conclusion') + '">' + (dir === 'do' ? '保持' : '避免') + '</span>' +
-        '<span class="title">' + esc(p.agent) + ' · ' + esc(p.scenario) + '</span>' +
-        '<span class="badge-mini">' + p.count + ' 次 · 信心 ' + Math.round((p.confidence || 0) * 100) + '%</span></div>' +
-        '<div class="row">' + esc(p.action || '') + '</div>' +
-        '</div>';
-    }).join('');
+    renderPrefs(box, prefs, sentiTab);
   } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+
+/* 渲染偏好（含 do/avoid 分布条 + 卡片列表） */
+function renderPrefs(box, prefs, dir) {
+  const dos = prefs.filter(p => p.direction === 'do');
+  const avoids = prefs.filter(p => p.direction === 'avoid');
+  const total = dos.length + avoids.length;
+
+  // 顶部 do/avoid 比例分布条（可视化）
+  let dist = '';
+  if (total > 0) {
+    const doPct = Math.round(dos.length / total * 100);
+    const avPct = 100 - doPct;
+    dist = '<div class="pref-dist">' +
+      (dos.length ? '<div class="seg do" style="width:' + doPct + '%">保持 ' + dos.length + '</div>' : '') +
+      (avoids.length ? '<div class="seg avoid" style="width:' + avPct + '%">避免 ' + avoids.length + '</div>' : '') +
+      '</div>' +
+      '<div class="dist-legend"><span><span class="sw do"></span>保持/多做 ' + dos.length + ' 条</span>' +
+      '<span><span class="sw avoid"></span>避免/少做 ' + avoids.length + ' 条</span>' +
+      '<span>点卡片「编辑 / 删除」可直接改或删</span></div>';
+  }
+
+  const list = prefs.filter(p => p.direction === dir);
+  if (!list.length) {
+    box.innerHTML = dist + '<div class="empty">暂无「' + DIR_LABEL[dir] + '」偏好。同场景同方向反馈累计 ≥2 次会自动提炼，也可点下方「立即提炼」。</div>';
+    return;
+  }
+  box.innerHTML = dist + list.map(prefCard).join('');
+}
+
+/* 单条偏好卡片（可视化：方向徽章 + 信心度进度条） */
+function prefCard(p) {
+  if (editingId === p.id) return prefEditForm(p);
+  const confPct = Math.round((p.confidence || 0) * 100);
+  return '<div class="pref-item ' + p.direction + '">' +
+    '<div class="head">' +
+      '<span class="dir">' + (p.direction === 'do' ? '保持' : '避免') + '</span>' +
+      '<span class="title">' + esc(p.agent) + ' · ' + esc(p.scenario) + '</span>' +
+      '<span class="acts">' +
+        '<button data-edit="' + esc(p.id) + '">编辑</button>' +
+        '<button class="danger" data-del="' + esc(p.id) + '">删除</button>' +
+      '</span>' +
+    '</div>' +
+    '<div class="action">' + esc(p.action || '') + '</div>' +
+    (p.reason ? '<div class="reason">依据：' + esc(p.reason) + '</div>' : '') +
+    '<div class="meta">' +
+      '<span class="cnt">触发 ' + (p.count || 0) + ' 次</span>' +
+      '<div class="conf-bar"><div class="conf-fill" style="width:' + confPct + '%"></div></div>' +
+      '<span class="conf-pct">信心 ' + confPct + '%</span>' +
+    '</div>' +
+  '</div>';
+}
+
+/* 编辑表单（内联） */
+function prefEditForm(p) {
+  const confPct = Math.round((p.confidence || 0) * 100);
+  return '<div class="pref-item ' + p.direction + '">' +
+    '<div class="head"><span class="dir">编辑偏好</span><span class="title">' + esc(p.agent) + ' · ' + esc(p.scenario) + '</span></div>' +
+    '<div class="pref-edit">' +
+      '<div class="field"><label>方向</label>' +
+        '<select data-f="direction">' +
+          '<option value="do"' + (p.direction === 'do' ? ' selected' : '') + '>保持 / 多做</option>' +
+          '<option value="avoid"' + (p.direction === 'avoid' ? ' selected' : '') + '>避免 / 少做</option>' +
+        '</select></div>' +
+      '<div class="row2">' +
+        '<div class="field"><label>Agent</label><input data-f="agent" value="' + esc(p.agent) + '"></div>' +
+        '<div class="field"><label>场景</label><input data-f="scenario" value="' + esc(p.scenario) + '"></div>' +
+      '</div>' +
+      '<div class="field"><label>做法说明（会注入给各 agent 的指导文本）</label><textarea data-f="action" rows="2">' + esc(p.action || '') + '</textarea></div>' +
+      '<div class="field"><label>信心度 <span data-f="confLabel">' + confPct + '</span>%</label>' +
+        '<input type="range" data-f="confidence" min="0" max="100" value="' + confPct + '"></div>' +
+      '<div class="acts">' +
+        '<button class="primary" data-save="' + esc(p.id) + '">保存</button>' +
+        '<button class="ghost" data-cancel="1">取消</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
 }
 
 /* ---------------- 治理巡检 ---------------- */
@@ -438,6 +542,48 @@ $('#runDistill').onclick = async () => {
     loadSentiment(); loadOverview(); loadProposals();
   } catch (e) { msg.textContent = '失败：' + e.message; }
 };
+
+/* 偏好卡片：编辑 / 删除 / 保存 / 取消（事件委托）+ 信心度滑块联动 */
+$('#sentimentBox').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  if (b.dataset.edit) { editingId = b.dataset.edit; loadSentiment(); return; }
+  if (b.dataset.cancel) { editingId = null; loadSentiment(); return; }
+  if (b.dataset.del) {
+    const id = b.dataset.del;
+    if (!confirm('确定删除这条偏好？删除后该场景的残留情绪信号会一并清除，避免之后又被自动提炼出来。')) return;
+    try {
+      await API.sentimentRemovePreference(id);
+      editingId = null;
+      loadSentiment(); loadOverview();
+    } catch (e) { alert('删除失败：' + e.message); }
+    return;
+  }
+  if (b.dataset.save) {
+    const id = b.dataset.save;
+    const card = b.closest('.pref-item');
+    const get = (f) => card.querySelector('[data-f="' + f + '"]');
+    const patch = {
+      direction: get('direction').value,
+      agent: get('agent').value.trim(),
+      scenario: get('scenario').value.trim(),
+      action: get('action').value.trim(),
+      confidence: Math.round(parseInt(get('confidence').value, 10)) / 100,
+    };
+    try {
+      await API.sentimentUpdatePreference(id, patch);
+      editingId = null;
+      loadSentiment(); loadOverview();
+    } catch (e) { alert('保存失败：' + e.message); }
+    return;
+  }
+});
+$('#sentimentBox').addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (el.dataset.f === 'confidence') {
+    const lbl = el.closest('.pref-edit') && el.closest('.pref-edit').querySelector('[data-f="confLabel"]');
+    if (lbl) lbl.textContent = el.value;
+  }
+});
 
 /* ---------------- 启动 ---------------- */
 (async function boot() {

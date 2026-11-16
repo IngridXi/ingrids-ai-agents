@@ -258,6 +258,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   sentimentGuidance: (agent) => ipcRenderer.invoke('sentiment:guidance', agent),
   sentimentObserve: (raw) => ipcRenderer.invoke('sentiment:observe', raw),
   sentimentDistill: () => ipcRenderer.invoke('sentiment:distill'),
+  sentimentUpdatePreference: (id, patch) => ipcRenderer.invoke('sentiment:update-preference', id, patch),
+  sentimentRemovePreference: (id, opts) => ipcRenderer.invoke('sentiment:remove-preference', id, opts),
 
   // 灵感目录（生态雷达：每日调研 DSH 插件生态）
   ecoRadarRun: () => ipcRenderer.invoke('eco:radar:run'),

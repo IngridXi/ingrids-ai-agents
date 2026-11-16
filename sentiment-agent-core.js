@@ -336,6 +336,80 @@
     return list.slice();
   };
 
+  /* ---------------- 手动编辑偏好规则 ---------------- */
+  /**
+   * updatePreference(id, patch) -> { ok, pref }
+   * patch 可含：direction('do'|'avoid')、scenario、agent、action、reason、confidence(0~1)、count。
+   * 编辑后重算 key（agent||scenario||direction），保持与 distill 去重键一致，避免下次蒸馏重复生成。
+   */
+  SentimentAgent.prototype.updatePreference = function (id, patch) {
+    patch = patch || {};
+    var p = null;
+    for (var i = 0; i < this.state.preferences.length; i++) {
+      if (this.state.preferences[i].id === id) { p = this.state.preferences[i]; break; }
+    }
+    if (!p) return { ok: false, reason: 'not_found' };
+    var oldKey = p.key;
+    if (patch.direction !== undefined && [DIR_DO, DIR_AVOID].indexOf(patch.direction) >= 0) p.direction = patch.direction;
+    if (patch.scenario !== undefined) p.scenario = cleanText(patch.scenario) || '其他';
+    if (patch.agent !== undefined) p.agent = cleanText(patch.agent) || '通用';
+    if (patch.action !== undefined) p.action = cleanText(patch.action);
+    if (patch.reason !== undefined) p.reason = cleanText(patch.reason);
+    if (patch.confidence !== undefined) {
+      var c = Number(patch.confidence);
+      if (!isNaN(c)) p.confidence = Math.max(0, Math.min(1, c));
+    }
+    if (patch.count !== undefined) {
+      var n = parseInt(patch.count, 10);
+      if (!isNaN(n) && n >= 0) p.count = n;
+    }
+    var newKey = this._prefKey(p.agent, p.scenario, p.direction);
+    // 关键：改了 agent/scenario/direction（key 变化）时，级联同步关联信号，
+    // 否则信号仍留在旧 key，删除偏好会漏清信号、distill 又会复活一条旧偏好。
+    if (newKey !== oldKey) {
+      this.state.signals.forEach(function (s) {
+        var dir = s.valence === VAL_POSITIVE ? DIR_DO : DIR_AVOID;
+        if (this._prefKey(s.agent, s.scenario, dir) === oldKey) {
+          s.agent = p.agent;
+          s.scenario = p.scenario;
+          s.valence = p.direction === DIR_DO ? VAL_POSITIVE : VAL_NEGATIVE;
+        }
+      }.bind(this));
+    }
+    p.key = newKey;
+    this._save();
+    return { ok: true, pref: p };
+  };
+
+  /* ---------------- 手动删除偏好规则 ---------------- */
+  /**
+   * removePreference(id, opts) -> { ok, removed, removedSignals }
+   * opts.cascadeSignals 默认 true：删除偏好时连同该 key 的残留信号一起删，
+   * 避免下次 distill() 又从信号里「复活」同一条偏好。
+   */
+  SentimentAgent.prototype.removePreference = function (id, opts) {
+    opts = opts || {};
+    var cascade = opts.cascadeSignals !== false;
+    var p = null;
+    for (var i = 0; i < this.state.preferences.length; i++) {
+      if (this.state.preferences[i].id === id) { p = this.state.preferences[i]; break; }
+    }
+    if (!p) return { ok: false, removed: 0 };
+    var key = p.key;
+    this.state.preferences = this.state.preferences.filter(function (x) { return x.id !== id; });
+    var removedSignals = 0;
+    if (cascade && key) {
+      var before = this.state.signals.length;
+      this.state.signals = this.state.signals.filter(function (s) {
+        var dir = s.valence === VAL_POSITIVE ? DIR_DO : DIR_AVOID;
+        return this._prefKey(s.agent, s.scenario, dir) !== key;
+      }.bind(this));
+      removedSignals = before - this.state.signals.length;
+    }
+    this._save();
+    return { ok: true, removed: 1, removedSignals: removedSignals };
+  };
+
   /* ---------------- 信号列表 ---------------- */
   SentimentAgent.prototype.signals = function (limit, valence) {
     var list = this.state.signals;

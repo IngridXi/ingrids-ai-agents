@@ -1108,6 +1108,10 @@ ipcMain.handle('sentiment:guidance', (_e, agent) => getSentimentAgent().guidance
 ipcMain.handle('sentiment:observe', (_e, raw) => getSentimentAgent().observe(raw));
 // 手动/自动提炼：把信号聚合成偏好规则，新偏好自动提交经验沉淀官（待审批）
 ipcMain.handle('sentiment:distill', () => getSentimentAgent().distill());
+// 手动编辑偏好规则（可视化面板里改方向/场景/Agent/做法文案/信心度）
+ipcMain.handle('sentiment:update-preference', (_e, id, patch) => getSentimentAgent().updatePreference(id, patch));
+// 手动删除偏好规则（默认级联删除该 key 的残留信号，避免蒸馏复活）
+ipcMain.handle('sentiment:remove-preference', (_e, id, opts) => getSentimentAgent().removePreference(id, opts));
 
 /* ---------------- IPC：Agent 治理官（只读盘点 + 重叠检测 + 对账）---------------- */
 ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
