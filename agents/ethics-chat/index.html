@@ -1161,6 +1161,7 @@
       tools.push('db_zotero_collection：把文献归档到集合（文件夹），参数 {"itemKeys":["key1","key2"],"collectionName":"集合名"}（集合不存在会自动新建）');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
+    tools.push('doc_generate：生成一份文档并保存到「导出」目录，参数 {"type":"pptx|docx|xlsx|md","title":"标题","content":"正文(Markdown，docx/md 用)","slides":[{"title":"页标题","bullets":["要点1"]}],"sheets":[{"name":"表名","rows":[["单元格"]]}]}。pptx 用 slides、docx/md 用 content、xlsx 用 sheets；生成成功返回文件路径');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
@@ -1197,6 +1198,7 @@
       fn('db_zotero_collection', '把文献归档到集合（文件夹）', { itemKeys: { type: 'array', items: { type: 'string' } }, collectionName: { type: 'string' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
+    fn('doc_generate', '生成一份文档并保存到「导出」目录：type=pptx 用 slides（每页 title+bullets 数组）；type=docx 或 md 用 content（Markdown 正文）；type=xlsx 用 sheets（name+rows 二维数组）。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（作为文件名）' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用），每项 {title, bullets:[...]}' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     return defs;
   }
   function parseToolArgs(s) {
@@ -1218,6 +1220,7 @@
     if (n === 'db_obsidian_report' && caps.db) return window.ingrid.toolDbObsidianReport();
     if (n === 'db_zotero_report' && caps.db) return window.ingrid.toolDbZoteroReport();
     if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
+    if (n === 'doc_generate') return window.ingrid.docGenerate(call.args);
     // 写类操作：先请求用户审批，批准后执行
     if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
       return requestWriteApproval(n, call.args).then(function (ok) {
@@ -1333,6 +1336,7 @@
         body = _np.join('\n\n') || JSON.stringify(res);
       }
       else if (call.name === 'computer') body = res.summary;
+      else if (call.name === 'doc_generate') body = (res && res.ok) ? ('已生成文档：' + res.name + '（' + res.path + '）') : ('生成失败：' + ((res && res.error) || '未知错误'));
       else body = JSON.stringify(res);
     } else {
       body = '工具执行失败：' + ((res && res.error) ? res.error : '未知错误');
@@ -1465,6 +1469,9 @@
     var extra = '';
     var caps = agentCapabilities();
     var s = base + extra + toolSpecText(caps);
+    var _now = new Date();
+    var _wd = ['日', '一', '二', '三', '四', '五', '六'][_now.getDay()];
+    s = '【今天日期】今天是 ' + _now.getFullYear() + '年' + (_now.getMonth() + 1) + '月' + _now.getDate() + '日 星期' + _wd + '。回答涉及日期、星期、时间、截止日、时效性时以此为准，不要凭记忆猜测。\n\n' + s;
     if (caps.fs || caps.db || caps.computer) {
       s += '\n\n【自主工作准则 · 必须遵守】你是能长时间自主完成复杂任务的智能体，不是一问一答的聊天机器人：① 工具失败 / 报错 / 路径不存在时，先读错误信息、找原因，再换一种办法重试（先 fs_list 列目录看真实名称、用 fs_search 搜索、检查路径里的空格与全角字符、确认 iCloud 文件是否已下载），绝不要停在「我失败了」或直接放弃；② 复杂任务自己拆成多步、一步步推进，一步没成不要就停下；③ 完成前先核对结果是否真的满足用户要求（文件是否找到、内容是否对得上、任务是否做完），没做完就继续，不草率宣称「已完成」；④ 同一招失败两次就换思路；⑤ 全程持续自主推进、少打扰多交付：不要每做一步就停下来问用户，只有在三种情况下才主动停下向用户汇报——(a) 任务已全部完成、给出最终结果时；(b) 确实需要用户做决定、提供信息或授权才能继续时；(c) 反复尝试后确实无法继续、必须求助时；除此之外，把能查、能算、能写、能核对的步骤都自己做完，一次给到位。';
     }
@@ -1945,7 +1952,7 @@
 
       function runToolTurn(msgs, round, contN) {
         live = '';
-        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) thinking += chunk.thinking;
             if (chunk && chunk.text) live += chunk.text;

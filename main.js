@@ -355,7 +355,10 @@ const WEB_PREFS = {
 };
 
 let mainWindow = null;   // 主窗口引用（供内嵌 agent 的 BrowserView 挂载）
-let agentView = null;    // 内嵌 agent 的 BrowserView（单窗口：点 agent 在主窗口内打开，不新开窗口）
+// 每个 agent 一个 BrowserView，按 href 缓存：切换 agent 只显示/隐藏、不销毁不重载，
+// 这样「研究助手在跑 → 切到软件工程 agent」时研究助手的流式请求仍在后台继续，不被 loadFile 打断。
+const agentViews = new Map();   // href -> BrowserView
+let activeAgentHref = null;     // 当前显示的 agent href（null = 回到工作台首页）
 const AGENT_BAR_H = 46;  // 返回条高度，须与 index.html 的 .agent-shell-bar height 一致
 
 function createMainWindow() {
@@ -372,7 +375,12 @@ function createMainWindow() {
   });
   // 窗口尺寸变化时重排内嵌 agent 的 BrowserView 边界
   mainWindow.on('resize', () => layoutAgentView());
-  mainWindow.on('closed', () => { mainWindow = null; agentView = null; });
+  mainWindow.on('closed', () => {
+    for (const v of agentViews.values()) { try { if (!v.webContents.isDestroyed()) v.webContents.destroy(); } catch { /* 忽略 */ } }
+    agentViews.clear();
+    activeAgentHref = null;
+    mainWindow = null;
+  });
 }
 
 /* ---------------- 会议纪要后端自动拉起 ---------------- */
@@ -586,9 +594,9 @@ function broadcast(channel, data) {
   for (const w of BrowserWindow.getAllWindows()) {
     try { if (!w.isDestroyed()) w.webContents.send(channel, data); } catch { /* 忽略 */ }
   }
-  // 内嵌 agent 的 BrowserView 也收广播（如研究助手监听 calendar:reminder）
-  if (agentView) {
-    try { if (!agentView.webContents.isDestroyed()) agentView.webContents.send(channel, data); } catch { /* 忽略 */ }
+  // 内嵌 agent 的 BrowserView 也收广播（如研究助手监听 calendar:reminder）——发给所有已打开的 agent
+  for (const view of agentViews.values()) {
+    try { if (view && !view.webContents.isDestroyed()) view.webContents.send(channel, data); } catch { /* 忽略 */ }
   }
 }
 
@@ -1080,36 +1088,39 @@ ipcMain.handle('governance:run', () => {
 
 /* ---------------- IPC：打开 agent（单窗口，用 BrowserView 内嵌，不新开窗口） ---------------- */
 function layoutAgentView() {
-  if (!agentView || !mainWindow) return;
+  if (!mainWindow) return;
+  const view = activeAgentHref ? agentViews.get(activeAgentHref) : null;
+  if (!view) return;
   const [w, h] = mainWindow.getContentSize();
-  agentView.setBounds({ x: 0, y: AGENT_BAR_H, width: w, height: Math.max(0, h - AGENT_BAR_H) });
+  view.setBounds({ x: 0, y: AGENT_BAR_H, width: w, height: Math.max(0, h - AGENT_BAR_H) });
 }
 function openAgentInMainView(href) {
   if (typeof href !== 'string' || !href || href.includes('..')) return false;
   if (href.includes('meeting-audio')) ensureMeetingAudioBackend();
   if (!mainWindow) return false;
-  if (!agentView) {
-    agentView = new BrowserView({
+  let view = agentViews.get(href);
+  if (!view) {
+    view = new BrowserView({
       webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
     });
-    mainWindow.setBrowserView(agentView);
     // BrowserView 内 agent 的 window.open（如会议纪要 PPT 下载）交给系统浏览器
-    agentView.webContents.setWindowOpenHandler(({ url }) => {
+    view.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//.test(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
+    view.webContents.loadFile(path.join(__dirname, href));
+    agentViews.set(href, view);
   }
-  agentView.webContents.loadFile(path.join(__dirname, href));
+  activeAgentHref = href;
+  mainWindow.setBrowserView(view);
   layoutAgentView();
   return true;
 }
 function closeAgentInMainView() {
   if (!mainWindow) return;
-  if (agentView) {
-    mainWindow.setBrowserView(null);
-    try { agentView.webContents.destroy(); } catch { /* 忽略 */ }
-    agentView = null;
-  }
+  // 只隐藏、不销毁：agent 后台任务（流式生成 / 审稿闭环）继续跑，下次点开同一个 agent 直接恢复现场
+  mainWindow.setBrowserView(null);
+  activeAgentHref = null;
 }
 ipcMain.handle('open-agent', (_e, href) => openAgentInMainView(href));
 ipcMain.handle('close-agent', () => { closeAgentInMainView(); return true; });

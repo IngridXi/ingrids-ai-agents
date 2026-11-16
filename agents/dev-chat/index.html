@@ -1257,6 +1257,7 @@
       tools.push('db_zotero_collection：把文献归档到集合（文件夹），参数 {"itemKeys":["key1","key2"],"collectionName":"集合名"}（集合不存在会自动新建）');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
+    tools.push('doc_generate：生成一份文档并保存到「导出」目录，参数 {"type":"pptx|docx|xlsx|md","title":"标题","content":"正文(Markdown，docx/md 用)","slides":[{"title":"页标题","bullets":["要点1"]}],"sheets":[{"name":"表名","rows":[["单元格"]]}]}。pptx 用 slides、docx/md 用 content、xlsx 用 sheets；生成成功返回文件路径');
     if (webEnabled) tools.push('web_search：联网搜索，参数 {"query":"搜索关键词"}（返回标题、链接、摘要；查实时信息/最新事实/技术文档时用它，不要凭记忆编造）');
     if (!tools.length) return '';
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
@@ -1305,6 +1306,7 @@
       fn('db_zotero_collection', '把文献归档到集合（文件夹）', { itemKeys: { type: 'array', items: { type: 'string' } }, collectionName: { type: 'string' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
+    fn('doc_generate', '生成一份文档并保存到「导出」目录：type=pptx 用 slides（每页 title+bullets 数组）；type=docx 或 md 用 content（Markdown 正文）；type=xlsx 用 sheets（name+rows 二维数组）。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（作为文件名）' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用），每项 {title, bullets:[...]}' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     if (webEnabled) fn('web_search', '联网搜索（返回标题、链接、摘要）。查实时信息、最新事实、技术文档、外部资料时调用，不要凭记忆编造最新数据', { query: { type: 'string', description: '搜索关键词' } });
     return defs;
   }
@@ -1334,6 +1336,7 @@
     if (n === 'db_obsidian_report' && caps.db) return window.ingrid.toolDbObsidianReport();
     if (n === 'db_zotero_report' && caps.db) return window.ingrid.toolDbZoteroReport();
     if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
+    if (n === 'doc_generate') return window.ingrid.docGenerate(call.args);
     if (n === 'web_search' && webEnabled) return window.ingrid.webSearch({ query: String((call.args && call.args.query) || ''), n: 5 });
     // 写类操作：先请求用户审批，批准后执行
     if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
@@ -1459,6 +1462,7 @@
         body = _np.join('\n\n') || JSON.stringify(res);
       }
       else if (call.name === 'computer') body = res.summary;
+      else if (call.name === 'doc_generate') body = (res && res.ok) ? ('已生成文档：' + res.name + '（' + res.path + '）') : ('生成失败：' + ((res && res.error) || '未知错误'));
       else if (call.name === 'web_search') {
         if (res && res.ok && res.results && res.results.length) {
           body = '搜索「' + (res.query || '') + '」得到 ' + res.results.length + ' 条结果：\n' +
@@ -1620,6 +1624,9 @@
     }
     var caps = agentCapabilities();
     var s = systemPrompt + extra + toolSpecText(caps);
+    var _now = new Date();
+    var _wd = ['日', '一', '二', '三', '四', '五', '六'][_now.getDay()];
+    s = '【今天日期】今天是 ' + _now.getFullYear() + '年' + (_now.getMonth() + 1) + '月' + _now.getDate() + '日 星期' + _wd + '。回答涉及日期、星期、时间、截止日、时效性时以此为准，不要凭记忆猜测。\n\n' + s;
     if (webEnabled) {
       s += '\n\n【联网搜索能力 · 已开启】你具备主动联网搜索能力，可直接调用 web_search 工具检索实时信息。遇到最新事实、日期、数据、技术文档、外部资料或你不确定是否已过时的内容，优先联网核实再作答，并标注来源；不要凭记忆编造最新数据或事实。';
     } else {
@@ -2108,7 +2115,7 @@
 
       function runToolTurn(msgs, round, contN) {
         live = '';
-        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) thinking += chunk.thinking;
             if (chunk && chunk.text) live += chunk.text;
