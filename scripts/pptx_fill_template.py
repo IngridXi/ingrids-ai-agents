@@ -176,14 +176,32 @@ def main():
     try:
         from pptx import Presentation
     except ImportError:
-        print(json.dumps({
-            'ok': False,
-            'error': '套模板依赖 python-pptx 未安装（本机环境异常）。请在终端运行以下命令后重试：%s -m pip install --user python-pptx' % sys.executable,
-            'python': sys.executable,
-            'pythonVersion': sys.version.split()[0],
-            'fix': '%s -m pip install --user python-pptx' % sys.executable,
-        }, ensure_ascii=False))
-        return
+        # 自愈：先尝试自动安装 python-pptx，成功后重试
+        fixed = False
+        try:
+            import subprocess
+            r = subprocess.run([sys.executable, '-m', 'pip', 'install', '--user', 'python-pptx'],
+                               capture_output=True, text=True, timeout=180)
+            if r.returncode == 0:
+                try:
+                    from pptx import Presentation
+                    fixed = True
+                except ImportError:
+                    fixed = False
+        except Exception:
+            fixed = False
+        if not fixed:
+            import site
+            print(json.dumps({
+                'ok': False,
+                'error': ('套模板依赖 python-pptx 未安装，且自动安装失败。'
+                          '诊断 executable=%s version=%s home=%s PYTHONPATH=%s PYTHONHOME=%s userSite=%s。'
+                          '请手动运行 %s -m pip install --user python-pptx') % (
+                              sys.executable, sys.version.split()[0], os.path.expanduser('~'),
+                              os.environ.get('PYTHONPATH', '(空)'), os.environ.get('PYTHONHOME', '(空)'),
+                              site.getusersitepackages(), sys.executable),
+            }, ensure_ascii=False))
+            return
 
     action = str(args.get('action', 'fill')).strip().lower()
     template = str(args.get('template', '')).strip()

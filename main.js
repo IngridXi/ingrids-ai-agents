@@ -4050,11 +4050,17 @@ function _runPyJson(scriptRel, args, timeoutMs) {
   return new Promise((resolve) => {
     const script = path.join(__dirname, 'scripts', scriptRel);
     if (!fs.existsSync(script)) { resolve({ ok: false, error: '缺少脚本 scripts/' + scriptRel }); return; }
-    execFile(SYSTEM_PY3, [script, JSON.stringify(args)], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, timeout: timeoutMs || 60000, env: pyEnv() },
+    const env = pyEnv();
+    execFile(SYSTEM_PY3, [script, JSON.stringify(args)], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, timeout: timeoutMs || 60000, env: env },
       (err, stdout) => {
+        // 诊断日志：记录 App 内 python 子进程的真实环境与输出，便于排查「shell 正常、App 内报错」的差异
+        try {
+          fs.appendFileSync('/tmp/ingrid-py.log',
+            JSON.stringify({ at: Date.now(), script: scriptRel, HOME: env.HOME, PYTHONPATH: env.PYTHONPATH || '', PYTHONHOME: env.PYTHONHOME || '', PATH: (env.PATH || '').slice(0, 300), err: err ? String(err.message || err) : null, stdout: String(stdout || '').slice(0, 1500) }) + '\n');
+        } catch (e) { /* 忽略 */ }
         if (err) { resolve({ ok: false, error: String(err.message || err) }); return; }
         try { resolve(JSON.parse(String(stdout))); }
-        catch { resolve({ ok: false, error: '脚本输出异常' }); }
+        catch { resolve({ ok: false, error: '脚本输出异常：' + String(stdout || '').slice(0, 300) }); }
       });
   });
 }
