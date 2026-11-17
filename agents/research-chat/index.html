@@ -1282,7 +1282,7 @@
       tools.push('brain_index：重建第二大脑 index.md 总目录，参数 {"vault":"库路径(可选)"}');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
-    tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片 + 智能图形版式 + 剑桥学术配色）。slides 每页可含 title/subtitle/layout/bullets/charts/table/image/notes/blocks；layout 取值 title标题/section章节/content正文/twoCol双栏/blank空白/cards卡片/flow流程/pyramid金字塔/compare对比；blocks 是「板块」数组 [{title,points:[...]}]，有 blocks 时按板块数量自动匹配智能图形版式（2块左右分栏、3块三栏、4块2×2矩阵、更多则网格；配合 flow/pyramid/compare 做流程/金字塔/对比），把文字嵌进图形而非罗列；顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
+    tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片 + 智能图形版式 + 剑桥学术配色 + 中文苹方字体）。slides 每页可含 title/subtitle/layout/bullets/charts/table/image/notes/blocks；layout 取值 title标题/section章节/content正文/twoCol双栏/blank空白/cards卡片/flow流程/pyramid金字塔/timeline时间线/kpi大数字看板/compare左右对比；blocks 是「板块」数组 [{title,points:[...],icon:emoji,accent:色值}]，有 blocks 时按 layout 匹配智能图形版式（cards 按数量 2块左右分栏/3块三栏/4块2×2/更多网格；flow 流程箭头；pyramid 金字塔；timeline 时间线；kpi 大数字每块给 value/title/subtitle；compare 左右对比），把文字嵌进图形而非罗列；顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
     tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}。内置工具，机器已装好依赖，直接调用即可，勿用 shell 手动 pip install');
     tools.push('image_process：本地图片处理（图片不出本机）。参数 {"action":"remove_bg|resize|convert|info","input":"图片绝对路径","output":"输出路径","width":800,"height":600}。remove_bg 用 rembg 抠图去背景输出透明 PNG（首次会下载 u2net 模型）；resize 缩放；convert 转格式；info 查尺寸');
     tools.push('image_generate：文生图（通义万相，云端，需已配「Qwen/通义」DashScope Key）。参数 {"prompt":"画面描述(中文效果好)","size":"1024*1024|1280*720|720*1280","n":1,"negative_prompt":"不要出现的元素(可选)"}。生成后自动下载保存到「下载」目录并返回图片绝对路径');
@@ -1328,7 +1328,7 @@
       fn('brain_index', '重建第二大脑 index.md 总目录', { vault: { type: 'string', description: '库路径（可选）' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
-    fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表/表格/图片 + 智能图形版式 + 剑桥学术配色）。slides 每页 {title, subtitle, layout, bullets, blocks, charts, table, image, notes}；layout 取 title/section/content/twoCol/blank/cards/flow/pyramid/compare；blocks 为板块数组 [{title, points:[...]}]，有 blocks 时按数量自动匹配智能图形版式（左右分栏/三栏/2×2矩阵/网格/流程/金字塔/对比），文字嵌进图形而非罗列。type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank/cards/flow/pyramid/compare), bullets:[字符串或{text,sub:[...]}], blocks:[{title,points:[...]}]（板块数组，按数量自动匹配智能图形版式）, charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
+    fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表/表格/图片 + 智能图形版式 + 剑桥学术配色 + 中文苹方字体）。slides 每页 {title, subtitle, layout, bullets, blocks, charts, table, image, notes}；layout 取 title/section/content/twoCol/blank/cards/flow/pyramid/timeline/kpi/compare；blocks 为板块数组 [{title, points:[...], icon:emoji, accent:色值}]，有 blocks 时按 layout 匹配智能图形版式（cards 左右分栏/三栏/2×2矩阵/网格，flow 流程，pyramid 金字塔，timeline 时间线，kpi 大数字看板，compare 左右对比），文字嵌进图形而非罗列。type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank/cards/flow/pyramid/timeline/kpi/compare), bullets:[字符串或{text,sub:[...]}], blocks:[{title,points:[...],icon:emoji,accent:色值}]（板块数组，按 layout 匹配智能图形版式；kpi 板块用 {title,value,subtitle}）, charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径（有 bullets 时左图右文）, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     if (webEnabled) fn('web_search', '联网搜索（返回标题、链接、摘要）。查实时信息、最新事实、SOTA 进展、外部资料时调用，不要凭记忆编造最新数据', { query: { type: 'string', description: '搜索关键词' } });
     fn('pptx_fill_template', '把内容套进已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 查看模板每页形状名与占位符，再 action=fill 填空', { action: { type: 'string', description: 'inspect（查看模板结构）或 fill（填空，默认）' }, template: { type: 'string', description: '模板 .pptx 绝对路径' }, output: { type: 'string', description: '输出 .pptx 路径（可选，默认另存为 *_filled_*.pptx）' }, replacements: { type: 'object', description: '全局文本替换 {"{{占位符}}":"新文字"}' }, byName: { type: 'array', description: '按形状名填空 [{name,text}]' } });
     fn('image_process', '本地图片处理（rembg 抠图去背景 / 缩放 / 格式转换 / 信息查询，图片不出本机）', { action: { type: 'string', description: 'remove_bg / resize / convert / info' }, input: { type: 'string', description: '输入图片绝对路径' }, output: { type: 'string', description: '输出路径（可选）' }, width: { type: 'integer', description: 'resize 目标宽（可选）' }, height: { type: 'integer', description: 'resize 目标高（可选）' } });
@@ -2848,12 +2848,14 @@
     runningJobs[sid] = true;
     refreshStreaming();
 
-    var sys = '你是资深学术演讲教练。请把用户给的研究内容设计成一份结构完整的学术演示文稿（用于组会汇报 / 学术会议 / 论文答辩）。\n'
+    var sys = '你是资深学术演讲教练。请把用户给的研究内容设计成一份结构完整、版式美观的学术演示文稿（用于组会汇报 / 学术会议 / 论文答辩）。\n'
       + '必须只输出一个 JSON 对象（不要任何解释、不要 markdown 代码围栏），结构为：\n'
-      + '{"title":"总标题","slides":[{"title":"本页标题","bullets":["要点1","要点2"]}]}\n'
-      + '要求：\n1) 共 8~14 页，按顺序覆盖：标题页（title 用研究题目本身）/ 研究背景 / 研究问题 / 方法与数据 / 关键结果 / 讨论 / 结论 / 展望或致谢；\n'
-      + '2) 每页 3~5 条要点，每条 ≤30 字，用短语不用整句；\n'
-      + '3) 严格输出合法 JSON，字符串内不要有未转义的引号或换行。';
+      + '{"title":"总标题","slides":[{"title":"本页标题","layout":"版式","blocks":[{"title":"板块标题","points":["要点"],"icon":"emoji"}]}]}\n'
+      + '要求：\n'
+      + '1) 共 8~14 页，按顺序覆盖：标题页(layout=title, 用研究题目本身) / 研究背景 / 研究问题 / 方法与数据 / 关键结果 / 讨论 / 结论 / 展望或致谢；\n'
+      + '2) 内容页优先用 blocks 分板块（layout 取 cards/flow/pyramid/timeline/kpi/compare），把文字嵌进图形而非罗列：cards 并列要点(2~4块)、flow 流程步骤、pyramid 层级、timeline 时间进展、kpi 关键数据(每块 {title,value,subtitle})、compare 左右对比；每块 title ≤12 字、points 2~4 条、每条 ≤25 字，可加 icon(emoji 如 🔬📊📈⚙️🧪💡🔗🎓)；\n'
+      + '3) 有数据对比用 charts(bar/line/pie)，列表数据用 table；\n'
+      + '4) 严格输出合法 JSON，字符串内不要有未转义的引号或换行。';
 
     var reqMessages = [{ role: 'system', content: sys }].concat([{ role: 'user', content: srcText }]);
     var acc = '';
@@ -2903,7 +2905,13 @@
     var lines = ['# ' + (parsed.title || '学术演示'), ''];
     (parsed.slides || []).forEach(function (s, i) {
       lines.push('## 第 ' + (i + 1) + ' 页 · ' + (s.title || ''), '');
-      (s.bullets || []).forEach(function (b) { lines.push('- ' + b); });
+      var out = [];
+      (s.blocks || []).forEach(function (bl) {
+        if (bl && bl.title) out.push('▸ ' + bl.title);
+        ((bl && bl.points) || []).forEach(function (p) { out.push('    - ' + (p && typeof p === 'object' ? (p.text || p.title) : p)); });
+      });
+      (s.bullets || []).forEach(function (b) { out.push('- ' + (b && typeof b === 'object' ? (b.text || b.title) : b)); });
+      if (out.length) lines.push(out.join('\n'));
       lines.push('');
     });
     return lines.join('\n');

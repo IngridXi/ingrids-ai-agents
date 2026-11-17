@@ -2903,7 +2903,7 @@ const PPT_THEMES = {
   },
 };
 function _hex(c) { return String(c == null ? '' : c).replace(/^#/, ''); }
-const PPT_FONT = 'Arial';
+const PPT_FONT = 'PingFang SC';   // 苹方（macOS 系统字体，中英文统一）；原 Arial 无中文，导致中文落到默认宋体/等线、观感差
 
 // 把 bullets（字符串或 {text, sub:[...]}）转成 pptxgenjs 文本 run
 function _bulletRuns(bullets, T) {
@@ -2927,23 +2927,42 @@ function _bulletRuns(bullets, T) {
  * 做法：slides 每页可选 blocks 板块数组，渲染器按板块数量自动选版式：
  *   2 块左右分栏、3 块三栏、4 块 2×2 矩阵、更多网格；flow 横向流程、pyramid 金字塔。
  */
-// 单个板块卡片：白底细边框 + 顶部色条标题 + 项目符号要点
+// 单个板块卡片：圆角白底 + 柔和阴影 + 彩色图标圆 + 标题 + 分隔线 + 项目符号要点
 function _addCard(slide, pptx, b, T, x, y, w, h, idx) {
   const title = String((b && (b.title || b.heading || b.name)) || '');
   const pts = (b && Array.isArray(b.points)) ? b.points : (b && Array.isArray(b.bullets)) ? b.bullets : [];
+  const icon = String((b && (b.icon || b.emoji)) || '');
   const color = (b && b.accent) ? _hex(b.accent) : T.chartColors[(idx || 0) % T.chartColors.length];
-  // 卡片底
-  slide.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: T.bg }, line: { color: T.line, width: 1 } });
-  // 顶部色条 + 标题
-  const hh = Math.min(0.54, h * 0.28);
-  slide.addShape(pptx.ShapeType.rect, { x, y, w, hh, fill: { color: color }, line: { color: color, width: 0 } });
-  if (title) slide.addText(String(title), { x: x + 0.12, y: y + 0.04, w: w - 0.24, h: hh - 0.08, fontSize: 13, bold: true, color: 'FFFFFF', fontFace: PPT_FONT, valign: 'middle', align: 'center', wrap: true });
+  const r = 0.06;   // 圆角半径（英寸）
+  // 卡片底：圆角 + 柔和阴影
+  slide.addShape(pptx.ShapeType.roundRect, { x, y, w, h, rectRadius: r, fill: { color: T.bg }, line: { color: T.line, width: 1 }, shadow: { type: 'outer', color: '0A0A0A', opacity: 0.12, blur: 7, angle: 45, offset: 3 } });
+  let bodyTop = y + 0.14;
+  if (h >= 1.6 && (icon || title)) {
+    // 标题行：彩色图标圆 + 标题
+    const iconD = 0.42, ix = x + 0.16, iy = y + 0.14;
+    if (icon) {
+      slide.addShape(pptx.ShapeType.ellipse, { x: ix, y: iy, w: iconD, h: iconD, fill: { color: color }, line: { color: color, width: 0 } });
+      slide.addText(icon, { x: ix, y: iy, w: iconD, h: iconD, fontSize: 15, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: PPT_FONT });
+    }
+    if (title) {
+      const tx = icon ? (ix + iconD + 0.1) : (x + 0.16);
+      const tw = icon ? (w - 0.32 - iconD - 0.1) : (w - 0.32);
+      slide.addText(String(title), { x: tx, y: iy, w: tw, h: iconD, fontSize: 13.5, bold: true, color: T.ink, valign: 'middle', wrap: true, fontFace: PPT_FONT });
+    }
+    // 分隔线
+    const sepY = y + 0.66;
+    slide.addShape(pptx.ShapeType.rect, { x: x + 0.16, y: sepY, w: w - 0.32, h: 0.014, fill: { color: T.line }, line: { color: T.line, width: 0 } });
+    bodyTop = sepY + 0.1;
+  } else if (title) {
+    slide.addText(String(title), { x: x + 0.16, y: y + 0.08, w: w - 0.32, h: 0.4, fontSize: 12.5, bold: true, color: T.ink, valign: 'middle', wrap: true, fontFace: PPT_FONT });
+    bodyTop = y + 0.52;
+  }
   // 要点（项目符号）
   const runs = pts.map(function (p) {
     const t = String(p && typeof p === 'object' ? (p.text || p.title || '') : p);
     return t ? { text: t, options: { bullet: { code: '2022' }, color: T.ink, fontSize: 11, breakLine: true, paraSpaceAfter: 4 } } : null;
   }).filter(Boolean);
-  if (runs.length) slide.addText(runs, { x: x + 0.14, y: y + hh + 0.1, w: w - 0.28, h: h - hh - 0.18, valign: 'top', fontFace: PPT_FONT });
+  if (runs.length) slide.addText(runs, { x: x + 0.18, y: bodyTop, w: w - 0.36, h: h - (bodyTop - y) - 0.1, valign: 'top', fontFace: PPT_FONT });
 }
 
 // 卡片网格：按数量自动分栏（1 全宽 / 2 左右 / 3 三栏 / 4 2×2 / ≤6 三栏 / 更多四栏）
@@ -2993,6 +3012,81 @@ function _addPyramid(slide, pptx, blocks, T, x, y, w, h) {
     slide.addShape(pptx.ShapeType.rect, { x: lx, y: ly, w: lw, h: layerH, fill: { color: color }, line: { color: color, width: 0 } });
     slide.addText(String((b && (b.title || b.heading || b.name)) || ''), { x: lx, y: ly, w: lw, h: layerH, fontSize: 13, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: PPT_FONT, wrap: true });
   });
+}
+
+// 横向时间线：一条轴线 + N 个节点（彩色圆点），节点上方标题、下方要点
+function _addTimeline(slide, pptx, blocks, T, x, y, w, h) {
+  const n = blocks.length || 1;
+  const axisY = y + h * 0.34;
+  slide.addShape(pptx.ShapeType.rect, { x: x + 0.25, y: axisY, w: w - 0.5, h: 0.03, fill: { color: T.line }, line: { color: T.line, width: 0 } });
+  const usable = w - 0.5;
+  const step = n === 1 ? 0 : usable / (n - 1);
+  blocks.forEach(function (b, i) {
+    const cx = n === 1 ? (x + w / 2) : (x + 0.25 + i * step);
+    const color = (b && b.accent) ? _hex(b.accent) : T.chartColors[i % T.chartColors.length];
+    slide.addShape(pptx.ShapeType.ellipse, { x: cx - 0.1, y: axisY - 0.1, w: 0.2, h: 0.2, fill: { color: color }, line: { color: 'FFFFFF', width: 1.5 } });
+    const tt = String((b && (b.title || b.heading || b.name)) || '');
+    if (tt) slide.addText(tt, { x: cx - 1.25, y: axisY - 1.1, w: 2.5, h: 0.95, fontSize: 12.5, bold: true, color: T.primary, align: 'center', valign: 'bottom', wrap: true, fontFace: PPT_FONT });
+    const pts = (b && Array.isArray(b.points)) ? b.points : (b && Array.isArray(b.bullets)) ? b.bullets : [];
+    const runs = pts.map(function (p) {
+      const t = String(p && typeof p === 'object' ? (p.text || p.title || '') : p);
+      return t ? { text: t, options: { color: T.sub, fontSize: 10, breakLine: true, paraSpaceAfter: 2 } } : null;
+    }).filter(Boolean);
+    if (runs.length) slide.addText(runs, { x: cx - 1.25, y: axisY + 0.22, w: 2.5, h: h * 0.62, align: 'center', valign: 'top', fontFace: PPT_FONT });
+  });
+}
+
+// KPI 大数字看板：每个板块 = 圆角卡片，大数字 + 标签 + 说明（卡片高度自适应、居中）
+function _addKpi(slide, pptx, blocks, T, x, y, w, h) {
+  const n = blocks.length || 1;
+  const cols = Math.min(n, 4);
+  const gap = 0.2;
+  const cw = (w - gap * (cols - 1)) / cols;
+  const kpiH = Math.min(h, 2.1);
+  const ky = y + (h - kpiH) / 2;
+  blocks.forEach(function (b, i) {
+    const bx = x + i * (cw + gap);
+    const color = (b && b.accent) ? _hex(b.accent) : T.chartColors[i % T.chartColors.length];
+    slide.addShape(pptx.ShapeType.roundRect, { x: bx, y: ky, w: cw, h: kpiH, rectRadius: 0.08, fill: { color: T.soft }, line: { color: T.line, width: 1 }, shadow: { type: 'outer', color: '0A0A0A', opacity: 0.1, blur: 6, angle: 45, offset: 3 } });
+    const val = String((b && (b.value || b.number || b.kpi)) || ((b && b.points && b.points[0]) ? b.points[0] : ''));
+    const label = String((b && (b.title || b.label || b.name)) || '');
+    const sub = String((b && (b.subtitle || b.sub)) || ((b && b.points && b.points[1]) ? b.points[1] : ''));
+    if (val) slide.addText(val, { x: bx + 0.1, y: ky + 0.16, w: cw - 0.2, h: 0.7, fontSize: 28, bold: true, color: color, align: 'center', valign: 'middle', fontFace: PPT_FONT });
+    if (label) slide.addText(label, { x: bx + 0.12, y: ky + 0.95, w: cw - 0.24, h: 0.4, fontSize: 12.5, bold: true, color: T.ink, align: 'center', wrap: true, fontFace: PPT_FONT });
+    if (sub) slide.addText(sub, { x: bx + 0.12, y: ky + 1.36, w: cw - 0.24, h: kpiH - 1.5, fontSize: 10, color: T.sub, align: 'center', wrap: true, fontFace: PPT_FONT });
+  });
+}
+
+// 左右对比：多组卡片并排，彩色头部 + 彩色边框强调对比；两组时中间加 VS 圆标
+function _addCompare(slide, pptx, blocks, T, x, y, w, h) {
+  const n = blocks.length || 2;
+  const two = n === 2;
+  const gap = two ? 0.7 : 0.24;
+  const cw = (w - gap * (n - 1)) / n;
+  blocks.forEach(function (b, i) {
+    const bx = x + i * (cw + gap);
+    const color = (b && b.accent) ? _hex(b.accent) : T.chartColors[i % T.chartColors.length];
+    slide.addShape(pptx.ShapeType.roundRect, { x: bx, y, w: cw, h, rectRadius: 0.07, fill: { color: T.bg }, line: { color: color, width: 1.75 }, shadow: { type: 'outer', color: '0A0A0A', opacity: 0.12, blur: 7, angle: 45, offset: 3 } });
+    // 彩色头部
+    slide.addShape(pptx.ShapeType.roundRect, { x: bx, y, w: cw, h: 0.62, rectRadius: 0.07, fill: { color: color }, line: { color: color, width: 0 } });
+    const tt = String((b && (b.title || b.heading || b.name)) || '');
+    const icon = String((b && (b.icon || b.emoji)) || '');
+    const headTxt = icon ? (icon + '  ' + tt) : tt;
+    if (headTxt) slide.addText(headTxt, { x: bx + 0.12, y: y + 0.04, w: cw - 0.24, h: 0.54, fontSize: 15, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', wrap: true, fontFace: PPT_FONT });
+    // 要点
+    const pts = (b && Array.isArray(b.points)) ? b.points : (b && Array.isArray(b.bullets)) ? b.bullets : [];
+    const runs = pts.map(function (p) {
+      const t = String(p && typeof p === 'object' ? (p.text || p.title || '') : p);
+      return t ? { text: t, options: { bullet: { code: '2022' }, color: T.ink, fontSize: 11.5, breakLine: true, paraSpaceAfter: 5 } } : null;
+    }).filter(Boolean);
+    if (runs.length) slide.addText(runs, { x: bx + 0.16, y: y + 0.74, w: cw - 0.32, h: h - 0.86, valign: 'top', fontFace: PPT_FONT });
+  });
+  // 两组时中间 VS 圆标
+  if (two) {
+    const cx = x + cw + gap / 2;
+    slide.addShape(pptx.ShapeType.ellipse, { x: cx - 0.24, y: y + h / 2 - 0.24, w: 0.48, h: 0.48, fill: { color: T.ink }, line: { color: T.ink, width: 0 } });
+    slide.addText('VS', { x: cx - 0.24, y: y + h / 2 - 0.24, w: 0.48, h: 0.48, fontSize: 11, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: PPT_FONT });
+  }
 }
 
 function _addChart(slide, pptx, c, T, x, y, w, h) {
@@ -3062,19 +3156,28 @@ function _addPptxSlide(pptx, s, T, idx, total, p) {
   const hasImage = !!(s.image && (s.image.path || s.image.src || typeof s.image === 'string'));
 
   if (layout === 'title') {
-    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.24, fill: { color: T.primary } });
-    if (s.title) slide.addText(String(s.title), { x: 0.9, y: 2.05, w: 11.53, h: 1.6, fontSize: 33, bold: true, color: T.primary, fontFace: PPT_FONT, align: 'center', valign: 'middle' });
-    if (s.subtitle) slide.addText(String(s.subtitle), { x: 0.9, y: 3.72, w: 11.53, h: 0.8, fontSize: 17, color: T.accent, fontFace: PPT_FONT, align: 'center' });
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.26, fill: { color: T.primary } });
+    // 装饰：左下淡色大圆 + 右下 accent 小圆
+    slide.addShape(pptx.ShapeType.ellipse, { x: -1.2, y: 5.3, w: 3.4, h: 3.4, fill: { color: T.soft }, line: { color: T.soft, width: 0 } });
+    slide.addShape(pptx.ShapeType.ellipse, { x: 12.35, y: 6.35, w: 0.75, h: 0.75, fill: { color: T.accent }, line: { color: T.accent, width: 0 } });
+    if (s.title) slide.addText(String(s.title), { x: 0.9, y: 2.35, w: 11.53, h: 1.45, fontSize: 36, bold: true, color: T.primary, fontFace: PPT_FONT, align: 'center', valign: 'middle', wrap: true });
+    // 标题下装饰短横线
+    slide.addShape(pptx.ShapeType.roundRect, { x: 6.06, y: 3.92, w: 1.21, h: 0.07, rectRadius: 0.035, fill: { color: T.accent }, line: { color: T.accent, width: 0 } });
+    if (s.subtitle) slide.addText(String(s.subtitle), { x: 0.9, y: 4.12, w: 11.53, h: 0.7, fontSize: 17, color: T.accent, fontFace: PPT_FONT, align: 'center' });
     const byline = [p.author, p.date].filter(Boolean).join(' · ');
-    if (byline) slide.addText(byline, { x: 0.9, y: 5.6, w: 11.53, h: 0.5, fontSize: 12, color: T.sub, fontFace: PPT_FONT, align: 'center' });
+    if (byline) slide.addText(byline, { x: 0.9, y: 5.85, w: 11.53, h: 0.5, fontSize: 12, color: T.sub, fontFace: PPT_FONT, align: 'center' });
     slide.addShape(pptx.ShapeType.rect, { x: 0, y: 7.26, w: 13.333, h: 0.24, fill: { color: T.cambridge } });
     return;
   }
 
   if (layout === 'section') {
     slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.24, h: 7.5, fill: { color: T.primary } });
-    if (s.title) slide.addText(String(s.title), { x: 1.0, y: 2.6, w: 11.4, h: 1.5, fontSize: 34, bold: true, color: T.primary, fontFace: PPT_FONT, valign: 'middle' });
-    if (s.subtitle) slide.addText(String(s.subtitle), { x: 1.0, y: 4.2, w: 11.4, h: 0.8, fontSize: 15, color: T.sub, fontFace: PPT_FONT });
+    // 装饰：右下淡色大圆
+    slide.addShape(pptx.ShapeType.ellipse, { x: 10.6, y: 5.4, w: 3.4, h: 3.4, fill: { color: T.soft }, line: { color: T.soft, width: 0 } });
+    if (s.title) slide.addText(String(s.title), { x: 1.0, y: 2.6, w: 11.4, h: 1.5, fontSize: 36, bold: true, color: T.primary, fontFace: PPT_FONT, valign: 'middle' });
+    // 标题下装饰短横线
+    slide.addShape(pptx.ShapeType.roundRect, { x: 1.04, y: 4.16, w: 1.1, h: 0.07, rectRadius: 0.035, fill: { color: T.accent }, line: { color: T.accent, width: 0 } });
+    if (s.subtitle) slide.addText(String(s.subtitle), { x: 1.0, y: 4.4, w: 11.4, h: 0.8, fontSize: 15, color: T.sub, fontFace: PPT_FONT });
     return;
   }
 
@@ -3096,6 +3199,9 @@ function _addPptxSlide(pptx, s, T, idx, total, p) {
     const sl = String(s.layout || 'cards').toLowerCase();
     if (sl === 'flow') _addFlow(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
     else if (sl === 'pyramid') _addPyramid(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
+    else if (sl === 'timeline') _addTimeline(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
+    else if (sl === 'kpi') _addKpi(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
+    else if (sl === 'compare') _addCompare(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
     else _addCards(slide, pptx, s.blocks, T, 0.6, bodyTop, 12.13, bodyH);
     if (s.notes) slide.addNotes(String(s.notes));
     _addFooter(slide, pptx, T, idx, total, p.title);
@@ -3130,7 +3236,16 @@ function _addPptxSlide(pptx, s, T, idx, total, p) {
     _addTable(slide, s.table, T, 0.6, bodyTop, 12.13, bodyH);
   } else if (hasImage) {
     const src = (typeof s.image === 'string') ? s.image : (s.image.path || s.image.src);
-    if (src) {
+    const bullets = Array.isArray(s.bullets) ? s.bullets : [];
+    if (src && bullets.length) {
+      // 图文混排：左图右文
+      const abs = path.isAbsolute(src) ? src : path.resolve(src);
+      const imgW = 5.6, gap = 0.3;
+      if (fs.existsSync(abs)) slide.addImage({ path: abs, x: 0.6, y: bodyTop, w: imgW, h: bodyH, sizing: { type: 'contain', w: imgW, h: bodyH } });
+      else slide.addText('（图片未找到：' + src + '）', { x: 0.6, y: bodyTop, w: imgW, h: 0.5, color: 'C0392B', fontSize: 13 });
+      const runs = _bulletRuns(bullets, T);
+      if (runs.length) slide.addText(runs, { x: 0.6 + imgW + gap, y: bodyTop, w: 12.13 - imgW - gap, h: bodyH, valign: 'top', fontFace: PPT_FONT });
+    } else if (src) {
       const abs = path.isAbsolute(src) ? src : path.resolve(src);
       if (fs.existsSync(abs)) slide.addImage({ path: abs, x: 0.6, y: bodyTop, w: 12.13, h: bodyH, sizing: { type: 'contain', w: 12.13, h: bodyH } });
       else slide.addText('（图片未找到：' + src + '）', { x: 0.6, y: bodyTop, w: 12.13, h: 0.5, color: 'C0392B', fontSize: 13 });
@@ -3142,6 +3257,33 @@ function _addPptxSlide(pptx, s, T, idx, total, p) {
 
   if (s.notes) slide.addNotes(String(s.notes));
   _addFooter(slide, pptx, T, idx, total, p.title);
+}
+
+// 中文字体后处理：pptxgenjs 的 theme 只写 latin 字体、<a:ea>（东亚字体）留空，
+// 导致中文落到 PowerPoint 默认东亚字体（宋体/等线）。用 JSZip 打开生成后的 pptx，
+// 把 theme1.xml 的 latin/ea/cs 统一改成中文字体，中文 PPT 观感立刻从「土」变「现代」。
+async function applyCjkFont(file, font) {
+  try {
+    const JSZip = require('jszip');
+    const data = fs.readFileSync(file);
+    const zip = await JSZip.loadAsync(data);
+    const themes = Object.keys(zip.files).filter(function (f) { return /^ppt\/theme\/theme\d+\.xml$/.test(f); });
+    let changed = false;
+    for (const tf of themes) {
+      let xml = await zip.file(tf).async('string');
+      const before = xml;
+      xml = xml.replace(/<a:latin typeface="[^"]*"/g, '<a:latin typeface="' + font + '"');
+      xml = xml.replace(/<a:ea typeface="[^"]*"/g, '<a:ea typeface="' + font + '"');
+      xml = xml.replace(/<a:cs typeface="[^"]*"/g, '<a:cs typeface="' + font + '"');
+      if (xml !== before) { zip.file(tf, xml); changed = true; }
+    }
+    if (changed) {
+      const out = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      fs.writeFileSync(file, out);
+    }
+  } catch (e) {
+    console.warn('[ppt] 中文字体后处理失败（不影响生成，中文可能落默认字体）：', e && e.message);
+  }
 }
 
 function renderPptx(p, file) {
@@ -3168,7 +3310,9 @@ function renderPptx(p, file) {
           sl.addText('（本页渲染失败：' + String(e && e.message || e) + '）', { x: 0.5, y: 0.5, w: 12, h: 1, color: 'C0392B', fontSize: 13 });
         }
       });
-      pptx.writeFile({ fileName: file }).then(function () { resolve({ ok: true }); }).catch(reject);
+      pptx.writeFile({ fileName: file }).then(function () {
+        return applyCjkFont(file, String(p.font || PPT_FONT)).then(function () { resolve({ ok: true }); });
+      }).catch(reject);
     } catch (err) { reject(err); }
   });
 }
