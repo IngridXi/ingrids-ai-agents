@@ -163,6 +163,8 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // 文档生成（内建：Word / PPT / Excel，本地生成不依赖宿主 skill）
   docGenerate: (payload) => ipcRenderer.invoke('doc:generate', payload),
+  openPath: (p) => ipcRenderer.invoke('fs:open', p),
+  revealPath: (p) => ipcRenderer.invoke('fs:reveal', p),
 
   // 网页抓取 + 联网搜索（Firecrawl / Perplexity 的免费替代）
   webFetch: (payload) => ipcRenderer.invoke('web:fetch', payload),

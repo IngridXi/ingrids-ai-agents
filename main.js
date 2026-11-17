@@ -3350,6 +3350,20 @@ ipcMain.handle('doc:generate', async (_e, payload) => {
   }
 });
 
+/* ---------------- IPC：打开 / 在文件夹中显示 本地文件 ---------------- */
+ipcMain.handle('fs:open', async (_e, p) => {
+  const f = String((p && p.path) || p || '').trim();
+  if (!f) return { ok: false, error: '路径为空' };
+  try { const err = await shell.openPath(f); return { ok: !err, error: err ? String(err) : null }; }
+  catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('fs:reveal', async (_e, p) => {
+  const f = String((p && p.path) || p || '').trim();
+  if (!f) return { ok: false, error: '路径为空' };
+  try { shell.showItemInFolder(f); return { ok: true }; }
+  catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+
 /* ---------------- IPC：网页抓取（Firecrawl 的免费替代） ---------------- */
 ipcMain.handle('web:fetch', async (_e, payload) => {
   const url = String((payload || {}).url || '').trim();
