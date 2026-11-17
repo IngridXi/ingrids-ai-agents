@@ -383,6 +383,14 @@
   }
   .review-block summary { cursor: pointer; font-weight: 600; color: #854f0b; user-select: none; margin-bottom: 4px; }
   .loop-status { font-size: 12px; color: var(--ink-faint); text-align: center; margin: 2px 0 14px; }
+  /* PPT 制作指令输出块 */
+  .brief-head { font-size: 13px; font-weight: 600; color: var(--ink); margin: 2px 0 6px; }
+  .brief-box {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; font-size: 12.5px; line-height: 1.7; color: var(--ink);
+    white-space: pre-wrap; word-break: break-word; max-height: 460px; overflow-y: auto; margin: 0;
+  }
+  .brief-actions { margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -425,6 +433,7 @@
     <button class="clear-btn" id="grillBtn" title="追问挑战：不直接给答案，连环追问逼你理清假设、变量与边界">追问挑战</button>
     <span class="tb-sep"></span>
     <button class="clear-btn" id="slidesBtn" title="把当前研究/主题生成一份结构完整的学术演示文稿（.pptx 文件）">🎓 学术 PPT</button>
+    <button class="clear-btn" id="briefBtn" title="生成一份可直接粘贴到 Gamma / NotebookLM / Notion 的 PPT 制作指令（自然语言，复制粘贴即可）">🧭 PPT 指令</button>
     <button class="clear-btn" id="mdBtn" title="把当前对话导出为 Markdown 文件">导出 MD</button>
     <span class="tb-sep"></span>
     <button class="clear-btn" id="batchAuthBtn" title="批量授权：开启后本会话所有写操作（写文件/打标签/归档）不再逐个弹窗确认，直接执行；关窗自动恢复">🔓 批量授权</button>
@@ -457,6 +466,23 @@
   <div class="kb-row">生成一份 8~14 页的学术演示文稿（组会汇报 / 学术会议 / 论文答辩），直接产出 .pptx 文件。</div>
   <div class="kb-actions">
     <button class="kb-btn" id="slidesGoBtn">生成演示文稿</button>
+  </div>
+</div>
+
+<div class="kb-panel" id="briefPanel" hidden>
+  <div class="kb-title">🧭 PPT 制作指令 · 一键生成</div>
+  <input class="kb-input" id="briefTopic" type="text" placeholder="主题 / 研究题目（留空则基于当前对话提炼）">
+  <div class="kb-row">
+    <label style="margin-bottom:5px">目标工具</label>
+    <select class="kb-input" id="briefTool" style="margin-bottom:0">
+      <option value="gamma">Gamma（杂志级+自动配图，推荐）</option>
+      <option value="notebooklm">NotebookLM（免费+可溯源，需上传文献）</option>
+      <option value="notion">Notion AI（仅出文案大纲，配图另做）</option>
+    </select>
+  </div>
+  <div class="kb-row">生成一份可直接粘贴到所选工具的自然语言「制作指令」：内容大纲 + 页数结构 + 每页密度 + 图表配图 + 风格 + 排除项 + 使用步骤。</div>
+  <div class="kb-actions">
+    <button class="kb-btn" id="briefGoBtn">生成制作指令</button>
   </div>
 </div>
 
@@ -2915,6 +2941,89 @@
       lines.push('');
     });
     return lines.join('\n');
+  }
+
+  // 🧭 PPT 制作指令：生成一份可直接粘贴到 Gamma / NotebookLM / Notion 的自然语言指令
+  el('briefBtn').addEventListener('click', function () {
+    var p = el('briefPanel');
+    p.hidden = !p.hidden;
+    if (!p.hidden) { el('kbPanel').hidden = true; el('slidesPanel').hidden = true; el('briefTopic').focus(); }
+  });
+  el('briefGoBtn').addEventListener('click', generatePptBrief);
+  function generatePptBrief() {
+    var cur = currentSession();
+    var sid = cur ? cur.id : '';
+    var topic = el('briefTopic').value.trim();
+    var tool = el('briefTool').value || 'gamma';
+    var toolName = { gamma: 'Gamma', notebooklm: 'NotebookLM', notion: 'Notion AI' }[tool] || 'Gamma';
+    var srcText = topic;
+    if (!srcText) {
+      var s = currentSession();
+      var msgs = (s && s.messages) ? s.messages.filter(function (m) { return m.content && String(m.content).trim(); }) : [];
+      if (!msgs.length) { alert('请先输入一个主题，或先进行一段对话'); return; }
+      srcText = '以下是我的研究内容/对话，请据此生成 PPT 制作指令：\n\n' + msgs.slice(-8).map(function (m) {
+        return (m.role === 'user' ? '【我】' : '【助手】') + '\n' + stripToolMarkers(m.content || '').slice(0, 2000);
+      }).join('\n\n');
+    }
+    el('briefPanel').hidden = true;
+    el('briefTopic').value = '';
+
+    addBubble('user', '🧭 生成 PPT 制作指令（目标：' + toolName + '）' + (topic ? '：' + esc(topic) : '（基于当前对话）'));
+    var bubble = addBubble('assistant', '<div class="status-line">正在撰写制作指令…<span class="dots"><i></i><i></i><i></i></span></div>');
+    autoScroll(true);
+    runningJobs[sid] = true;
+    refreshStreaming();
+
+    var toolRules = {
+      gamma: '目标是 Gamma（gamma.app）。指令要引导它用 Plan 模式生成：明确页数、每页一个论点、图表类型、图标与配图、配色风格。',
+      notebooklm: '目标是 Google NotebookLM。指令要强调「先上传文献作为来源、基于来源生成、每条结论可溯源、不编造文献里没有的数据」，并指定 Slide Deck 的 Detailed（详尽）/ Presenter（演讲要点）类型。',
+      notion: '目标是 Notion AI。它只能出大纲和逐页文案、不能排版配图，指令要让它产出「逐页标题 + 要点文案」，供后续套版式。'
+    }[tool];
+
+    var sys = '你是「PPT 制作指令」专家。用户给一段研究内容（主题或对话），你要输出一份【可直接复制粘贴到 AI 幻灯片工具里的自然语言制作指令】，让工具据此生成严谨、完整、图文并茂的演示文稿。\n'
+      + toolRules + '\n'
+      + '输出必须是纯自然语言（中文），不要 JSON、不要 markdown 代码围栏，分段清晰，用「① ② ③…」或小标题组织。指令必须包含以下 7 个部分：\n'
+      + '① 一句话目标：给谁看（受众）、看完要让对方理解/做什么。\n'
+      + '② 页数与结构：总页数 + 各部分页数分配（学术结构默认：标题页 1 + 研究背景 + 研究问题 + 方法数据 + 关键结果（约 40%）+ 讨论 + 结论 + 展望/致谢）。\n'
+      + '③ 逐页内容大纲：每页一行——页标题必须是「论断句」（说出结论，不是主题标签，如「XX 方法把误差降低 23%」而非「方法」）+ 该页 2~3 个要点（每个要点含一个具体数据/事实/来源）。\n'
+      + '④ 每页密度：每页只讲 1 个核心观点；标题是结论句；要点 ≤3 条、每条 ≤25 字；细节放演讲者备注。\n'
+      + '⑤ 图表与配图：明确哪几页需要图表（bar/line/pie/流程图/时间线）及用什么数据；哪几页需要配图或图标；禁止通用装饰性配图，图表必须标注数据来源。\n'
+      + '⑥ 风格与视觉：配色/字体/风格倾向（默认：简洁学术风、深蓝主色、白底、大量留白、图标化、关键数字放大）。\n'
+      + '⑦ 排除项：禁止 filler 页、空话套话、编造数据、没有数据支撑的论断、没有具体数据点的页。\n'
+      + '最后加一行「收尾要求」：末页给一句明确的结论/下一步。\n'
+      + '严格基于用户给的内容撰写大纲，不要凭空编造研究数据；内容不足处用「〔待补：…〕」标注提醒用户补充。';
+
+    var reqMessages = [{ role: 'system', content: sys }].concat([{ role: 'user', content: srcText }]);
+    var acc = '';
+    window.ingrid.chatStream({ engine: engineSelect.value || 'ollama', model: currentModelId(), messages: reqMessages, sessionId: sid }, {
+      onDelta: function (chunk) { if (chunk && chunk.text) acc += chunk.text; },
+      onDone: function (d) {
+        delete runningJobs[sid];
+        refreshStreaming();
+        if (!d || !d.ok) { bubble.innerHTML = '生成失败：' + esc((d && d.error) || '未知错误'); return; }
+        var brief = (acc || '').trim();
+        if (!brief) { bubble.innerHTML = '模型没有返回内容，请重试或换一个模型。'; return; }
+        bubble.innerHTML = ''
+          + '<div class="brief-head">🧭 制作指令已生成 · 复制粘贴到 ' + esc(toolName) + ' 即可</div>'
+          + '<pre class="brief-box">' + esc(brief + '\n\n' + usageFor(tool)) + '</pre>'
+          + '<div class="brief-actions"><button class="kb-btn brief-copy">📋 复制指令</button></div>';
+        var pre = bubble.querySelector('.brief-box');
+        var btn = bubble.querySelector('.brief-copy');
+        btn.addEventListener('click', function () {
+          var text = pre.textContent;
+          var done = function () { flashCopy(btn); };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, function () { fallbackCopyText(text); done(); });
+          } else { fallbackCopyText(text); done(); }
+        });
+        autoScroll(true);
+      }
+    });
+  }
+  function usageFor(tool) {
+    if (tool === 'notebooklm') return '\n\n────────────────\n【使用方法 · NotebookLM（免费，需 Google 账号）】\n1. 打开 notebooklm.google.com，新建一个笔记本。\n2. 先把你的资料传进去当「来源」（PDF / 网页 / Google 文档 / 粘贴文本，建议 3~15 份核心文献，一个主题一个笔记本）。\n3. 点 Studio → Slide Deck，选「Detailed Deck（详尽）」或「Presenter Slides（演讲要点）」。\n4. 把上面指令粘贴进去；生成后逐页点下划线文字核对出处。\n5. 导出 PPTX / PDF；每条结论都带引用、可溯源。\n提示：NotebookLM 强在「基于你传的文献、可溯源、不编造」，弱在视觉不如 Gamma 精致。';
+    if (tool === 'notion') return '\n\n────────────────\n【使用方法 · Notion AI（$10/月附加，仅出文案不排版）】\n1. Notion AI 只能生成大纲和逐页文案，不能自动排版/配图。\n2. 把上面指令粘进 Notion AI，让它产出「逐页标题 + 要点文案」。\n3. 再把这套文案粘到 Gamma 里套版式配图（或自己排进 PPT）。\n建议：做 PPT 首选 Gamma（视觉）或 NotebookLM（可溯源），Notion 只适合先整理文案。';
+    return '\n\n────────────────\n【使用方法 · Gamma（gamma.app）】\n1. 打开 gamma.app 登录；免费版即可（400 初始额度、每次最多 10 张卡片、带水印；Plus $9/月去水印 + 每次最多 100 页）。\n2. 在提示栏选「Plan」模式，把上面整段指令粘贴进去。\n3. Agent 会问几个问题（目标/受众/重点），可点「替我决定」跳过。\n4. 生成后：逐页核对数据与来源 → 需要精确图表时用「+ 上传」贴自己的图 → 页面设置选 16:9 → 导出 PPTX。\n提示：想更「海报级」全图风格，可在提示栏的图片下拉里选「Image slides（图片幻灯片）」。';
   }
 
   // 知识库交互
