@@ -271,6 +271,16 @@ class KbEngine {
     for (const p of paras) {
       const t = p.trim();
       if (!t) continue;
+      // 兜底：单个段落（如无空行分隔的超长列表/目录）本身超过 chunkSize 时，硬性按 chunkSize 切分，
+      // 避免产出超过 embedding 模型上下文（如 bge-m3 8192 token）的超长 chunk 触发 413。
+      if (t.length > this.chunkSize) {
+        if (buf) { chunks.push({ title, content: buf }); buf = ''; }
+        for (let i = 0; i < t.length; i += this.chunkSize) {
+          const seg = t.slice(i, i + this.chunkSize).trim();
+          if (seg) chunks.push({ title, content: seg });
+        }
+        continue;
+      }
       if (buf && (buf.length + t.length + 2) > this.chunkSize) {
         chunks.push({ title, content: buf });
         const tail = buf.slice(-this.chunkOverlap);
