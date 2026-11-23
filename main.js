@@ -4059,12 +4059,14 @@ function readAppleMail() {
   return new Promise((resolve) => {
     if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取 Apple Mail' }); return; }
     const script = 'function run(){\n' +
-      '  var Mail = Application("Mail");\n' +
-      '  var res = { account: "", found: [], total: 0, inWindow: 0, mails: [] };\n' +
+      '  var res = { account: "", found: [], total: 0, inWindow: 0, mails: [], noAccounts: false };\n' +
+      '  var Mail;\n' +
+      '  try { Mail = Application("Mail"); } catch (e) { res.fatal = "启动「邮件」App 失败：" + String(e); return JSON.stringify(res); }\n' +
       '  var msgs = null;\n' +
       '  try {\n' +
       '    var accounts = Mail.accounts();\n' +
       '    var ac = accounts.length;\n' +
+      '    if (ac === 0) res.noAccounts = true;\n' +
       '    for (var a = 0; a < ac; a++) {\n' +
       '      var addrs = [];\n' +
       '      try {\n' +
@@ -4118,6 +4120,8 @@ function readAppleMail() {
         const msg = String(stderr || '').trim() || String((err && err.message) || err);
         if (/privilege violation|-10004|-1743|not authorized|not permitted/i.test(msg)) {
           resolve({ ok: false, error: '未获授权控制「邮件」App。请到 系统设置 → 隐私与安全性 → 自动化，找到本应用并把「邮件」勾选允许（若已勾选仍报错，先在列表里删除本应用，再回来点一次按钮重新授权）。' });
+        } else if (/-1728|can.t get object/i.test(msg)) {
+          resolve({ ok: false, error: '「邮件」App 里还没有任何邮箱账号（读不到收件箱）。剑桥邮箱其实登录在 Outlook 里——它和「邮件」是两个不同的 App。请打开「邮件」App，在 设置→账户 里点「+」添加 Microsoft Exchange 账号 yx447@cam.ac.uk。' });
         } else {
           resolve({ ok: false, error: '读取 Apple Mail 失败：' + msg + '（请确认已在 系统设置 → 互联网账户 里添加剑桥邮箱，并打开一次「邮件」App）' });
         }
@@ -4125,6 +4129,11 @@ function readAppleMail() {
       }
       try {
         const obj = JSON.parse(String(stdout || '').trim());
+        if (obj && obj.fatal) { resolve({ ok: false, error: String(obj.fatal) }); return; }
+        if (obj && obj.noAccounts) {
+          resolve({ ok: false, error: '「邮件」App 里还没有任何邮箱账号。剑桥邮箱其实登录在 Outlook 里——它和「邮件」是两个不同的 App。请打开「邮件」App，在 设置→账户 里点「+」添加 Microsoft Exchange 账号 yx447@cam.ac.uk。' });
+          return;
+        }
         const arr = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.mails) ? obj.mails : null);
         if (!arr) { resolve({ ok: false, error: '解析 Apple Mail 数据失败' }); return; }
         const mails = arr
