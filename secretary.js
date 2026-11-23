@@ -159,7 +159,9 @@
         '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div>' +
         '<div class="sec-row"><button class="sec-btn" id="secReadOutlook" style="flex:1">' + iconSvg('mail') + ' 读取本周 Outlook 邮件 · 识别活动</button></div>' +
         '<div class="sec-bout" id="secMailOut" hidden></div>' +
-        '<div class="sec-bout" id="secOutlookOut" hidden></div></div>' +
+        '<div class="sec-bout" id="secOutlookOut" hidden></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secReadAppleMail" style="flex:1">' + iconSvg('mail') + ' 读取 Apple Mail 邮件 · 识别活动</button></div>' +
+        '<div class="sec-bout" id="secAppleMailOut" hidden></div></div>' +
       '<div class="sec-sec"><label>短信 · 确认信息</label>' +
         '<div class="sec-row"><button class="sec-btn" id="secReadSms" style="flex:1">' + iconSvg('message') + ' 读取短信 · 识别活动</button></div>' +
         '<div class="sec-bout" id="secSmsOut" hidden></div>' +
@@ -484,22 +486,21 @@
     });
   }
 
-  /* 读取本机 Outlook 邮件（AppleScript，绕开 OAuth），扫描确认信息 → 提取日程 → 确认 */
-  document.getElementById('secReadOutlook').addEventListener('click', readOutlookAndScan);
-  function readOutlookAndScan() {
-    var out = document.getElementById('secOutlookOut');
-    if (!DESKTOP || !window.ingrid || !window.ingrid.outlookMailRead) {
-      out.hidden = false; out.textContent = '读取本机 Outlook 仅支持桌面版（macOS）。';
+  /* 读取本机邮件（Outlook / Apple Mail，AppleScript，绕开 OAuth），扫描确认信息 → 提取日程 → 确认 */
+  function readMailAndScan(cfg) {
+    var out = document.getElementById(cfg.outId);
+    if (!DESKTOP || !window.ingrid || !window.ingrid[cfg.apiKey]) {
+      out.hidden = false; out.textContent = cfg.label + ' 读取仅支持桌面版（macOS）。';
       return;
     }
-    var btn = document.getElementById('secReadOutlook');
+    var btn = document.getElementById(cfg.btnId);
     btn.disabled = true; btn.textContent = '读取中…';
-    out.hidden = false; out.textContent = '正在读取本机 Outlook 最近一周的邮件…';
-    window.ingrid.outlookMailRead().then(function (r) {
-      btn.disabled = false; btn.textContent = '读取本周 Outlook 邮件 · 识别活动';
+    out.hidden = false; out.textContent = '正在读取 ' + cfg.label + ' 最近一周的邮件…';
+    window.ingrid[cfg.apiKey]().then(function (r) {
+      btn.disabled = false; btn.textContent = cfg.btnText;
       if (!r || !r.ok) {
         out.innerHTML = '⚠️ ' + esc((r && r.error) || '读取失败') +
-          '<br><span style="font-size:10px;color:var(--ink-faint)">首次使用需在 macOS 弹窗里点「允许」控制 Microsoft Outlook；若之前拒绝过，到 系统设置 → 隐私与安全性 → 自动化 里勾选本应用。</span>';
+          '<br><span style="font-size:10px;color:var(--ink-faint)">' + (cfg.authHint || '') + '</span>';
         return;
       }
       var mails = r.mails || [];
@@ -508,15 +509,15 @@
         var acc = r.account || '';
         if (total === 0) {
           out.textContent = acc
-            ? '剑桥账号 ' + acc + ' 的收件箱为空（可能邮件未同步到本机 Outlook，或该账号收件箱无邮件）。'
-            : '读不到剑桥邮件。请先在 Outlook 里点选剑桥收件箱（Inbox），再点一次本按钮重试。';
+            ? '剑桥账号 ' + acc + ' 的收件箱为空（可能邮件未同步，或该账号收件箱无邮件）。'
+            : cfg.emptyMsg;
           if (r.diag) out.innerHTML += '<br><span style="font-size:10px;color:var(--ink-faint)">诊断：' + esc(r.diag) + '</span>';
         } else { out.textContent = '收件箱共 ' + total + ' 封，但最近一周没有新邮件。'; }
-        addChat('a', '读完 Outlook 邮件，未发现活动确认信息。');
+        addChat('a', '读完 ' + cfg.label + ' 邮件，未发现活动确认信息。');
         return;
       }
       var candidates = mails.filter(isConfirmationEmail);
-      if (!candidates.length) { out.textContent = '读完最近一周 ' + mails.length + ' 封邮件，未发现活动确认信息。'; addChat('a', '读完 Outlook 邮件，未发现活动确认信息。'); return; }
+      if (!candidates.length) { out.textContent = '读完最近一周 ' + mails.length + ' 封邮件，未发现活动确认信息。'; addChat('a', '读完 ' + cfg.label + ' 邮件，未发现活动确认信息。'); return; }
       out.textContent = '最近一周共 ' + mails.length + ' 封邮件，筛选出 ' + candidates.length + ' 封确认类，正在识别…';
       // 逐封识别确认类邮件：每条日程附上原始邮件（发件人+主题+正文）作为核对参考
       var tasks = candidates.slice(0, 12).map(function (m) {
@@ -528,16 +529,33 @@
       });
       Promise.all(tasks).then(function (lists) {
         var merged = mergeEventLists(lists);
-        if (!merged.length) { out.textContent = '读完 Outlook 邮件，未发现明确日程。'; addChat('a', '读完 Outlook 邮件，未发现明确日程。'); return; }
+        if (!merged.length) { out.textContent = '读完 ' + cfg.label + ' 邮件，未发现明确日程。'; addChat('a', '读完 ' + cfg.label + ' 邮件，未发现明确日程。'); return; }
         out.textContent = '';
-        notifyConfirm(merged, 'Outlook 邮件');
-        openConfirmEvents(merged, 'Outlook 邮件', '');
+        notifyConfirm(merged, cfg.label + ' 邮件');
+        openConfirmEvents(merged, cfg.label + ' 邮件', '');
       });
     }).catch(function (e) {
-      btn.disabled = false; btn.textContent = '读取本周 Outlook 邮件 · 识别活动';
+      btn.disabled = false; btn.textContent = cfg.btnText;
       out.textContent = '读取失败：' + (e && e.message || e);
     });
   }
+
+  document.getElementById('secReadOutlook').addEventListener('click', function () {
+    readMailAndScan({
+      apiKey: 'outlookMailRead', btnId: 'secReadOutlook', outId: 'secOutlookOut',
+      label: 'Outlook', btnText: '读取本周 Outlook 邮件 · 识别活动',
+      emptyMsg: '读不到剑桥邮件。请先在 Outlook 里点选剑桥收件箱（Inbox），再点一次本按钮重试。',
+      authHint: '首次使用需在 macOS 弹窗里点「允许」控制 Microsoft Outlook；若之前拒绝过，到 系统设置 → 隐私与安全性 → 自动化 里勾选本应用。',
+    });
+  });
+  document.getElementById('secReadAppleMail').addEventListener('click', function () {
+    readMailAndScan({
+      apiKey: 'appleMailRead', btnId: 'secReadAppleMail', outId: 'secAppleMailOut',
+      label: 'Apple Mail', btnText: '读取 Apple Mail 邮件 · 识别活动',
+      emptyMsg: '读不到剑桥邮件。请确认已在 系统设置 → 互联网账户 里添加剑桥邮箱，并让邮件 App 完成同步后再试。',
+      authHint: '首次使用需在 macOS 弹窗里点「允许」控制邮件 App；若之前拒绝过，到 系统设置 → 隐私与安全性 → 自动化 里勾选本应用。',
+    });
+  });
 
   /* 追加一组图片（去重）并重新打开弹窗触发识别 */
   function appendShotsAndRerun(urls) {

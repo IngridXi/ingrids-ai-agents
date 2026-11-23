@@ -4053,6 +4053,102 @@ function readOutlookMail() {
 }
 ipcMain.handle('mail:read-outlook', () => readOutlookMail());
 
+// 读取 Apple Mail（邮件 App）里的剑桥邮箱。新版 Outlook 的 AppleScript 读不到云端账号，
+// 但 Apple Mail 的脚本接口完整好用，作为可靠的替代通道。
+function readAppleMail() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取 Apple Mail' }); return; }
+    const script = 'function run(){\n' +
+      '  var Mail = Application("Mail");\n' +
+      '  var res = { account: "", found: [], total: 0, inWindow: 0, mails: [] };\n' +
+      '  var msgs = null;\n' +
+      '  try {\n' +
+      '    var accounts = Mail.accounts();\n' +
+      '    var ac = accounts.length;\n' +
+      '    for (var a = 0; a < ac; a++) {\n' +
+      '      var addrs = [];\n' +
+      '      try {\n' +
+      '        var eas = accounts[a].emailAddresses();\n' +
+      '        for (var e = 0; e < eas.length; e++) {\n' +
+      '          try { addrs.push(String(eas[e].address() || "")); } catch (e2) { try { addrs.push(String(eas[e] || "")); } catch (e3) {} }\n' +
+      '        }\n' +
+      '      } catch (e) {}\n' +
+      '      var nm = ""; try { nm = String(accounts[a].name() || ""); } catch (e) {}\n' +
+      '      res.found.push(nm + " [" + addrs.join(",") + "]");\n' +
+      '      if (!msgs && addrs.join(",").toLowerCase().indexOf("cam.ac.uk") >= 0) {\n' +
+      '        res.account = addrs.join(",");\n' +
+      '        try { msgs = accounts[a].inbox.messages; } catch (e) {}\n' +
+      '      }\n' +
+      '    }\n' +
+      '  } catch (e) { res.accountsErr = String(e); }\n' +
+      '  if (!msgs) { try { msgs = Mail.inbox.messages; } catch (e) {} }\n' +
+      '  if (!msgs) { return JSON.stringify(res); }\n' +
+      '  var n = msgs.length;\n' +
+      '  var now = Date.now();\n' +
+      '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
+      '  var kept = [];\n' +
+      '  for (var i = 0; i < n; i++) {\n' +
+      '    var tm = null;\n' +
+      '    try {\n' +
+      '      var d = msgs[i].dateReceived();\n' +
+      '      if (d) { var p = d.getTime ? d.getTime() : new Date(d).getTime(); if (!isNaN(p)) tm = p; }\n' +
+      '    } catch (e) {}\n' +
+      '    if (tm === null || tm >= weekAgo) kept.push(i);\n' +
+      '  }\n' +
+      '  if (kept.length === 0 && n > 0) { for (var j = 0; j < Math.min(n, 30); j++) kept.push(j); }\n' +
+      '  var out = [];\n' +
+      '  for (var k = 0; k < kept.length; k++) {\n' +
+      '    var m = msgs[kept[k]];\n' +
+      '    var subject = "", sender = "", body = "", time = "";\n' +
+      '    try { subject = String(m.subject() || ""); } catch (e) {}\n' +
+      '    try { var s = m.sender(); if (typeof s === "string") { sender = s; } else if (s) { try { sender = String(s.address() || ""); } catch (e2) {} } } catch (e) {}\n' +
+      '    try { var d2 = m.dateReceived(); if (d2) { time = String(d2); } } catch (e) {}\n' +
+      '    try { body = String(m.content() || ""); } catch (e) { body = ""; }\n' +
+      '    if (!body) { try { body = String(m.source() || ""); } catch (e) {} }\n' +
+      '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
+      '  }\n' +
+      '  res.total = n;\n' +
+      '  res.inWindow = kept.length;\n' +
+      '  res.mails = out;\n' +
+      '  return JSON.stringify(res);\n' +
+      '}';
+    execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        const msg = String((err && err.message) || err) + ' ' + String(stderr || '');
+        if (/privilege violation|-10004/i.test(msg)) {
+          resolve({ ok: false, error: '未获授权读取邮件 App。请到 系统设置 → 隐私与安全性 → 自动化，允许本应用控制「邮件」，然后重试。' });
+        } else {
+          resolve({ ok: false, error: '读取 Apple Mail 失败：' + msg + '（请确认已在 系统设置 → 互联网账户 里添加剑桥邮箱）' });
+        }
+        return;
+      }
+      try {
+        const obj = JSON.parse(String(stdout || '').trim());
+        const arr = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.mails) ? obj.mails : null);
+        if (!arr) { resolve({ ok: false, error: '解析 Apple Mail 数据失败' }); return; }
+        const mails = arr
+          .map((m) => ({
+            subject: String((m && m.subject) || '').trim(),
+            from: String((m && m.sender) || '').trim(),
+            body: String((m && m.body) || '').trim(),
+            at: (m && m.time) || '',
+          }))
+          .filter((m) => m.subject || m.body);
+        resolve({
+          ok: true, mails: mails, count: mails.length,
+          total: (obj && obj.total) || 0,
+          inWindow: (obj && obj.inWindow) || 0,
+          account: (obj && obj.account) || '',
+          diag: buildOutlookDiag(obj),
+        });
+      } catch (e) {
+        resolve({ ok: false, error: '解析 Apple Mail 数据失败：' + String((e && e.message) || e) });
+      }
+    });
+  });
+}
+ipcMain.handle('mail:read-applemail', () => readAppleMail());
+
 /* ---------------- 知识库引擎（本地 RAG） ---------------- */
 const kbEngine = new KbEngine({
   dataDir: path.join(dataDir(), 'kb'),
