@@ -146,6 +146,8 @@
     window.ingrid.syncAccountsList().then(function (a) { accounts = a || []; renderFoot(); }).catch(function () {});
   }
   function loadAll() { loadEvents(); loadAccounts(); }
+  // 供秘书面板在写入日程后立即刷新日历，避免「加了日程日历里不显示」
+  window.__refreshCalendar = function () { loadEvents(); };
 
   /* ---------- 渲染 ---------- */
   function render() { renderNav(); renderGrid(); renderDay(); renderFoot(); }

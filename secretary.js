@@ -36,10 +36,21 @@
   var events = new SC.EventStore((secStorage() ? { load: function () { return RAW.events || []; }, save: function (d) { RAW.events = d; persist(); } } : null));
   var emails = new SC.EmailStore((secStorage() ? { load: function () { return RAW.emails || []; }, save: function (d) { RAW.emails = d; persist(); } } : null));
   var thoughts = new SC.ThoughtStore((secStorage() ? { load: function () { return RAW.thoughts || []; }, save: function (d) { RAW.thoughts = d; persist(); } } : null));
-  function persist() { if (secStorage()) secStorage().save({ events: events.events, emails: emails.emails, thoughts: thoughts.thoughts }); }
+  function persist() {
+    if (secStorage()) {
+      var p = secStorage().save({ events: events.events, emails: emails.emails, thoughts: thoughts.thoughts });
+      // saveSecretary 是异步写盘：等写完成后再刷新日历，避免读到旧盘数据
+      if (p && typeof p.then === 'function') { p.then(refreshCal).catch(refreshCal); }
+      else { refreshCal(); }
+    }
+  }
+  function refreshCal() {
+    if (typeof window.__refreshCalendar === 'function') { try { window.__refreshCalendar(); } catch (e) {} }
+  }
 
   var minimized = false;
-  var shotDataUrl = '';   // 邮件截图预览
+  var shotDataUrls = [];   // 截图列表（支持多张辅助识别一条日程）
+  var shotEvents = [];     // 识别出的日程结果（待确认，可多条）
 
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
@@ -91,6 +102,27 @@
     '.sec-modal .foot .primary{background:var(--accent);border-color:var(--accent);color:#fff;}',
     '.sec-bout{margin-top:7px;max-height:150px;overflow:auto;font-size:11px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:8px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}',
     '.sec-bhint{font-size:10px;color:var(--ink-faint);margin-top:5px;line-height:1.5;}',
+    '.sec-modal .shot-thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;}',
+    '.sec-modal .shot-thumb{position:relative;width:70px;height:70px;border:1px solid var(--line);border-radius:9px;overflow:hidden;flex:none;background:#fff;}',
+    '.sec-modal .shot-thumb img{width:100%;height:100%;object-fit:cover;display:block;}',
+    '.sec-modal .shot-thumb .rm{position:absolute;top:2px;right:2px;width:18px;height:18px;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:11px;line-height:1;cursor:pointer;padding:0;}',
+    '.sec-modal .shot-add{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border:1px dashed var(--line);border-radius:9px;color:var(--ink-faint);font-size:12px;cursor:pointer;margin-bottom:10px;}',
+    '.sec-modal .shot-add:hover{border-color:var(--accent);color:var(--accent);}',
+    '.sec-modal .shot-state{font-size:12px;color:var(--ink-faint);min-height:18px;line-height:1.5;margin-bottom:6px;}',
+    '.sec-modal .shot-results{display:flex;flex-direction:column;gap:8px;margin-bottom:8px;}',
+    '.sec-modal .shot-ev{border:1px solid var(--line);border-radius:11px;padding:9px 10px;background:var(--surface-2);}',
+    '.sec-modal .shot-ev .g{display:flex;gap:6px;margin-bottom:6px;}',
+    '.sec-modal .shot-ev .g input{flex:1;min-width:0;}',
+    '.sec-modal .shot-ev .g .lbl{flex:none;font-size:10.5px;color:var(--ink-faint);align-self:center;width:22px;}',
+    '.sec-modal .shot-ev .acts{display:flex;gap:6px;justify-content:flex-end;}',
+    '.sec-modal .shot-ev .acts button{padding:6px 13px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:12px;cursor:pointer;}',
+    '.sec-modal .shot-ev .acts .add{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650;}',
+    '.sec-modal .shot-ev .acts .add.on{opacity:.5;cursor:default;}',
+    '.sec-modal .shot-ev.added{border-color:#1d9e75;background:#eefaf3;}',
+    '.sec-modal .shot-bar{display:flex;gap:6px;margin-bottom:10px;}',
+    '.sec-modal .shot-bar button{flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:12px;cursor:pointer;}',
+    '.sec-modal .shot-bar .primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650;}',
+    '.sec-modal .divider{border:none;border-top:1px dashed var(--line);margin:12px 0;}',
   ].join('\n');
   document.head.appendChild(style);
 
@@ -138,7 +170,7 @@
   document.body.appendChild(modalMask);
 
   var fileInput = document.createElement('input');
-  fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
+  fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.multiple = true; fileInput.style.display = 'none';
   document.body.appendChild(fileInput);
 
   /* 左侧导航入口：滚动定位到常驻面板 + 高亮 */
@@ -235,21 +267,34 @@
   /* 添加日程 */
   document.getElementById('secAddEvent').addEventListener('click', function () { openEventModal(null); });
 
-  /* 发截图 → 自动识别日程（支持选文件 + ⌘V 粘贴两种方式） */
+  /* 发截图 → 自动识别日程（支持多选文件 + ⌘V 粘贴追加，多图可辅助识别同一条日程） */
   document.getElementById('secFromShot').addEventListener('click', function () {
-    shotDataUrl = '';
+    shotDataUrls = [];
+    shotEvents = [];
     openEventModal(null, true);
   });
-  function setShotAndRerun(dataUrl) {
-    shotDataUrl = dataUrl;
-    openEventModal(null, true);   // 重新渲染弹窗并自动触发识别
+
+  /* 追加一组图片（去重）并重新打开弹窗触发识别 */
+  function appendShotsAndRerun(urls) {
+    (urls || []).forEach(function (u) { if (u && shotDataUrls.indexOf(u) < 0) shotDataUrls.push(u); });
+    shotEvents = [];
+    openEventModal(null, true);
   }
+
+  /* 选文件（支持多选） */
   fileInput.addEventListener('change', function () {
-    var f = fileInput.files && fileInput.files[0];
-    if (!f) return;
-    var reader = new FileReader();
-    reader.onload = function () { setShotAndRerun(reader.result); };
-    reader.readAsDataURL(f);
+    var files = fileInput.files;
+    if (!files || !files.length) return;
+    var list = Array.prototype.slice.call(files);
+    var pending = list.length, urls = [];
+    list.forEach(function (f) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        urls.push(reader.result);
+        if (--pending === 0) { appendShotsAndRerun(urls); fileInput.value = ''; }
+      };
+      reader.readAsDataURL(f);
+    });
   });
 
   /* 浏览器自动化（安全白名单：打开 / 截图 / 提取文本） */
@@ -278,48 +323,164 @@
   document.getElementById('secBrowseShot').addEventListener('click', function () { secBrowseRun('shot'); });
   document.getElementById('secBrowseText').addEventListener('click', function () { secBrowseRun('text'); });
 
-  /* 用视觉模型识别截图中的日程信息，返回 { title, at, location, link, note, raw } */
-  function recognizeShot(dataUrl, onProgress) {
+  /* 用视觉模型识别多张截图中的日程（可多条），返回 [{ title, at, location, link, note }]。
+   * 视觉模型只负责「提取原文 + 语义分组」，日期/年份换算交给本地 parseEventDateTime，保证不会推到过去。 */
+  function recognizeShot(dataUrls, onProgress) {
     return new Promise(function (resolve, reject) {
       if (!DESKTOP || !window.ingrid || !window.ingrid.chatStream) { reject(new Error('仅桌面应用支持识图')); return; }
-      var msgs = [{ role: 'user', content: [
-        { type: 'text', text: '你是日程识别助手。请识别这张截图（邮件、海报、通知、聊天记录、网页等）里的日程信息，并只输出一行 JSON，格式严格为：{"title":"活动标题","at":"YYYY-MM-DDTHH:MM","location":"地点","link":"链接","note":"备注"}。规则：1) 标题尽量简短；2) 日期时间若截图里没有明确年份，按最近未来的日期推断，并转成 24 小时制 YYYY-MM-DDTHH:MM；3) 若只有日期没时间，用 09:00；4) 没有的字段填空字符串；5) 只输出这一行 JSON，不要输出任何其他文字、解释或 markdown 代码块。' },
-        { type: 'image_url', image_url: { url: dataUrl } },
-      ]}];
+      var now = new Date();
+      var today = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日（星期' + '日一二三四五六'[now.getDay()] + '）';
+      var content = [{ type: 'text', text:
+        '今天是 ' + today + '。你是日程识别助手。请识别下面这些截图里的所有日程信息。' +
+        '这些截图可能是同一个活动/日程的多张截图（信息互补），也可能一张图里包含多个不同日程。' +
+        '\n\n只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown 代码块。数组每一项是一条日程，格式严格为：' +
+        '{"title":"标题","dateText":"日期原文","timeText":"时间原文","location":"地点","link":"链接","note":"备注"}。' +
+        '\n\n规则：' +
+        '\n1) 多张截图若描述同一条日程（如邮件正文+日历+海报是同一活动），合并为一条，字段取最完整的。' +
+        '\n2) 一张图里有多个不同日程时，分别输出多条。' +
+        '\n3) dateText 和 timeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」），绝对不要换算成日期、不要猜测年份。' +
+        '\n4) 没有明确日期的 dateText 留空，没有明确时间的 timeText 留空。' +
+        '\n5) 地点/链接/备注从截图提取，没有就留空字符串。' +
+        '\n6) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
+      (dataUrls || []).forEach(function (u) { content.push({ type: 'image_url', image_url: { url: u } }); });
+      var msgs = [{ role: 'user', content: content }];
       var out = '';
       window.ingrid.chatStream({ engine: 'ollama-vision', model: 'qwen2.5vl:7b', messages: msgs, sessionId: 'sec-shot' }, {
         onDelta: function (chunk) { if (chunk && chunk.text) { out += chunk.text; if (onProgress) onProgress(out); } },
         onDone: function (d) {
           if (!d || !d.ok) { reject(new Error((d && d.error) || '识别失败')); return; }
-          // 从模型输出里提取第一个 JSON 对象
-          var m = out.match(/\{[\s\S]*\}/);
+          var m = out.match(/\[[\s\S]*\]/);
           if (!m) { reject(new Error('未从截图识别出日程信息')); return; }
           try {
-            var j = JSON.parse(m[0]);
-            resolve({
-              title: String(j.title || '').trim(),
-              at: String(j.at || '').trim(),
-              location: String(j.location || '').trim(),
-              link: String(j.link || '').trim(),
-              note: String(j.note || '').trim(),
-              raw: out,
-            });
+            var arr = JSON.parse(m[0]);
+            if (!Array.isArray(arr) || !arr.length) { reject(new Error('未从截图识别出日程信息')); return; }
+            var list = arr.map(function (j) {
+              return {
+                title: String(j.title || '').trim(),
+                at: parseEventDateTime(j.dateText, j.timeText, now),
+                location: String(j.location || '').trim(),
+                link: String(j.link || '').trim(),
+                note: String(j.note || '').trim(),
+                dateText: String(j.dateText || '').trim(),
+                timeText: String(j.timeText || '').trim(),
+              };
+            }).filter(function (e) { return e.title || e.at; });
+            resolve(list);
           } catch (e) { reject(new Error('识别结果解析失败')); }
         },
       });
     });
   }
 
-  /* 事件弹窗（新增日程 / 截图→日历） */
+  /* 本地确定性解析「日期原文 + 时间原文」→ ISO 字符串。基准 now，推断「最近未来」，绝不落到过去。 */
+  function parseEventDateTime(dateText, timeText, now) {
+    var base = now || new Date();
+    var dt = String(dateText || '').replace(/\s+/g, ' ').trim();
+    var date = null;
+    var m;
+
+    if (!dt) {
+      date = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+    } else if (/今天|今日|tonight/i.test(dt)) {
+      date = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+    } else if (/明天|明日|tomorrow/i.test(dt)) {
+      date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1);
+    } else if (/后天/i.test(dt)) {
+      date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 2);
+    } else if (/大后天/i.test(dt)) {
+      date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 3);
+    } else if ((m = dt.match(/周([一二三四五六日天])/)) || (m = dt.match(/星期([一二三四五六日天])/)) || (m = dt.match(/(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)/i))) {
+      var DOW = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0 };
+      var key = m[1];
+      if (/mon|tue|wed|thu|fri|sat|sun/i.test(key)) key = key.toLowerCase().slice(0, 3);
+      var target = DOW[key];
+      var cur = base.getDay();
+      var diff = (target - cur + 7) % 7;
+      if (diff === 0) diff = 7;             // 本周当天已过 → 下同星期
+      date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diff);
+      if (/下|next/i.test(dt)) date = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7);
+    } else if ((m = dt.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?/i))) {
+      var MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      date = new Date(base.getFullYear(), MON.indexOf(m[1].toLowerCase().slice(0, 3)), Number(m[2]));
+    } else if ((m = dt.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*/i))) {
+      var MON2 = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      date = new Date(base.getFullYear(), MON2.indexOf(m[2].toLowerCase().slice(0, 3)), Number(m[1]));
+    } else if ((m = dt.match(/(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})/))) {
+      date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    } else if ((m = dt.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/))) {
+      date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    } else if ((m = dt.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/))) {
+      date = new Date(base.getFullYear(), Number(m[1]) - 1, Number(m[2]));
+    } else if ((m = dt.match(/(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/))) {
+      var a = Number(m[1]), b = Number(m[2]);
+      if (a > 12 && b <= 12) date = new Date(base.getFullYear(), b - 1, a);   // 英式 DD/MM
+      else date = new Date(base.getFullYear(), a - 1, b);                      // MM/DD
+    } else if ((m = dt.match(/(\d{1,2})\s*月/))) {
+      date = new Date(base.getFullYear(), Number(m[1]) - 1, 1);
+    }
+
+    // 推断日期若已过去：无年份的（月日/星期）顺延一年，保证「最近未来」
+    if (date && isFinite(date.getTime())) {
+      var today0 = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+      if (date < today0) {
+        if (!/\d{4}/.test(dt)) date = new Date(date.getFullYear() + 1, date.getMonth(), date.getDate());
+        if (date < today0) date = today0;
+      }
+    }
+
+    // ---- 时间 ----
+    var hour = 9, minute = 0, hasTime = false;
+    var tt = String(timeText || '').replace(/\s+/g, ' ').toLowerCase().trim();
+    var tm;
+    if (tt) {
+      if ((tm = tt.match(/(\d{1,2})[:：](\d{1,2})\s*(am|pm)?/))) {
+        hour = Number(tm[1]); minute = Number(tm[2]);
+        if (tm[3] === 'pm' && hour < 12) hour += 12;
+        if (tm[3] === 'am' && hour === 12) hour = 0;
+        hasTime = true;
+      } else if ((tm = tt.match(/(上午|下午|晚上|中午)?\s*(\d{1,2})\s*点\s*(半|(\d{1,2})\s*分)?/))) {
+        hour = Number(tm[2]);
+        if (tm[3] === '半') minute = 30; else if (tm[4]) minute = Number(tm[4]);
+        if (tm[1] === '下午' || tm[1] === '晚上') hour = (hour % 12) + 12;
+        else if (tm[1] === '上午') hour = hour % 12;
+        else if (tm[1] === '中午') hour = 12;
+        hasTime = true;
+      } else if ((tm = tt.match(/(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)/))) {
+        hour = Number(tm[1]); minute = tm[2] ? Number(tm[2]) : 0;
+        if (tm[3] === 'pm' && hour < 12) hour += 12;
+        if (tm[3] === 'am' && hour === 12) hour = 0;
+        hasTime = true;
+      }
+    }
+
+    if (!date) return '';
+    // 只给了时间没日期：若今天该时刻已过，顺延到明天
+    if (!dt && hasTime) {
+      var cand = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0, 0);
+      if (cand < base) date = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+    }
+    date.setHours(hour, minute, 0, 0);
+    return date.toISOString();
+  }
+
+  /* 事件弹窗（新增日程 / 发截图自动识别：多图辅助一条 + 一图多日程 + 逐条核对） */
   function openEventModal(prefill, isShot) {
     var hint = prefill || {};
     modalMask.style.display = 'flex';
-    modalMask.innerHTML =
+    var html =
       '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 发截图 · 自动识别日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
-      '<div class="sub">' + (isShot ? '秘书会用本地视觉模型识别截图内容，自动填好标题/时间/地点，你核对后保存即可（不联网、不花钱）。' : '保存后秘书会按提醒时间通知你。') + '</div>' +
-      (shotDataUrl ? '<img class="shot" src="' + shotDataUrl + '">' :
-        (isShot ? '<div class="shot-drop" id="evDrop">' + iconSvg('camera') + ' 点击选择截图，或直接 ⌘V / Ctrl+V 粘贴</div>' : '')) +
-      (isShot ? '<div class="f"><div id="evShotState" style="font-size:12px;color:var(--ink-faint);min-height:18px;line-height:1.5;"></div></div>' : '') +
+      '<div class="sub">' + (isShot ? '可多选/多张粘贴（多图会合并成一条，一张图多个日程会全部列出）；本地视觉模型识别，不联网不花钱。' : '保存后秘书会按提醒时间通知你。') + '</div>';
+    if (isShot) {
+      html += '<div class="shot-thumbs" id="evThumbs">' + shotDataUrls.map(function (u, i) {
+        return '<div class="shot-thumb"><img src="' + u + '"><button class="rm" data-rm="' + i + '" title="移除">✕</button></div>';
+      }).join('') + '</div>';
+      html += '<span class="shot-add" id="evAddShot">' + iconSvg('camera') + ' 添加图片（也可直接 ⌘V / Ctrl+V 粘贴）</span>';
+      html += '<div class="shot-state" id="evShotState"></div>';
+      html += '<div class="shot-bar"><button class="primary" id="evAddAll">＋ 一键全部添加</button></div>';
+      html += '<div class="shot-results" id="evResults"></div>';
+      html += '<hr class="divider"><div class="sub" style="margin-bottom:8px">没有识别到、或想再补一条？手动填写：</div>';
+    }
+    html +=
       '<div class="f"><label>标题 *</label><input id="evTitle" value="' + esc(hint.title || '') + '"></div>' +
       '<div class="f"><label>时间 *</label><input type="datetime-local" id="evAt" value="' + esc(hint.atLocal || '') + '"></div>' +
       '<div class="f"><label>地点</label><input id="evLoc" value="' + esc(hint.location || '') + '"></div>' +
@@ -327,7 +488,8 @@
       '<div class="f"><label>备注</label><textarea id="evNote" rows="2">' + esc(hint.note || '') + '</textarea></div>' +
       '<div class="f"><label>提前提醒</label><select id="evRemind">' +
         '<option value="0">不提醒</option><option value="15">15 分钟</option><option value="60">1 小时</option><option value="1440" selected>1 天</option><option value="4320">3 天</option></select></div>' +
-      '<div class="foot"><button id="evCancel">取消</button><button class="primary" id="evSave">保存到日程</button></div></div>';
+      '<div class="foot"><button id="evCancel">取消</button><button class="primary" id="evSave">' + (isShot ? '保存这一条' : '保存到日程') + '</button></div></div>';
+    modalMask.innerHTML = html;
 
     var atInput = modalMask.querySelector('#evAt');
     if (!atInput.value) {
@@ -336,36 +498,38 @@
     }
     modalMask.querySelector('#evCancel').addEventListener('click', closeModal);
 
-    /* 截图模式：无图时支持点击选图 + 粘贴 */
-    if (isShot && !shotDataUrl) {
-      var drop = modalMask.querySelector('#evDrop');
-      if (drop) drop.addEventListener('click', function () { shotDataUrl = ''; fileInput.click(); });
-    }
+    if (isShot) {
+      // 缩略图删除
+      var thumbs = modalMask.querySelector('#evThumbs');
+      if (thumbs) {
+        Array.prototype.forEach.call(thumbs.querySelectorAll('[data-rm]'), function (b) {
+          b.addEventListener('click', function () {
+            shotDataUrls.splice(Number(b.getAttribute('data-rm')), 1);
+            shotEvents = [];
+            openEventModal(null, true);
+          });
+        });
+      }
+      modalMask.querySelector('#evAddShot').addEventListener('click', function () { fileInput.click(); });
+      modalMask.querySelector('#evAddAll').addEventListener('click', addAllShots);
 
-    /* 截图时：自动调用视觉模型识别并回填表单 */
-    if (isShot && shotDataUrl) {
       var stEl = modalMask.querySelector('#evShotState');
-      var titleInput = modalMask.querySelector('#evTitle');
-      var atInputEl = modalMask.querySelector('#evAt');
-      var locInput = modalMask.querySelector('#evLoc');
-      var linkInput = modalMask.querySelector('#evLink');
-      var noteInput = modalMask.querySelector('#evNote');
-      stEl.textContent = '🔍 正在识别截图内容…';
-      recognizeShot(shotDataUrl, function (stream) {
-        stEl.textContent = '🔍 正在识别…（' + Math.min(stream.length, 40) + ' 字符）';
-      }).then(function (r) {
-        if (r.title) titleInput.value = r.title;
-        if (r.at) {
-          var d = new Date(r.at);
-          if (isFinite(d.getTime())) atInputEl.value = toLocal(d);
-        }
-        if (r.location) locInput.value = r.location;
-        if (r.link) linkInput.value = r.link;
-        if (r.note) noteInput.value = r.note;
-        stEl.textContent = '✅ 已自动识别，请核对下方信息后保存。';
-      }).catch(function (e) {
-        stEl.textContent = '⚠️ 自动识别失败：' + (e && e.message || e) + '（可手动填写后保存）';
-      });
+      if (shotDataUrls.length) {
+        stEl.textContent = '🔍 正在识别 ' + shotDataUrls.length + ' 张截图…';
+        recognizeShot(shotDataUrls, function (stream) {
+          stEl.textContent = '🔍 正在识别…（' + Math.min(stream.length, 40) + ' 字符）';
+        }).then(function (list) {
+          shotEvents = list;
+          stEl.textContent = '✅ 识别出 ' + list.length + ' 条日程，请核对后逐条「＋ 添加」或「一键全部添加」。';
+          renderShotResults();
+        }).catch(function (e) {
+          stEl.textContent = '⚠️ 自动识别失败：' + (e && e.message || e) + '（可在下方手动填写）';
+          renderShotResults();
+        });
+      } else {
+        stEl.textContent = '💡 点击「添加图片」选择截图，或直接 ⌘V / Ctrl+V 粘贴。';
+        renderShotResults();
+      }
     }
 
     modalMask.querySelector('#evSave').addEventListener('click', function () {
@@ -384,29 +548,108 @@
       addChat('a', '已添加日程「' + title + '」，到点会提醒你。');
     });
   }
+
+  /* 渲染识别出的日程结果（可编辑标题/时间/地点，逐条添加或忽略） */
+  function renderShotResults() {
+    var box = document.getElementById('evResults');
+    var allBtn = document.getElementById('evAddAll');
+    if (!box) return;
+    if (!shotEvents.length) {
+      if (allBtn) allBtn.style.display = 'none';
+      box.innerHTML = '<div style="color:var(--ink-faint);font-size:12px;padding:2px 0;">暂无识别结果，可在下方手动添加。</div>';
+      return;
+    }
+    if (allBtn) allBtn.style.display = '';
+    box.innerHTML = shotEvents.map(function (ev, i) {
+      var atLocal = '';
+      if (ev.at) { var dd = new Date(ev.at); if (isFinite(dd.getTime())) atLocal = toLocal(dd); }
+      var added = ev._added;
+      return '<div class="shot-ev' + (added ? ' added' : '') + '" data-i="' + i + '">' +
+        '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
+        '<div class="g"><span class="lbl">时</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
+        '<span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
+        '<button class="add' + (added ? ' on' : '') + '" data-i="' + i + '">' + (added ? '✓ 已添加' : '＋ 添加') + '</button></div></div>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.skip'), function (b) {
+      b.addEventListener('click', function () {
+        shotEvents.splice(Number(b.getAttribute('data-i')), 1);
+        renderShotResults();
+      });
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('.add:not(.on)'), function (b) {
+      b.addEventListener('click', function () {
+        var i = Number(b.getAttribute('data-i'));
+        var card = box.querySelector('.shot-ev[data-i="' + i + '"]');
+        var title = ((card.querySelector('.e-title') || {}).value || '').trim();
+        var at = (card.querySelector('.e-at') || {}).value || '';
+        var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
+        if (!title) { alert('请填写标题'); return; }
+        if (!at) { alert('请填写时间'); return; }
+        events.add({
+          title: title, at: new Date(at).toISOString(), location: loc,
+          link: shotEvents[i].link || '', note: shotEvents[i].note || '',
+          reminderMin: 1440, source: '截图识别',
+        });
+        shotEvents[i]._added = true;
+        renderShotResults();
+        renderEvents();
+        addChat('a', '已添加日程「' + title + '」。');
+      });
+    });
+  }
+
+  /* 一键添加全部识别结果（跳过已添加/无标题/无时间的） */
+  function addAllShots() {
+    var box = document.getElementById('evResults');
+    if (!box) return;
+    var n = 0;
+    Array.prototype.forEach.call(box.querySelectorAll('.shot-ev:not(.added)'), function (card) {
+      var i = Number(card.getAttribute('data-i'));
+      var title = ((card.querySelector('.e-title') || {}).value || '').trim();
+      var at = (card.querySelector('.e-at') || {}).value || '';
+      var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
+      if (!title || !at) return;
+      events.add({
+        title: title, at: new Date(at).toISOString(), location: loc,
+        link: shotEvents[i].link || '', note: shotEvents[i].note || '',
+        reminderMin: 1440, source: '截图识别',
+      });
+      shotEvents[i]._added = true;
+      n++;
+    });
+    if (n) { renderShotResults(); renderEvents(); addChat('a', '已批量添加 ' + n + ' 条日程。'); }
+  }
   function toLocal(d) {
     var p = function (n) { return ('0' + n).slice(-2); };
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
-  function closeModal() { modalMask.style.display = 'none'; modalMask.innerHTML = ''; shotDataUrl = ''; }
+  function closeModal() { modalMask.style.display = 'none'; modalMask.innerHTML = ''; shotDataUrls = []; shotEvents = []; }
   modalMask.addEventListener('click', function (e) { if (e.target === modalMask) closeModal(); });
 
-  /* 截图模式下的粘贴：⌘V / Ctrl+V 直接识别剪贴板图片 */
+  /* 截图模式下的粘贴：⌘V / Ctrl+V 追加剪贴板图片（支持多张一起） */
   document.addEventListener('paste', function (e) {
     if (modalMask.style.display !== 'flex') return;   // 仅弹窗打开时响应
     var items = (e.clipboardData || {}).items;
     if (!items) return;
+    var blobs = [];
     for (var i = 0; i < items.length; i++) {
       if (items[i] && items[i].type && items[i].type.indexOf('image') === 0) {
         var blob = items[i].getAsFile();
-        if (!blob) continue;
-        var reader = new FileReader();
-        reader.onload = function () { setShotAndRerun(reader.result); };
-        reader.readAsDataURL(blob);
-        e.preventDefault();
-        break;
+        if (blob) blobs.push(blob);
       }
     }
+    if (!blobs.length) return;
+    e.preventDefault();
+    var pending = blobs.length, urls = [];
+    blobs.forEach(function (blob) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        urls.push(reader.result);
+        if (--pending === 0) appendShotsAndRerun(urls);
+      };
+      reader.readAsDataURL(blob);
+    });
   });
 
   /* 导入邮件 */
