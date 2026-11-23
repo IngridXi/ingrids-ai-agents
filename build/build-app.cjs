@@ -11,17 +11,77 @@
  *   含 NSAppleEventsUsageDescription）后，授权弹窗会正确显示「Ingrid's AI Agents」，
  *   点一次「允许」即可永久生效。
  *
+ * 关键（血泪教训）：
+ *   1) @electron/packager 的 osxSign:{identity:'-'} 会因 identityValidation 默认 true 而失败；
+ *   2) @electron/osx-sign 的 sign({identity:'-'}) 只重签主程序+helper，会跳过 Electron Framework，
+ *      导致 dyld 报 "mapping process and mapped file have different Team IDs" 崩溃；
+ *   3) 正确做法：把 framework/次级 framework 的 CFBundleIdentifier 统一改成 com.ingridxi.agents.*，
+ *      再从内到外、用同一个 adhoc 身份逐一重签，最后 codesign --verify --deep --strict 必须通过。
+ *
  * 用法：node build/build-app.cjs
  * 产物：dist/Ingrid's AI Agents.app，并复制到 ~/Applications 与 ~/Desktop
  */
 const { packager } = require('@electron/packager');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
 const projectRoot = path.resolve(__dirname, '..');
 const appName = "Ingrid's AI Agents";
+const appBundleId = 'com.ingridxi.agents';
 const outDir = path.join(projectRoot, 'dist');
+
+function cs(app) {
+  execFileSync('codesign', ['--force', '--sign', '-', app], { stdio: 'pipe' });
+}
+function csDeep(app) {
+  execFileSync('codesign', ['--force', '--deep', '--sign', '-', app], { stdio: 'pipe' });
+}
+function setBundleId(plist, id) {
+  execFileSync('plutil', ['-replace', 'CFBundleIdentifier', '-string', id, plist], { stdio: 'pipe' });
+}
+
+/** 统一 bundle ID 命名空间 + 从内到外 adhoc 重签，消除 "different Team IDs" 崩溃 */
+function signElectronApp(app) {
+  const fw = path.join(app, 'Contents', 'Frameworks');
+
+  // 1) 统一 bundle ID 到 com.ingridxi.agents.*（消除与主程序的组织前缀不一致）
+  setBundleId(path.join(fw, 'Electron Framework.framework', 'Versions', 'A', 'Resources', 'Info.plist'), appBundleId + '.framework');
+  for (const f of ['Squirrel', 'Mantle', 'ReactiveObjC']) {
+    const p = path.join(fw, f + '.framework', 'Versions', 'A', 'Resources', 'Info.plist');
+    if (fs.existsSync(p)) setBundleId(p, appBundleId + '.' + f.toLowerCase());
+  }
+
+  // 2) Electron Framework：内层二进制 → dylib → crashpad → bundle
+  cs(path.join(fw, 'Electron Framework.framework', 'Versions', 'A', 'Electron Framework'));
+  const libs = path.join(fw, 'Electron Framework.framework', 'Versions', 'A', 'Libraries');
+  if (fs.existsSync(libs)) {
+    for (const f of fs.readdirSync(libs)) {
+      if (f.endsWith('.dylib')) cs(path.join(libs, f));
+    }
+  }
+  const crashpad = path.join(fw, 'Electron Framework.framework', 'Versions', 'A', 'Helpers', 'chrome_crashpad_handler');
+  if (fs.existsSync(crashpad)) cs(crashpad);
+  cs(path.join(fw, 'Electron Framework.framework'));
+
+  // 3) 次级 framework：内层二进制 → bundle
+  for (const f of ['Squirrel', 'Mantle', 'ReactiveObjC']) {
+    const inner = path.join(fw, f + '.framework', 'Versions', 'A', f);
+    if (fs.existsSync(inner)) {
+      cs(inner);
+      cs(path.join(fw, f + '.framework'));
+    }
+  }
+
+  // 4) helper apps（deep 覆盖嵌套）
+  for (const h of fs.readdirSync(fw)) {
+    if (h.endsWith('.app')) csDeep(path.join(fw, h));
+  }
+
+  // 5) 主 app（最后统一封签）
+  csDeep(app);
+}
 
 async function main() {
   const iconPath = path.join(__dirname, 'IngridIcon.icns');
@@ -35,7 +95,7 @@ async function main() {
     out: outDir,
     overwrite: true,
     asar: false,
-    appBundleId: 'com.ingridxi.agents',
+    appBundleId,
     appVersion: '0.1.0',
     appCopyright: 'Copyright © 2026 Ingrid Xi',
     appCategoryType: 'public.app-category.productivity',
@@ -51,16 +111,17 @@ async function main() {
       /(^|\/)\.gitignore$/,
     ],
     prune: true,
-    // 不在 packager 里签名（其 adhoc 签名易因 identityValidation 失败），打包后统一用 @electron/osx-sign 签
   });
 
   const built = path.join(appPaths[0], appName + '.app');
   console.log('打包完成:', built);
 
-  // adhoc 签名（identityValidation: false 才能用 '-' 表示 adhoc），保证 TCC 身份稳定为 com.ingridxi.agents
-  const { sign } = require('@electron/osx-sign');
-  await sign({ app: built, identity: '-', identityValidation: false });
-  console.log('已 adhoc 签名:', built);
+  signElectronApp(built);
+  console.log('已 adhoc 签名并统一 bundle ID:', built);
+
+  // 验证签名，失败则报错不继续
+  execFileSync('codesign', ['--verify', '--deep', '--strict', built], { stdio: 'pipe' });
+  console.log('签名验证通过 ✓');
 
   // 复制到 ~/Applications 与 ~/Desktop（覆盖旧的 shell 壳 app）
   const home = os.homedir();
