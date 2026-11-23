@@ -123,6 +123,8 @@
     '.sec-modal .shot-bar button{flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:12px;cursor:pointer;}',
     '.sec-modal .shot-bar .primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650;}',
     '.sec-modal .divider{border:none;border-top:1px dashed var(--line);margin:12px 0;}',
+    '.sec-panel.drag-over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft);}',
+    '.sec-modal.drag-over{outline:3px dashed var(--accent);outline-offset:-4px;}',
   ].join('\n');
   document.head.appendChild(style);
 
@@ -572,12 +574,12 @@
     modalMask.style.display = 'flex';
     var html =
       '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 发截图 · 自动识别日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
-      '<div class="sub">' + (isShot ? '可多选/多张粘贴（多图会合并成一条，一张图多个日程会全部列出）；本地视觉模型识别，不联网不花钱。' : '保存后秘书会按提醒时间通知你。') + '</div>';
+      '<div class="sub">' + (isShot ? '可直接拖入、多选或多次粘贴图片（多图合并成一条，一张图多个日程会全部列出）；本地视觉模型识别，不联网不花钱。' : '保存后秘书会按提醒时间通知你。') + '</div>';
     if (isShot) {
       html += '<div class="shot-thumbs" id="evThumbs">' + shotDataUrls.map(function (u, i) {
         return '<div class="shot-thumb"><img src="' + u + '"><button class="rm" data-rm="' + i + '" title="移除">✕</button></div>';
       }).join('') + '</div>';
-      html += '<span class="shot-add" id="evAddShot">' + iconSvg('camera') + ' 添加图片（也可直接 ⌘V / Ctrl+V 粘贴）</span>';
+      html += '<span class="shot-add" id="evAddShot">' + iconSvg('camera') + ' 添加图片（也可直接拖入，或 ⌘V / Ctrl+V 粘贴）</span>';
       html += '<div class="shot-state" id="evShotState"></div>';
       html += '<div class="shot-bar"><button class="primary" id="evAddAll">＋ 一键全部添加</button></div>';
       html += '<div class="shot-results" id="evResults"></div>';
@@ -950,6 +952,45 @@
       };
       reader.readAsDataURL(blob);
     });
+  });
+
+  /* 拖拽图片直接识别：拖到秘书面板自动打开识别，弹窗内拖入则追加（多张一起） */
+  function handleDropImages(e) {
+    var files = (e.dataTransfer && e.dataTransfer.files) || [];
+    var imgs = [];
+    for (var i = 0; i < files.length; i++) {
+      if (files[i] && files[i].type && files[i].type.indexOf('image') === 0) imgs.push(files[i]);
+    }
+    if (!imgs.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var pending = imgs.length, urls = [];
+    imgs.forEach(function (f) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        urls.push(reader.result);
+        if (--pending === 0) {
+          var inShotModal = modalMask.style.display === 'flex' && modalMask.querySelector('#evAddShot');
+          if (!inShotModal) { shotDataUrls = []; shotEvents = []; }
+          appendShotsAndRerun(urls);
+        }
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+  panel.addEventListener('dragover', function (e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; panel.classList.add('drag-over'); });
+  panel.addEventListener('dragleave', function () { panel.classList.remove('drag-over'); });
+  panel.addEventListener('drop', function (e) { panel.classList.remove('drag-over'); handleDropImages(e); });
+  modalMask.addEventListener('dragover', function (e) {
+    if (modalMask.style.display !== 'flex' || !modalMask.querySelector('#evAddShot')) return;
+    e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    var m = modalMask.querySelector('.sec-modal'); if (m) m.classList.add('drag-over');
+  });
+  modalMask.addEventListener('dragleave', function () { var m = modalMask.querySelector('.sec-modal'); if (m) m.classList.remove('drag-over'); });
+  modalMask.addEventListener('drop', function (e) {
+    var m = modalMask.querySelector('.sec-modal'); if (m) m.classList.remove('drag-over');
+    if (modalMask.style.display !== 'flex' || !modalMask.querySelector('#evAddShot')) return;
+    handleDropImages(e);
   });
 
   /* 导入邮件 */
