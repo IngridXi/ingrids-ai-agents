@@ -108,6 +108,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   notify: (payload) => ipcRenderer.invoke('notify', payload),
   // 读取本机短信（macOS Messages 数据库，只读）
   messagesRead: (payload) => ipcRenderer.invoke('messages:read', payload),
+  // 读取本机 Outlook 邮件（AppleScript/JXA，只读，绕开 OAuth）
+  outlookMailRead: () => ipcRenderer.invoke('mail:read-outlook'),
 
   // 邮箱 / 日历同步（CalDAV 账户 + 触发同步）
   syncAccountsList: () => ipcRenderer.invoke('sync:accounts:list'),

@@ -3875,6 +3875,72 @@ function readMacMessages(payload) {
 }
 ipcMain.handle('messages:read', (_e, payload) => readMacMessages(payload));
 
+/* ---------------- IPC：读取本机 Outlook 邮件（AppleScript/JXA，只读） ----------------
+ * 绕开 Microsoft Graph OAuth（需要 Azure 应用注册，学校租户通常禁止学生注册）。
+ * 直接通过系统脚本桥读取「已登录的本机 Microsoft Outlook」收件箱邮件。
+ * 需用户在「系统设置 → 隐私与安全性 → 自动化」里允许本应用控制 Microsoft Outlook。
+ */
+function readOutlookMail() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取本机 Outlook' }); return; }
+    const script = 'function run(){\n' +
+      '  var limit = 30;\n' +
+      '  var Outlook = Application("Microsoft Outlook");\n' +
+      '  var inbox = Outlook.inbox;\n' +
+      '  var msgs = inbox.messages;\n' +
+      '  var out = [];\n' +
+      '  var n = Math.min(msgs.length, limit);\n' +
+      '  for (var i = 0; i < n; i++) {\n' +
+      '    var m = msgs[i];\n' +
+      '    var subject = "", sender = "", body = "", time = "";\n' +
+      '    try { subject = String(m.subject() || ""); } catch (e) {}\n' +
+      '    try {\n' +
+      '      var s = m.sender();\n' +
+      '      if (typeof s === "string") { sender = s; }\n' +
+      '      else if (s) {\n' +
+      '        try { sender = String(s.name() || ""); } catch (e2) {}\n' +
+      '        if (!sender) { try { sender = String(s.address() || ""); } catch (e3) {} }\n' +
+      '      }\n' +
+      '    } catch (e) {}\n' +
+      '    try { body = String(m.plainTextContent() || ""); } catch (e) { body = ""; }\n' +
+      '    if (!body) { try { body = String(m.content() || ""); } catch (e) {} }\n' +
+      '    try { var t = m.timeReceived(); if (t) { time = String(t); } } catch (e) {}\n' +
+      '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
+      '  }\n' +
+      '  return JSON.stringify(out);\n' +
+      '}';
+    execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        const msg = String((err && err.message) || err) + ' ' + String(stderr || '');
+        if (/privilege violation|-10004/i.test(msg)) {
+          resolve({ ok: false, error: '未获授权读取 Outlook。请到 系统设置 → 隐私与安全性 → 自动化，允许本应用控制「Microsoft Outlook」，然后重试（若已允许仍报错，请在自动化列表里删除本应用后重新触发一次）。' });
+        } else if (/not running|cant get|can't get|Can't get/i.test(msg)) {
+          resolve({ ok: false, error: '未检测到 Outlook 正在运行，请先打开 Microsoft Outlook 并登录你的剑桥账号。' });
+        } else {
+          resolve({ ok: false, error: '读取 Outlook 失败：' + msg });
+        }
+        return;
+      }
+      try {
+        const arr = JSON.parse(String(stdout || '').trim());
+        if (!Array.isArray(arr)) { resolve({ ok: false, error: '解析 Outlook 数据失败' }); return; }
+        const mails = arr
+          .map((m) => ({
+            subject: String((m && m.subject) || '').trim(),
+            from: String((m && m.sender) || '').trim(),
+            body: String((m && m.body) || '').trim(),
+            at: (m && m.time) || '',
+          }))
+          .filter((m) => m.subject || m.body);
+        resolve({ ok: true, mails: mails, count: mails.length });
+      } catch (e) {
+        resolve({ ok: false, error: '解析 Outlook 数据失败：' + String((e && e.message) || e) });
+      }
+    });
+  });
+}
+ipcMain.handle('mail:read-outlook', () => readOutlookMail());
+
 /* ---------------- 知识库引擎（本地 RAG） ---------------- */
 const kbEngine = new KbEngine({
   dataDir: path.join(dataDir(), 'kb'),

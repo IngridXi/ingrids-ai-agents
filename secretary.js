@@ -157,7 +157,9 @@
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook</button></div>' +
         '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div>' +
-        '<div class="sec-bout" id="secMailOut" hidden></div></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secReadOutlook" style="flex:1">' + iconSvg('mail') + ' 读取本机 Outlook · 识别活动</button></div>' +
+        '<div class="sec-bout" id="secMailOut" hidden></div>' +
+        '<div class="sec-bout" id="secOutlookOut" hidden></div></div>' +
       '<div class="sec-sec"><label>短信 · 确认信息</label>' +
         '<div class="sec-row"><button class="sec-btn" id="secReadSms" style="flex:1">' + iconSvg('message') + ' 读取短信 · 识别活动</button></div>' +
         '<div class="sec-bout" id="secSmsOut" hidden></div>' +
@@ -478,6 +480,50 @@
       });
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = '读取短信 · 识别活动';
+      out.textContent = '读取失败：' + (e && e.message || e);
+    });
+  }
+
+  /* 读取本机 Outlook 邮件（AppleScript，绕开 OAuth），扫描确认信息 → 提取日程 → 确认 */
+  document.getElementById('secReadOutlook').addEventListener('click', readOutlookAndScan);
+  function readOutlookAndScan() {
+    var out = document.getElementById('secOutlookOut');
+    if (!DESKTOP || !window.ingrid || !window.ingrid.outlookMailRead) {
+      out.hidden = false; out.textContent = '读取本机 Outlook 仅支持桌面版（macOS）。';
+      return;
+    }
+    var btn = document.getElementById('secReadOutlook');
+    btn.disabled = true; btn.textContent = '读取中…';
+    out.hidden = false; out.textContent = '正在读取本机 Outlook 收件箱…';
+    window.ingrid.outlookMailRead().then(function (r) {
+      btn.disabled = false; btn.textContent = '读取本机 Outlook · 识别活动';
+      if (!r || !r.ok) {
+        out.innerHTML = '⚠️ ' + esc((r && r.error) || '读取失败') +
+          '<br><span style="font-size:10px;color:var(--ink-faint)">首次使用需在 macOS 弹窗里点「允许」控制 Microsoft Outlook；若之前拒绝过，到 系统设置 → 隐私与安全性 → 自动化 里勾选本应用。</span>';
+        return;
+      }
+      var mails = r.mails || [];
+      if (!mails.length) { out.textContent = '未读到 Outlook 邮件（可能未登录或收件箱为空）。'; return; }
+      var candidates = mails.filter(isConfirmationEmail);
+      if (!candidates.length) { out.textContent = '读完 ' + mails.length + ' 封邮件，未发现活动确认信息。'; addChat('a', '读完 Outlook 邮件，未发现活动确认信息。'); return; }
+      out.textContent = '读到 ' + mails.length + ' 封邮件，发现 ' + candidates.length + ' 封确认类，正在识别…';
+      // 逐封识别确认类邮件：每条日程附上原始邮件（发件人+主题+正文）作为核对参考
+      var tasks = candidates.slice(0, 12).map(function (m) {
+        var srcText = '【' + (m.from || '') + '】' + m.subject + '\n' + m.body;
+        return extractEventsFromText(srcText).then(function (list) {
+          (list || []).forEach(function (ev) { ev.sourceText = srcText; });
+          return list;
+        });
+      });
+      Promise.all(tasks).then(function (lists) {
+        var merged = mergeEventLists(lists);
+        if (!merged.length) { out.textContent = '读完 Outlook 邮件，未发现明确日程。'; addChat('a', '读完 Outlook 邮件，未发现明确日程。'); return; }
+        out.textContent = '';
+        notifyConfirm(merged, 'Outlook 邮件');
+        openConfirmEvents(merged, 'Outlook 邮件', '');
+      });
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '读取本机 Outlook · 识别活动';
       out.textContent = '读取失败：' + (e && e.message || e);
     });
   }
