@@ -143,12 +143,18 @@
         '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
         '<div class="sec-chat" id="secChat"></div></div>' +
       '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 发截图 · 自动识别加日程</button></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 手动添加日程</button>' +
+        '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 发截图 · 自动识别</button>' +
+        '<button class="sec-btn ghost" id="secFromLink" title="粘贴链接自动识别日程">' + iconSvg('link') + ' 链接识别</button></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 手动添加</button>' +
         '<button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
-        '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook 邮箱</button></div></div>' +
+        '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook</button></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div></div>' +
+      '<div class="sec-sec"><label>短信 · 确认信息</label>' +
+        '<div class="sec-row"><button class="sec-btn" id="secReadSms" style="flex:1">' + iconSvg('message') + ' 读取短信 · 识别活动</button></div>' +
+        '<div class="sec-bout" id="secSmsOut" hidden></div>' +
+        '<div class="sec-bhint">读取本机 iMessage / 短信，识别「报名成功 / 已预订 / 出票」等确认信息并帮你加日程（需授权「完全磁盘访问权限」）。</div></div>' +
       '<div class="sec-sec"><label>知识库</label>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('book') + ' 打开知识库（Notion · Obsidian）</button></div>' +
         '<div class="sec-bout" id="secNotionOut" hidden></div>' +
@@ -273,6 +279,103 @@
     shotEvents = [];
     openEventModal(null, true);
   });
+
+  /* 粘贴链接 → 抓正文 → 提取日程 → 确认 */
+  document.getElementById('secFromLink').addEventListener('click', openLinkModal);
+  function openLinkModal() {
+    modalMask.style.display = 'flex';
+    modalMask.innerHTML =
+      '<div class="sec-modal"><h3>' + iconSvg('link') + ' 粘贴链接 · 识别日程</h3>' +
+      '<div class="sub">粘贴活动 / 会议 / 票务 / 酒店等链接（可多行多个），秘书会抓取页面正文并识别其中的日程信息，识别后请你确认是否添加。</div>' +
+      '<div class="f"><textarea id="lkUrls" rows="4" placeholder="https://...&#10;https://..."></textarea></div>' +
+      '<div class="shot-state" id="lkState"></div>' +
+      '<div class="foot"><button id="lkCancel">取消</button><button class="primary" id="lkGo">' + iconSvg('sparkles') + ' 抓取并识别</button></div></div>';
+    modalMask.querySelector('#lkCancel').addEventListener('click', closeModal);
+    modalMask.querySelector('#lkGo').addEventListener('click', function () {
+      var raw = modalMask.querySelector('#lkUrls').value;
+      var urls = raw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return /^https?:\/\//.test(s); });
+      if (!urls.length) { alert('请粘贴至少一个 http(s) 链接'); return; }
+      var st = modalMask.querySelector('#lkState');
+      st.textContent = '🔍 正在抓取 ' + urls.length + ' 个链接…';
+      Promise.all(urls.map(function (u) {
+        return window.ingrid.webFetch({ url: u }).then(function (r) {
+          return (r && r.ok) ? (r.title ? r.title + '\n' : '') + r.content : '';
+        }).catch(function () { return ''; });
+      })).then(function (parts) {
+        var text = parts.join('\n\n---\n\n');
+        if (!text.trim()) { st.textContent = '⚠️ 未能抓取到内容（可能是动态页面或需登录）。'; return; }
+        st.textContent = '🔍 正在识别日程…';
+        extractEventsFromText(text).then(function (list) {
+          closeModal();
+          if (!list.length) { addChat('a', '未从链接内容中识别出日程，可手动添加。'); return; }
+          notifyConfirm(list, '链接识别');
+          openConfirmEvents(list, '链接识别', urls[0]);
+        });
+      }).catch(function (e) { st.textContent = '⚠️ 失败：' + (e && e.message || e); });
+    });
+  }
+
+  /* 判定一封邮件是否含「确认信息」（活动报名 / 会议 / 票务 / 预订 / 注册等） */
+  function isConfirmationEmail(m) {
+    var blob = ((m.subject || '') + ' ' + (m.body || '')).toLowerCase();
+    var words = ['确认', '报名成功', '已报名', '已预订', '预订成功', '注册成功', '已注册', '出票', '已出票', '订单', '预约成功',
+      'confirmation', 'confirmed', 'booking', 'reservation', 'rsvp', 'ticket', 'boarding', 'registration', '您已成功', '席位', '名额', '参会', '邀请函'];
+    return words.some(function (w) { return blob.indexOf(w) >= 0; });
+  }
+
+  /* 扫描邮件里的确认信息 → 提取日程 → 弹确认 + 通知（用日程去重防重复添加）。
+   * silent=true 时（自动同步触发）无结果不刷屏，只提示发现的新日程。 */
+  document.getElementById('secScanMail').addEventListener('click', function () { scanEmailsForEvents(false); });
+  function scanEmailsForEvents(silent) {
+    if (!emails.emails || !emails.emails.length) { if (!silent) addChat('a', '暂无邮件。可先「同步 Outlook」或「导入邮件」。'); return; }
+    var candidates = emails.emails.filter(isConfirmationEmail);
+    if (!candidates.length) { if (!silent) addChat('a', '未在邮件里发现「确认信息」类内容。'); return; }
+    var text = candidates.slice(0, 12).map(function (m) {
+      return '【' + (m.fromName || m.from || '') + '】' + m.subject + '\n' + m.body;
+    }).join('\n\n---\n\n');
+    if (!silent) addChat('a', '发现 ' + candidates.length + ' 封确认类邮件，正在识别日程…');
+    extractEventsFromText(text).then(function (list) {
+      if (!list.length) { if (!silent) addChat('a', '扫描了确认邮件，未识别出明确日程。'); return; }
+      notifyConfirm(list, '邮件确认');
+      openConfirmEvents(list, '邮件确认', (candidates[0] && candidates[0].link) || '');
+    });
+  }
+
+  /* 读取本机短信（macOS Messages 数据库），扫描确认信息 → 提取日程 → 确认 */
+  document.getElementById('secReadSms').addEventListener('click', readSmsAndScan);
+  function readSmsAndScan() {
+    var out = document.getElementById('secSmsOut');
+    if (!DESKTOP || !window.ingrid || !window.ingrid.messagesRead) {
+      out.hidden = false; out.textContent = '读取短信仅支持桌面版（macOS）。';
+      return;
+    }
+    var btn = document.getElementById('secReadSms');
+    btn.disabled = true; btn.textContent = '读取中…';
+    out.hidden = false; out.textContent = '正在读取本机短信…';
+    window.ingrid.messagesRead({ limit: 60 }).then(function (r) {
+      btn.disabled = false; btn.textContent = '读取短信 · 识别活动';
+      if (!r || !r.ok) {
+        out.innerHTML = '⚠️ ' + esc((r && r.error) || '读取失败') +
+          '<br><span style="font-size:10px;color:var(--ink-faint)">若提示无权限，请到 系统设置 → 隐私与安全性 → 完全磁盘访问，添加本应用并勾选，然后 ⌘Q 完全退出再重启。</span>';
+        return;
+      }
+      var msgs = r.messages || [];
+      if (!msgs.length) { out.textContent = '未读到短信（可能权限不足或暂无短信）。'; return; }
+      out.textContent = '读到 ' + msgs.length + ' 条短信，正在识别确认信息…';
+      var text = msgs.map(function (m) {
+        return '【' + (m.from || '') + ' ' + (m.dateText || '') + '】' + m.text;
+      }).join('\n');
+      extractEventsFromText(text).then(function (list) {
+        if (!list.length) { out.textContent = '读完 ' + msgs.length + ' 条短信，未发现活动确认信息。'; addChat('a', '读完短信，未发现活动确认信息。'); return; }
+        out.textContent = '';
+        notifyConfirm(list, '短信确认');
+        openConfirmEvents(list, '短信确认', '');
+      });
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '读取短信 · 识别活动';
+      out.textContent = '读取失败：' + (e && e.message || e);
+    });
+  }
 
   /* 追加一组图片（去重）并重新打开弹窗触发识别 */
   function appendShotsAndRerun(urls) {
@@ -627,6 +730,203 @@
   function closeModal() { modalMask.style.display = 'none'; modalMask.innerHTML = ''; shotDataUrls = []; shotEvents = []; }
   modalMask.addEventListener('click', function (e) { if (e.target === modalMask) closeModal(); });
 
+  /* ============ 多来源「文本 → 日程」识别 + 统一确认弹窗 ============
+   * 三种来源（链接 / 邮件 / 短信）都汇聚到同一套「提取 → 弹确认 → 用户核对 → 添加」流程。
+   * 日期换算统一走 parseEventDateTime（模型只提取原文，本地确定性换算，绝不落到过去）。 */
+
+  /* 本地确定性规则：从一段文字提取日程候选（LLM 不可用时的兜底，免费、可解释）。
+     覆盖常见「确认信息」格式：报名/预订/注册成功、航班/车票/酒店、会议/讲座通知等。 */
+  function parseEventsFromText(text, now) {
+    var src = String(text || '');
+    if (!src.trim()) return [];
+    var base = now || new Date();
+    var link = (src.match(/https?:\/\/[^\s"'<>]+/) || [''])[0];
+
+    // 标题：优先「」/引号包裹，其次「报名/预订/确认/活动/会议」关键词后，最后取首行
+    var title = '', m;
+    if ((m = src.match(/「([^」]{2,40})」/)) || (m = src.match(/"([^"]{2,40})"/))) {
+      title = m[1].trim();
+    } else if ((m = src.match(/(?:已?(?:成功)?(?:报名|预订|预约|订购|注册|出票)|确认了?|您的订单|订了?)[：: ]*([^。，,;\n]{2,40})/))) {
+      title = m[1].trim();
+    } else if ((m = src.match(/(?:活动|会议|讲座|论坛|峰会|演出|航班|列车|酒店|餐厅|课程|比赛|答辩|组会)[：: ]*([^。，,;\n]{2,40})/))) {
+      title = m[1].trim();
+    }
+    if (!title) {
+      var lines = src.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+      title = (lines[0] || '').replace(/^[【\[（(].{0,20}[】\]）)]\s*/, '').slice(0, 40);
+    }
+
+    // 日期原文
+    var dateText = '', dm;
+    if ((dm = src.match(/\d{4}\s*[年/-]\s*\d{1,2}\s*[月/-]\s*\d{1,2}\s*[日号]?/))) dateText = dm[0];
+    else if ((dm = src.match(/(今天|明天|后天|大后天|今日|明日)/))) dateText = dm[0];
+    else if ((dm = src.match(/(?:下|本)?周[一二三四五六日天]|星期[一二三四五六日天]/))) dateText = dm[0];
+    else if ((dm = src.match(/\d{1,2}\s*月\s*\d{1,2}\s*[日号]/))) dateText = dm[0];
+    else if ((dm = src.match(/(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?/i))) dateText = dm[0];
+    else if ((dm = src.match(/\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/i))) dateText = dm[0];
+    else if ((dm = src.match(/\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}/))) dateText = dm[0];
+
+    // 时间原文
+    var timeText = '', tm;
+    if ((tm = src.match(/(\d{1,2})[:：]\s*\d{1,2}\s*(?:am|pm)?/i))) timeText = tm[0];
+    else if ((tm = src.match(/(上午|下午|晚上|中午)\s*\d{1,2}\s*点(?:\s*(?:半|\d{1,2}\s*分)?)?/))) timeText = tm[0];
+
+    // 地点
+    var location = '', lm;
+    if ((lm = src.match(/(?:地点|地址|位置|venue|location)\s*[：:]\s*([^\n,，。]{2,50})/i))) location = lm[1].trim();
+    else if ((lm = src.match(/(?:在|于)\s*([^\n,，。]{2,40}(?:会议室|教室|礼堂|报告厅|厅|馆|中心|酒店|大厦|楼|号|room|hall|college|street|road|campus))/i))) location = lm[1].trim();
+
+    var at = parseEventDateTime(dateText, timeText, base);
+    if (!title && !at) return [];
+    return [{ title: title, at: at, location: location, link: link, note: '', dateText: dateText, timeText: timeText }];
+  }
+
+  /* 用本地文本模型从文字提取日程（返回原始 dateText/timeText，本地换算日期）。
+     模型不可用 / 解析失败时降级到 parseEventsFromText 本地规则。 */
+  function extractEventsFromText(text, now) {
+    return new Promise(function (resolve) {
+      var base = now || new Date();
+      var today = base.getFullYear() + '年' + (base.getMonth() + 1) + '月' + base.getDate() + '日（星期' + '日一二三四五六'[base.getDay()] + '）';
+      if (!DESKTOP || !window.ingrid || !window.ingrid.chatStream) { resolve(parseEventsFromText(text, base)); return; }
+      var msgs = [{ role: 'user', content:
+        '今天是 ' + today + '。你是日程识别助手。请从下面这段文字里识别所有日程 / 活动 / 预订信息。\n\n文字：\n"""\n' + String(text || '').slice(0, 6000) + '\n"""\n\n' +
+        '只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown。数组每一项是一条日程，格式严格为：' +
+        '{"title":"标题","dateText":"日期原文","timeText":"时间原文","location":"地点","link":"链接","note":"备注"}。' +
+        '\n规则：dateText / timeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」），绝对不要换算、不要猜测年份；没有的字段填空字符串；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
+      var out = '';
+      window.ingrid.chatStream({ engine: 'ollama', messages: msgs, sessionId: 'sec-text' }, {
+        onDelta: function (c) { if (c && c.text) out += c.text; },
+        onDone: function (d) {
+          if (!d || !d.ok) { resolve(parseEventsFromText(text, base)); return; }
+          var m = out.match(/\[[\s\S]*\]/);
+          if (!m) { resolve(parseEventsFromText(text, base)); return; }
+          try {
+            var arr = JSON.parse(m[0]);
+            if (!Array.isArray(arr) || !arr.length) { resolve(parseEventsFromText(text, base)); return; }
+            var list = arr.map(function (j) {
+              return {
+                title: String(j.title || '').trim(),
+                at: parseEventDateTime(j.dateText, j.timeText, base),
+                location: String(j.location || '').trim(),
+                link: String(j.link || '').trim(),
+                note: String(j.note || '').trim(),
+                dateText: String(j.dateText || '').trim(),
+                timeText: String(j.timeText || '').trim(),
+              };
+            }).filter(function (e) { return e.title || e.at; });
+            resolve(list.length ? list : parseEventsFromText(text, base));
+          } catch (e) { resolve(parseEventsFromText(text, base)); }
+        },
+      });
+    });
+  }
+
+  /* 系统通知：识别到日程后提醒用户确认 */
+  function notifyConfirm(list, sourceLabel) {
+    if (!DESKTOP || !window.ingrid.notify || !list || !list.length) return;
+    var first = list[0] || {};
+    var title = '📅 识别到 ' + list.length + ' 条日程（' + (sourceLabel || '自动') + '）';
+    var body = (first.title || '未命名活动') + (list.length > 1 ? ' 等' : '') + ' · 请确认是否添加到日历';
+    window.ingrid.notify({ title: title, body: body });
+  }
+
+  /* 日程去重：同标题 + 同 ISO 时间视为已存在（防止邮件/短信重复扫描重复添加） */
+  function eventExists(title, at) {
+    var t = String(title || '').trim(), a = String(at || '');
+    if (!t && !a) return false;
+    return events.events.some(function (e) {
+      if (t && a) return e.title === t && e.at === a;
+      if (t) return e.title === t;
+      return e.at === a;
+    });
+  }
+
+  /* 统一确认弹窗：识别到日程后请用户确认是否添加（可编辑、逐条添加/忽略、一键全部） */
+  function openConfirmEvents(list, sourceLabel, sourceLink) {
+    var list = list || [];
+    modalMask.style.display = 'flex';
+    modalMask.innerHTML =
+      '<div class="sec-modal"><h3>' + iconSvg('check') + ' 识别到 ' + list.length + ' 条日程，请确认</h3>' +
+      '<div class="sub">来源：' + esc(sourceLabel || '自动识别') + '。请核对是否正确、是否添加到日历——可逐条「＋ 添加」，或「＋ 全部添加」；不对的可「忽略」或直接修改。</div>' +
+      '<div class="shot-results" id="cfResults"></div>' +
+      '<div class="shot-bar"><button class="primary" id="cfAddAll">＋ 全部添加</button><button id="cfClose">关闭</button></div>' +
+      '</div>';
+    modalMask.querySelector('#cfClose').addEventListener('click', closeModal);
+    modalMask.querySelector('#cfAddAll').addEventListener('click', function () { confirmAddAll(list, sourceLabel, sourceLink); });
+    renderConfirmCards(list, sourceLabel, sourceLink);
+  }
+
+  /* 渲染确认卡片（可编辑标题/时间/地点，逐条「＋ 添加」/「忽略」） */
+  function renderConfirmCards(list, sourceLabel, sourceLink) {
+    var box = document.getElementById('cfResults');
+    if (!box) return;
+    if (!list.length) {
+      box.innerHTML = '<div style="color:var(--ink-faint);font-size:12px;padding:2px 0;">没有可添加的日程。</div>';
+      return;
+    }
+    box.innerHTML = list.map(function (ev, i) {
+      var atLocal = '';
+      if (ev.at) { var dd = new Date(ev.at); if (isFinite(dd.getTime())) atLocal = toLocal(dd); }
+      var added = ev._added;
+      var dup = !added && ev.at && eventExists(ev.title, ev.at);
+      return '<div class="shot-ev' + (added || dup ? ' added' : '') + '" data-i="' + i + '">' +
+        '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
+        '<div class="g"><span class="lbl">时</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
+        '<span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
+        (dup
+          ? '<button class="add on" disabled>已在日历</button>'
+          : '<button class="add' + (added ? ' on' : '') + '" data-i="' + i + '">' + (added ? '✓ 已添加' : '＋ 添加') + '</button>') +
+        '</div></div>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.skip'), function (b) {
+      b.addEventListener('click', function () { list.splice(Number(b.getAttribute('data-i')), 1); renderConfirmCards(list, sourceLabel, sourceLink); });
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('.add:not(.on)'), function (b) {
+      b.addEventListener('click', function () {
+        var i = Number(b.getAttribute('data-i'));
+        var card = box.querySelector('.shot-ev[data-i="' + i + '"]');
+        var title = ((card.querySelector('.e-title') || {}).value || '').trim();
+        var at = (card.querySelector('.e-at') || {}).value || '';
+        var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
+        if (!title) { alert('请填写标题'); return; }
+        if (!at) { alert('请填写时间'); return; }
+        events.add({
+          title: title, at: new Date(at).toISOString(), location: loc,
+          link: list[i].link || sourceLink || '', note: list[i].note || '',
+          reminderMin: 1440, source: sourceLabel || '自动识别',
+        });
+        list[i]._added = true;
+        renderConfirmCards(list, sourceLabel, sourceLink);
+        renderEvents();
+        addChat('a', '已添加日程「' + title + '」。');
+      });
+    });
+  }
+
+  /* 一键添加全部确认卡片（跳过已添加/已在日历/缺字段的） */
+  function confirmAddAll(list, sourceLabel, sourceLink) {
+    var box = document.getElementById('cfResults');
+    if (!box) return;
+    var n = 0;
+    Array.prototype.forEach.call(box.querySelectorAll('.shot-ev:not(.added)'), function (card) {
+      var i = Number(card.getAttribute('data-i'));
+      var title = ((card.querySelector('.e-title') || {}).value || '').trim();
+      var at = (card.querySelector('.e-at') || {}).value || '';
+      var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
+      if (!title || !at) return;
+      if (eventExists(title, new Date(at).toISOString())) return;
+      events.add({
+        title: title, at: new Date(at).toISOString(), location: loc,
+        link: list[i].link || sourceLink || '', note: list[i].note || '',
+        reminderMin: 1440, source: sourceLabel || '自动识别',
+      });
+      list[i]._added = true;
+      n++;
+    });
+    if (n) { renderConfirmCards(list, sourceLabel, sourceLink); renderEvents(); addChat('a', '已批量添加 ' + n + ' 条日程。'); }
+  }
+
   /* 截图模式下的粘贴：⌘V / Ctrl+V 追加剪贴板图片（支持多张一起） */
   document.addEventListener('paste', function (e) {
     if (modalMask.style.display !== 'flex') return;   // 仅弹窗打开时响应
@@ -940,6 +1240,7 @@
         try { var latest = window.ingrid.loadSecretarySync(); if (latest && Array.isArray(latest.emails)) { emails.emails = latest.emails; } } catch (e) {}
         renderEmails();
         addChat('a', '已同步 ' + r.total + ' 封 Outlook 邮件并自动分类分级。');
+        scanEmailsForEvents(true);
       } else {
         addChat('a', '同步完成，未发现新邮件。');
       }
@@ -970,7 +1271,7 @@
     window.ingrid.onMailSynced(function (d) {
       try { var latest = window.ingrid.loadSecretarySync(); if (latest && Array.isArray(latest.emails)) { emails.emails = latest.emails; } } catch (e) {}
       renderEmails();
-      if (d && d.total > 0) addChat('a', '已自动同步 ' + d.total + ' 封 Outlook 邮件。');
+      if (d && d.total > 0) { addChat('a', '已自动同步 ' + d.total + ' 封 Outlook 邮件。'); scanEmailsForEvents(true); }
     });
   }
 

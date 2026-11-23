@@ -3765,6 +3765,64 @@ ipcMain.handle('notify', (_e, payload) => {
   } catch (e) { return false; }
 });
 
+/* ---------------- IPC：读取本机短信（macOS Messages 数据库，只读） ----------------
+ * 读 ~/Library/Messages/chat.db（SMS + iMessage），用系统自带 /usr/bin/sqlite3 查询，
+ * 只取最近 N 条「text 非空」的消息（旧版文本短信）；attributedBody 富文本（多数 iMessage）
+ * 解析复杂暂不覆盖。需「完全磁盘访问权限」，否则 SQLite 打不开会返回权限错误。
+ */
+function appleEpochToMs(apple) {
+  let v = Number(apple);
+  if (!v || !isFinite(v)) return 0;
+  if (v > 1e18) v = Math.floor(v / 1e9);            // macOS 10.13+ 的 date 是纳秒
+  return Math.round((v + 978307200) * 1000);         // Apple epoch(2001-01-01) → Unix 毫秒
+}
+function readMacMessages(payload) {
+  return new Promise((resolve) => {
+    const opts = payload || {};
+    const limit = Math.min(Math.max(parseInt(opts.limit, 10) || 60, 1), 200);
+    if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取 iMessage / 短信' }); return; }
+    const dbPath = path.join(app.getPath('home'), 'Library', 'Messages', 'chat.db');
+    if (!fs.existsSync(dbPath)) { resolve({ ok: false, error: '未找到短信数据库：' + dbPath }); return; }
+    const sqlite = '/usr/bin/sqlite3';
+    const q = "SELECT m.text, m.date, m.is_from_me, m.service, h.id FROM message m " +
+      "LEFT JOIN handle h ON m.handle_id = h.ROWID " +
+      "WHERE m.text IS NOT NULL AND trim(m.text) != '' ORDER BY m.date DESC LIMIT " + limit + ';';
+    execFile(sqlite, ['-separator', '\u001f', '-nullvalue', '', dbPath, q], { timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+      if (err) {
+        const msg = String((err && err.message) || err);
+        if (/unable to open database|authorization|permission|not authorized/i.test(msg)) {
+          resolve({ ok: false, error: '无法读取短信数据库（需在「完全磁盘访问」里授权本应用）' });
+        } else {
+          resolve({ ok: false, error: '读取短信失败：' + msg });
+        }
+        return;
+      }
+      const rows = String(stdout || '').split('\n').filter(Boolean);
+      const messages = [];
+      for (const line of rows) {
+        const parts = line.split('\u001f');
+        if (parts.length < 4) continue;
+        const text = (parts[0] || '').trim();
+        if (!text) continue;
+        const ms = appleEpochToMs(parts[1]);
+        const isFromMe = parts[2] === '1';
+        const service = parts[3] || '';
+        const handle = parts[4] || '';
+        messages.push({
+          text: text,
+          from: isFromMe ? '我' : handle,
+          isFromMe: isFromMe,
+          service: service,
+          ts: ms,
+          dateText: ms ? new Date(ms).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+        });
+      }
+      resolve({ ok: true, messages: messages, count: messages.length });
+    });
+  });
+}
+ipcMain.handle('messages:read', (_e, payload) => readMacMessages(payload));
+
 /* ---------------- 知识库引擎（本地 RAG） ---------------- */
 const kbEngine = new KbEngine({
   dataDir: path.join(dataDir(), 'kb'),

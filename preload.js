@@ -106,6 +106,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   loadSecretarySync: () => ipcRenderer.sendSync('secretary:list-sync'),
   saveSecretary: (state) => ipcRenderer.invoke('secretary:save', state),
   notify: (payload) => ipcRenderer.invoke('notify', payload),
+  // 读取本机短信（macOS Messages 数据库，只读）
+  messagesRead: (payload) => ipcRenderer.invoke('messages:read', payload),
 
   // 邮箱 / 日历同步（CalDAV 账户 + 触发同步）
   syncAccountsList: () => ipcRenderer.invoke('sync:accounts:list'),
