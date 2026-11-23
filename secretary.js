@@ -298,16 +298,60 @@
     });
   }
 
-  /* 合并多个识别结果列表：同标题+同 ISO 时间去重，字段取更完整的 */
+  /* ---------- 本地语义去重：标题归一化 + 相似度 + 时间窗（免费、确定性兜底） ---------- */
+  // 归一化：只保留字母数字与汉字，统一小写（用于「包含关系」判断，不改原始标题）
+  function normTitle(t) {
+    return String(t || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
+  }
+  // 提取关键词：英文按词（保留词边界）、中文按连续汉字串的 bigram（避免单字误判）
+  function titleTokens(t) {
+    var s = String(t || '').toLowerCase();
+    var out = [];
+    var latin = s.match(/[a-z0-9]+/g) || [];
+    out = out.concat(latin);
+    var han = s.match(/[\u4e00-\u9fa5]+/g) || [];
+    han.forEach(function (h) {
+      if (h.length <= 2) { out.push(h); return; }
+      for (var k = 0; k < h.length - 1; k++) out.push(h.slice(k, k + 2));
+    });
+    return out;
+  }
+  // 标题相似度 0~1：完全相等 / 互相包含 = 1；否则用 token 覆盖度（公共 token / 较短标题 token 数）
+  function titleSimilarity(a, b) {
+    var A = normTitle(a), B = normTitle(b);
+    if (!A || !B) return 0;
+    if (A === B) return 1;
+    if (A.indexOf(B) >= 0 || B.indexOf(A) >= 0) return 1;
+    var ta = titleTokens(A), tb = titleTokens(B);
+    if (!ta.length || !tb.length) return 0;
+    var setA = {}, setB = {}, common = 0;
+    ta.forEach(function (x) { setA[x] = 1; });
+    tb.forEach(function (x) { setB[x] = 1; });
+    Object.keys(setA).forEach(function (x) { if (setB[x]) common++; });
+    return common / Math.min(Object.keys(setA).length, Object.keys(setB).length);
+  }
+  // 两个事件是否「疑似重复」：标题语义相似（≥0.6）+ 时间接近（同一天 ± 90 分钟；缺时间则只看标题）
+  function eventsSimilar(aTitle, aAt, bTitle, bAt) {
+    if (titleSimilarity(aTitle, bTitle) < 0.6) return false;
+    if (!aAt || !bAt) return true;
+    var ta = new Date(aAt), tb = new Date(bAt);
+    if (!isFinite(ta.getTime()) || !isFinite(tb.getTime())) return true;
+    if (ta.toDateString() !== tb.toDateString()) return false;
+    return Math.abs(ta.getTime() - tb.getTime()) <= 90 * 60000;
+  }
+
+  /* 合并多个识别结果列表：标题语义相似 + 时间接近 判重，字段取更完整的 */
   function mergeEventLists(lists) {
     var out = [];
     (lists || []).forEach(function (l) {
       (l || []).forEach(function (ev) {
         var dup = null;
         for (var i = 0; i < out.length; i++) {
-          if (out[i].title === ev.title && out[i].at && out[i].at === ev.at) { dup = out[i]; break; }
+          if (eventsSimilar(out[i].title, out[i].at, ev.title, ev.at)) { dup = out[i]; break; }
         }
         if (dup) {
+          // 标题取更完整（更长）的，其余字段逐项补空
+          if (String(ev.title || '').length > String(dup.title || '').length) dup.title = ev.title;
           if (!dup.location && ev.location) dup.location = ev.location;
           if (!dup.link && ev.link) dup.link = ev.link;
           if (!dup.note && ev.note) dup.note = ev.note;
@@ -456,6 +500,7 @@
         '\n\n规则：' +
         '\n1) 逐张识别：每一张截图里的每个日程都要识别出来，不要漏掉任何一张。' +
         '\n2) 多张截图若是同一个活动（如邮件正文+日历+海报描述同一件事），合并为一条，字段取最完整的。' +
+        '\n2.1) 【重要】同一个活动即使标题措辞不同（如活动全称 vs 主题口号、简称 vs 全称），只要时间地点一致，就必须合并成一条，输出最完整、最正式的标题，绝不允许把同一活动拆成多条。' +
         '\n3) 不同的活动——无论出现在同一张图里还是不同的多张图里——都要分别输出为独立的多条。' +
         '\n4) dateText / timeText / endTimeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算成日期、不要猜测年份。' +
         '\n5) timeText 填开始时间；endTimeText 填结束时间。若截图只给一段「15:00-17:00」，则 timeText 取「15:00」、endTimeText 取「17:00」；没有结束时间就留空。' +
@@ -464,38 +509,47 @@
         '\n8) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
       (dataUrls || []).forEach(function (u) { content.push({ type: 'image_url', image_url: { url: u } }); });
       var msgs = [{ role: 'user', content: content }];
-      var out = '';
-      window.ingrid.chatStream({ engine: 'ollama-vision', model: 'qwen2.5vl:7b', messages: msgs, sessionId: 'sec-shot' }, {
-        onDelta: function (chunk) { if (chunk && chunk.text) { out += chunk.text; if (onProgress) onProgress(out); } },
-        onDone: function (d) {
-          if (!d || !d.ok) { reject(new Error((d && d.error) || '识别失败')); return; }
-          var m = out.match(/\[[\s\S]*\]/);
-          if (!m) { reject(new Error('未从截图识别出日程信息')); return; }
-          try {
-            var arr = JSON.parse(m[0]);
-            if (!Array.isArray(arr) || !arr.length) { reject(new Error('未从截图识别出日程信息')); return; }
-            var list = arr.map(function (j) {
-              var endText = String(j.endTimeText || '').trim();
-              var ag = Array.isArray(j.agenda) ? j.agenda.map(function (a) {
-                return { timeText: String((a && a.timeText) || '').trim(), title: String((a && a.title) || '').trim() };
-              }).filter(function (a) { return a.title || a.timeText; }) : [];
-              return {
-                title: String(j.title || '').trim(),
-                at: parseEventDateTime(j.dateText, j.timeText, now),
-                end: endText ? parseEventDateTime(j.dateText, endText, now) : '',
-                location: String(j.location || '').trim(),
-                link: String(j.link || '').trim(),
-                note: String(j.note || '').trim(),
-                dateText: String(j.dateText || '').trim(),
-                timeText: String(j.timeText || '').trim(),
-                endTimeText: endText,
-                agenda: ag,
-              };
-            }).filter(function (e) { return e.title || e.at; });
-            resolve(list);
-          } catch (e) { reject(new Error('识别结果解析失败')); }
-        },
-      });
+      // 引擎优先级：DeepSeek（deepseek-flash 已支持图片、语义分组强、重复少）→ 本地视觉模型兜底
+      var engines = [
+        { engine: 'deepseek', model: 'deepseek-flash' },
+        { engine: 'ollama-vision', model: 'qwen2.5vl:7b' },
+      ];
+      (function attempt(i) {
+        if (i >= engines.length) { reject(new Error('识图失败（DeepSeek 与本地视觉模型均不可用），可在下方手动填写')); return; }
+        var out = '';
+        window.ingrid.chatStream({ engine: engines[i].engine, model: engines[i].model, messages: msgs, sessionId: 'sec-shot' }, {
+          onDelta: function (chunk) { if (chunk && chunk.text) { out += chunk.text; if (onProgress) onProgress(out); } },
+          onDone: function (d) {
+            if (!d || !d.ok) { attempt(i + 1); return; }
+            var m = out.match(/\[[\s\S]*\]/);
+            if (!m) { attempt(i + 1); return; }
+            try {
+              var arr = JSON.parse(m[0]);
+              if (!Array.isArray(arr) || !arr.length) { attempt(i + 1); return; }
+              var list = arr.map(function (j) {
+                var endText = String(j.endTimeText || '').trim();
+                var ag = Array.isArray(j.agenda) ? j.agenda.map(function (a) {
+                  return { timeText: String((a && a.timeText) || '').trim(), title: String((a && a.title) || '').trim() };
+                }).filter(function (a) { return a.title || a.timeText; }) : [];
+                return {
+                  title: String(j.title || '').trim(),
+                  at: parseEventDateTime(j.dateText, j.timeText, now),
+                  end: endText ? parseEventDateTime(j.dateText, endText, now) : '',
+                  location: String(j.location || '').trim(),
+                  link: String(j.link || '').trim(),
+                  note: String(j.note || '').trim(),
+                  dateText: String(j.dateText || '').trim(),
+                  timeText: String(j.timeText || '').trim(),
+                  endTimeText: endText,
+                  agenda: ag,
+                };
+              }).filter(function (e) { return e.title || e.at; });
+              if (!list.length) { attempt(i + 1); return; }
+              resolve(list);
+            } catch (e) { attempt(i + 1); }
+          },
+        });
+      })(0);
     });
   }
 
@@ -884,38 +938,46 @@
         '只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown。数组每一项是一条日程，格式严格为：' +
         '{"title":"标题","dateText":"日期原文","timeText":"开始时间原文","endTimeText":"结束时间原文","location":"地点","link":"链接","note":"备注","agenda":[{"timeText":"时间原文","title":"议程项"}]}。' +
         '\n规则：dateText / timeText / endTimeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算、不要猜测年份；timeText 填开始时间、endTimeText 填结束时间（若文字是「15:00-17:00」则 timeText 取「15:00」、endTimeText 取「17:00」），没有的字段填空字符串；若文字里含详细议程/时间表（多个「时间+事项」）逐项提取到 agenda 数组，否则输出空数组 []；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
-      var out = '';
-      window.ingrid.chatStream({ engine: 'ollama', messages: msgs, sessionId: 'sec-text' }, {
-        onDelta: function (c) { if (c && c.text) out += c.text; },
-        onDone: function (d) {
-          if (!d || !d.ok) { resolve(parseEventsFromText(text, base)); return; }
-          var m = out.match(/\[[\s\S]*\]/);
-          if (!m) { resolve(parseEventsFromText(text, base)); return; }
-          try {
-            var arr = JSON.parse(m[0]);
-            if (!Array.isArray(arr) || !arr.length) { resolve(parseEventsFromText(text, base)); return; }
-            var list = arr.map(function (j) {
-              var endText = String(j.endTimeText || '').trim();
-              var ag = Array.isArray(j.agenda) ? j.agenda.map(function (a) {
-                return { timeText: String((a && a.timeText) || '').trim(), title: String((a && a.title) || '').trim() };
-              }).filter(function (a) { return a.title || a.timeText; }) : [];
-              return {
-                title: String(j.title || '').trim(),
-                at: parseEventDateTime(j.dateText, j.timeText, base),
-                end: endText ? parseEventDateTime(j.dateText, endText, base) : '',
-                location: String(j.location || '').trim(),
-                link: String(j.link || '').trim(),
-                note: String(j.note || '').trim(),
-                dateText: String(j.dateText || '').trim(),
-                timeText: String(j.timeText || '').trim(),
-                endTimeText: endText,
-                agenda: ag,
-              };
-            }).filter(function (e) { return e.title || e.at; });
-            resolve(list.length ? list : parseEventsFromText(text, base));
-          } catch (e) { resolve(parseEventsFromText(text, base)); }
-        },
-      });
+      // 引擎优先级：DeepSeek（deepseek-flash 便宜、质量高）→ 本地文本模型 → 纯本地规则兜底
+      var engines = [
+        { engine: 'deepseek', model: 'deepseek-flash' },
+        { engine: 'ollama' },
+      ];
+      (function attempt(i) {
+        if (i >= engines.length) { resolve(parseEventsFromText(text, base)); return; }
+        var out = '';
+        window.ingrid.chatStream({ engine: engines[i].engine, model: engines[i].model, messages: msgs, sessionId: 'sec-text' }, {
+          onDelta: function (c) { if (c && c.text) out += c.text; },
+          onDone: function (d) {
+            if (!d || !d.ok) { attempt(i + 1); return; }
+            var m = out.match(/\[[\s\S]*\]/);
+            if (!m) { attempt(i + 1); return; }
+            try {
+              var arr = JSON.parse(m[0]);
+              if (!Array.isArray(arr) || !arr.length) { attempt(i + 1); return; }
+              var list = arr.map(function (j) {
+                var endText = String(j.endTimeText || '').trim();
+                var ag = Array.isArray(j.agenda) ? j.agenda.map(function (a) {
+                  return { timeText: String((a && a.timeText) || '').trim(), title: String((a && a.title) || '').trim() };
+                }).filter(function (a) { return a.title || a.timeText; }) : [];
+                return {
+                  title: String(j.title || '').trim(),
+                  at: parseEventDateTime(j.dateText, j.timeText, base),
+                  end: endText ? parseEventDateTime(j.dateText, endText, base) : '',
+                  location: String(j.location || '').trim(),
+                  link: String(j.link || '').trim(),
+                  note: String(j.note || '').trim(),
+                  dateText: String(j.dateText || '').trim(),
+                  timeText: String(j.timeText || '').trim(),
+                  endTimeText: endText,
+                  agenda: ag,
+                };
+              }).filter(function (e) { return e.title || e.at; });
+              resolve(list.length ? list : parseEventsFromText(text, base));
+            } catch (e) { attempt(i + 1); }
+          },
+        });
+      })(0);
     });
   }
 
@@ -928,22 +990,17 @@
     window.ingrid.notify({ title: title, body: body });
   }
 
-  /* 查找已存在的重复活动：优先「同标题 + 同 ISO 时间」，其次「同标题 + 同一天」。返回匹配事件对象或 null。 */
+  /* 查找已存在的重复活动：标题语义相似 + 时间接近（优先精确时间，其次同一天/时间窗）。返回匹配事件对象或 null。 */
   function findExistingEvent(title, at) {
     var t = String(title || '').trim();
     var a = String(at || '');
     if (!t) return null;
-    var day = '';
-    if (a) { var d = new Date(a); if (isFinite(d.getTime())) day = d.toDateString(); }
     var byDay = null;
     for (var i = 0; i < events.events.length; i++) {
       var e = events.events[i];
-      if (e.title !== t) continue;
-      if (a && e.at === a) return e;                 // 精确匹配
-      if (day && e.at) {
-        var ed = new Date(e.at);
-        if (isFinite(ed.getTime()) && ed.toDateString() === day && !byDay) byDay = e;   // 同一天
-      }
+      if (!eventsSimilar(t, a, e.title, e.at)) continue;
+      if (a && e.at === a) return e;                 // 精确时间命中，最可信
+      if (!byDay) byDay = e;                          // 同一天 / 时间窗内
     }
     return byDay;
   }
