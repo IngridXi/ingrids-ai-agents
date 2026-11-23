@@ -123,6 +123,8 @@
     '.sec-modal .shot-bar button{flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:12px;cursor:pointer;}',
     '.sec-modal .shot-bar .primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650;}',
     '.sec-modal .divider{border:none;border-top:1px dashed var(--line);margin:12px 0;}',
+    '.sec-modal .agenda-prev{font-size:11px;color:var(--ink-soft);background:var(--surface-2);border-radius:7px;padding:6px 8px;margin-bottom:6px;line-height:1.5;word-break:break-all;}',
+    '.sec-modal .shot-ev .acts .add.merge{opacity:1;cursor:pointer;background:var(--accent-soft,#eef3ff);border-color:var(--accent);color:var(--accent);}',
     '.sec-panel.drag-over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft);}',
     '.sec-modal.drag-over{outline:3px dashed var(--accent);outline-offset:-4px;}',
   ].join('\n');
@@ -145,8 +147,7 @@
         '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
         '<div class="sec-chat" id="secChat"></div></div>' +
       '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 发截图 · 自动识别</button>' +
-        '<button class="sec-btn ghost" id="secFromLink" title="粘贴链接自动识别日程">' + iconSvg('link') + ' 链接识别</button></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 识别日程（图片＋链接）</button></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 手动添加</button>' +
         '<button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
@@ -282,39 +283,51 @@
     openEventModal(null, true);
   });
 
-  /* 粘贴链接 → 抓正文 → 提取日程 → 确认 */
-  document.getElementById('secFromLink').addEventListener('click', openLinkModal);
-  function openLinkModal() {
-    modalMask.style.display = 'flex';
-    modalMask.innerHTML =
-      '<div class="sec-modal"><h3>' + iconSvg('link') + ' 粘贴链接 · 识别日程</h3>' +
-      '<div class="sub">粘贴活动 / 会议 / 票务 / 酒店等链接（可多行多个），秘书会抓取页面正文并识别其中的日程信息，识别后请你确认是否添加。</div>' +
-      '<div class="f"><textarea id="lkUrls" rows="4" placeholder="https://...&#10;https://..."></textarea></div>' +
-      '<div class="shot-state" id="lkState"></div>' +
-      '<div class="foot"><button id="lkCancel">取消</button><button class="primary" id="lkGo">' + iconSvg('sparkles') + ' 抓取并识别</button></div></div>';
-    modalMask.querySelector('#lkCancel').addEventListener('click', closeModal);
-    modalMask.querySelector('#lkGo').addEventListener('click', function () {
-      var raw = modalMask.querySelector('#lkUrls').value;
-      var urls = raw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return /^https?:\/\//.test(s); });
-      if (!urls.length) { alert('请粘贴至少一个 http(s) 链接'); return; }
-      var st = modalMask.querySelector('#lkState');
-      st.textContent = '🔍 正在抓取 ' + urls.length + ' 个链接…';
-      Promise.all(urls.map(function (u) {
-        return window.ingrid.webFetch({ url: u }).then(function (r) {
-          return (r && r.ok) ? (r.title ? r.title + '\n' : '') + r.content : '';
-        }).catch(function () { return ''; });
-      })).then(function (parts) {
-        var text = parts.join('\n\n---\n\n');
-        if (!text.trim()) { st.textContent = '⚠️ 未能抓取到内容（可能是动态页面或需登录）。'; return; }
-        st.textContent = '🔍 正在识别日程…';
-        extractEventsFromText(text).then(function (list) {
-          closeModal();
-          if (!list.length) { addChat('a', '未从链接内容中识别出日程，可手动添加。'); return; }
-          notifyConfirm(list, '链接识别');
-          openConfirmEvents(list, '链接识别', urls[0]);
-        });
-      }).catch(function (e) { st.textContent = '⚠️ 失败：' + (e && e.message || e); });
+  /* 抓取多个链接正文 → 提取日程（统一识别入口使用） */
+  function fetchLinksAndExtract(links) {
+    if (!links || !links.length) return Promise.resolve([]);
+    if (!window.ingrid || !window.ingrid.webFetch) return Promise.resolve([]);
+    return Promise.all(links.map(function (u) {
+      return window.ingrid.webFetch({ url: u }).then(function (r) {
+        return (r && r.ok) ? ((r.title ? r.title + '\n' : '') + r.content) : '';
+      }).catch(function () { return ''; });
+    })).then(function (parts) {
+      var text = parts.join('\n\n---\n\n');
+      if (!text.trim()) return [];
+      return extractEventsFromText(text);
     });
+  }
+
+  /* 合并多个识别结果列表：同标题+同 ISO 时间去重，字段取更完整的 */
+  function mergeEventLists(lists) {
+    var out = [];
+    (lists || []).forEach(function (l) {
+      (l || []).forEach(function (ev) {
+        var dup = null;
+        for (var i = 0; i < out.length; i++) {
+          if (out[i].title === ev.title && out[i].at && out[i].at === ev.at) { dup = out[i]; break; }
+        }
+        if (dup) {
+          if (!dup.location && ev.location) dup.location = ev.location;
+          if (!dup.link && ev.link) dup.link = ev.link;
+          if (!dup.note && ev.note) dup.note = ev.note;
+          if (!dup.end && ev.end) dup.end = ev.end;
+          if (!(dup.agenda && dup.agenda.length) && (ev.agenda && ev.agenda.length)) dup.agenda = ev.agenda;
+        } else {
+          out.push(ev);
+        }
+      });
+    });
+    return out;
+  }
+
+  /* 统一识别：图片（视觉模型）+ 链接（抓正文 + 文本模型）→ 合并去重 */
+  function recognizeUnified(dataUrls, links, onProgress) {
+    var tasks = [];
+    if (dataUrls && dataUrls.length) tasks.push(recognizeShot(dataUrls, onProgress));
+    if (links && links.length) tasks.push(fetchLinksAndExtract(links));
+    if (!tasks.length) return Promise.resolve([]);
+    return Promise.all(tasks).then(mergeEventLists);
   }
 
   /* 判定一封邮件是否含「确认信息」（活动报名 / 会议 / 票务 / 预订 / 注册等） */
@@ -439,15 +452,16 @@
         '今天是 ' + today + '。你是日程识别助手。请识别下面这些截图里的所有日程信息。' +
         '这些截图可能是同一个活动的多张截图（信息互补），也可能是多个不同活动的截图，或一张图里包含多个不同日程。' +
         '\n\n只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown 代码块。数组每一项是一条日程，格式严格为：' +
-        '{"title":"标题","dateText":"日期原文","timeText":"时间原文","location":"地点","link":"链接","note":"备注"}。' +
+        '{"title":"标题","dateText":"日期原文","timeText":"开始时间原文","endTimeText":"结束时间原文","location":"地点","link":"链接","note":"备注","agenda":[{"timeText":"时间原文","title":"议程项"}]}。' +
         '\n\n规则：' +
         '\n1) 逐张识别：每一张截图里的每个日程都要识别出来，不要漏掉任何一张。' +
         '\n2) 多张截图若是同一个活动（如邮件正文+日历+海报描述同一件事），合并为一条，字段取最完整的。' +
         '\n3) 不同的活动——无论出现在同一张图里还是不同的多张图里——都要分别输出为独立的多条。' +
-        '\n4) dateText 和 timeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」），绝对不要换算成日期、不要猜测年份。' +
-        '\n5) 没有明确日期的 dateText 留空，没有明确时间的 timeText 留空。' +
-        '\n6) 地点/链接/备注从截图提取，没有就留空字符串。' +
-        '\n7) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
+        '\n4) dateText / timeText / endTimeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算成日期、不要猜测年份。' +
+        '\n5) timeText 填开始时间；endTimeText 填结束时间。若截图只给一段「15:00-17:00」，则 timeText 取「15:00」、endTimeText 取「17:00」；没有结束时间就留空。' +
+        '\n6) 若截图里有活动的详细议程/时间表（多个「时间+事项」，如「9:00 签到」「10:30 主题演讲」），逐项提取到 agenda 数组（每项 timeText 保留原始时间写法、title 为该议程项标题）；没有议程就输出空数组 []。' +
+        '\n7) 地点/链接/备注从截图提取，没有就留空字符串。' +
+        '\n8) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
       (dataUrls || []).forEach(function (u) { content.push({ type: 'image_url', image_url: { url: u } }); });
       var msgs = [{ role: 'user', content: content }];
       var out = '';
@@ -461,14 +475,21 @@
             var arr = JSON.parse(m[0]);
             if (!Array.isArray(arr) || !arr.length) { reject(new Error('未从截图识别出日程信息')); return; }
             var list = arr.map(function (j) {
+              var endText = String(j.endTimeText || '').trim();
+              var ag = Array.isArray(j.agenda) ? j.agenda.map(function (a) {
+                return { timeText: String((a && a.timeText) || '').trim(), title: String((a && a.title) || '').trim() };
+              }).filter(function (a) { return a.title || a.timeText; }) : [];
               return {
                 title: String(j.title || '').trim(),
                 at: parseEventDateTime(j.dateText, j.timeText, now),
+                end: endText ? parseEventDateTime(j.dateText, endText, now) : '',
                 location: String(j.location || '').trim(),
                 link: String(j.link || '').trim(),
                 note: String(j.note || '').trim(),
                 dateText: String(j.dateText || '').trim(),
                 timeText: String(j.timeText || '').trim(),
+                endTimeText: endText,
+                agenda: ag,
               };
             }).filter(function (e) { return e.title || e.at; });
             resolve(list);
@@ -574,15 +595,16 @@
     var hint = prefill || {};
     modalMask.style.display = 'flex';
     var html =
-      '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 发截图 · 自动识别日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
-      '<div class="sub">' + (isShot ? '可直接拖入、多选或多次粘贴图片；同一活动的多张会合并成一条，不同活动（一图多日程或多图多活动）会分别列出，本地识别不联网不花钱。' : '保存后秘书会按提醒时间通知你。') + '</div>';
+      '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 识别日程（图片＋链接）' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
+      '<div class="sub">' + (isShot ? '拖入 / 粘贴 / 选择截图，可同时粘贴活动链接；点「开始识别」一次性识别。同一活动的多张会合并，不同活动会分别列出；重复活动自动补全缺失信息、不重复添加。' : '保存后秘书会按提醒时间通知你。') + '</div>';
     if (isShot) {
       html += '<div class="shot-thumbs" id="evThumbs">' + shotDataUrls.map(function (u, i) {
         return '<div class="shot-thumb"><img src="' + u + '"><button class="rm" data-rm="' + i + '" title="移除">✕</button></div>';
       }).join('') + '</div>';
       html += '<span class="shot-add" id="evAddShot">' + iconSvg('camera') + ' 添加图片（也可直接拖入，或 ⌘V / Ctrl+V 粘贴）</span>';
+      html += '<div class="f"><label>活动链接（可选，可多行多个）</label><textarea id="evLinks" rows="2" placeholder="https://...&#10;https://..."></textarea></div>';
       html += '<div class="shot-state" id="evShotState"></div>';
-      html += '<div class="shot-bar"><button class="primary" id="evAddAll">＋ 一键全部添加</button></div>';
+      html += '<div class="shot-bar"><button class="primary" id="evRecognize">' + iconSvg('sparkles') + ' 开始识别</button><button id="evAddAll">＋ 全部添加</button></div>';
       html += '<div class="shot-results" id="evResults"></div>';
       html += '<hr class="divider"><div class="sub" style="margin-bottom:8px">没有识别到、或想再补一条？手动填写：</div>';
     }
@@ -620,22 +642,32 @@
       modalMask.querySelector('#evAddAll').addEventListener('click', addAllShots);
 
       var stEl = modalMask.querySelector('#evShotState');
-      if (shotDataUrls.length) {
-        stEl.textContent = '🔍 正在识别 ' + shotDataUrls.length + ' 张截图…';
-        recognizeShot(shotDataUrls, function (stream) {
+      var recognizeBtn = modalMask.querySelector('#evRecognize');
+      recognizeBtn.addEventListener('click', function () {
+        var linksRaw = ((modalMask.querySelector('#evLinks') || {}).value || '');
+        var links = linksRaw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return /^https?:\/\//.test(s); });
+        if (!shotDataUrls.length && !links.length) { stEl.textContent = '💡 请先添加图片或粘贴链接，再开始识别。'; return; }
+        recognizeBtn.disabled = true;
+        stEl.textContent = '🔍 正在识别' + (shotDataUrls.length ? ' ' + shotDataUrls.length + ' 张截图' : '') + (links.length ? ' ＋ ' + links.length + ' 个链接' : '') + '…';
+        recognizeUnified(shotDataUrls, links, function (stream) {
           stEl.textContent = '🔍 正在识别…（' + Math.min(stream.length, 40) + ' 字符）';
         }).then(function (list) {
           shotEvents = list;
-          stEl.textContent = '✅ 识别出 ' + list.length + ' 条日程，请核对后逐条「＋ 添加」或「一键全部添加」。';
+          recognizeBtn.disabled = false;
+          stEl.textContent = '✅ 识别出 ' + list.length + ' 条日程，请核对后逐条「＋ 添加」或「＋ 全部添加」。';
           renderShotResults();
         }).catch(function (e) {
-          stEl.textContent = '⚠️ 自动识别失败：' + (e && e.message || e) + '（可在下方手动填写）';
+          recognizeBtn.disabled = false;
+          stEl.textContent = '⚠️ 识别失败：' + (e && e.message || e) + '（可在下方手动填写）';
           renderShotResults();
         });
+      });
+      if (shotDataUrls.length) {
+        stEl.textContent = '📎 已添加 ' + shotDataUrls.length + ' 张截图，可继续粘贴链接，然后点「开始识别」。';
       } else {
-        stEl.textContent = '💡 点击「添加图片」选择截图，或直接 ⌘V / Ctrl+V 粘贴。';
-        renderShotResults();
+        stEl.textContent = '💡 添加图片或粘贴链接后，点「开始识别」。';
       }
+      renderShotResults();
     }
 
     modalMask.querySelector('#evSave').addEventListener('click', function () {
@@ -655,7 +687,7 @@
     });
   }
 
-  /* 渲染识别出的日程结果（可编辑标题/时间/地点，逐条添加或忽略） */
+  /* 渲染识别出的日程结果（可编辑标题/起止时间/地点，逐条添加或忽略，重复项补全） */
   function renderShotResults() {
     var box = document.getElementById('evResults');
     var allBtn = document.getElementById('evAddAll');
@@ -667,15 +699,25 @@
     }
     if (allBtn) allBtn.style.display = '';
     box.innerHTML = shotEvents.map(function (ev, i) {
-      var atLocal = '';
+      var atLocal = '', endLocal = '';
       if (ev.at) { var dd = new Date(ev.at); if (isFinite(dd.getTime())) atLocal = toLocal(dd); }
-      var added = ev._added;
-      return '<div class="shot-ev' + (added ? ' added' : '') + '" data-i="' + i + '">' +
+      if (ev.end) { var de = new Date(ev.end); if (isFinite(de.getTime())) endLocal = toLocal(de); }
+      var added = ev._added, merged = ev._merged;
+      var existing = !added && !merged && ev.at ? findExistingEvent(ev.title, ev.at) : null;
+      var ag = agendaPreview(ev.agenda);
+      return '<div class="shot-ev' + (added || merged || existing ? ' added' : '') + '" data-i="' + i + '">' +
         '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
-        '<div class="g"><span class="lbl">时</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
-        '<span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
+        '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
+        '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        (ag ? '<div class="agenda-prev">' + esc(ag) + '</div>' : '') +
         '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
-        '<button class="add' + (added ? ' on' : '') + '" data-i="' + i + '">' + (added ? '✓ 已添加' : '＋ 添加') + '</button></div></div>';
+        (existing
+          ? '<button class="add on merge" data-i="' + i + '">⇄ 补全信息</button>'
+          : (merged
+            ? '<button class="add on" disabled>✓ 已补全</button>'
+            : '<button class="add' + (added ? ' on' : '') + '" data-i="' + i + '">' + (added ? '✓ 已添加' : '＋ 添加') + '</button>')) +
+        '</div></div>';
     }).join('');
     Array.prototype.forEach.call(box.querySelectorAll('.skip'), function (b) {
       b.addEventListener('click', function () {
@@ -683,48 +725,73 @@
         renderShotResults();
       });
     });
-    Array.prototype.forEach.call(box.querySelectorAll('.add:not(.on)'), function (b) {
+    Array.prototype.forEach.call(box.querySelectorAll('.add:not(.on):not(.merge)'), function (b) {
       b.addEventListener('click', function () {
         var i = Number(b.getAttribute('data-i'));
         var card = box.querySelector('.shot-ev[data-i="' + i + '"]');
         var title = ((card.querySelector('.e-title') || {}).value || '').trim();
         var at = (card.querySelector('.e-at') || {}).value || '';
+        var endv = (card.querySelector('.e-end') || {}).value || '';
         var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
         if (!title) { alert('请填写标题'); return; }
         if (!at) { alert('请填写时间'); return; }
-        events.add({
-          title: title, at: new Date(at).toISOString(), location: loc,
-          link: shotEvents[i].link || '', note: shotEvents[i].note || '',
-          reminderMin: 1440, source: '截图识别',
+        var r = addEventSmart({
+          title: title, at: new Date(at).toISOString(), end: endv ? new Date(endv).toISOString() : '',
+          location: loc, link: shotEvents[i].link || '', note: shotEvents[i].note || '',
+          agenda: shotEvents[i].agenda || [], reminderMin: 1440, source: '截图识别',
         });
-        shotEvents[i]._added = true;
+        if (r.mode === 'added') { shotEvents[i]._added = true; addChat('a', '已添加日程「' + title + '」。'); }
+        else if (r.mode === 'merged') { shotEvents[i]._merged = true; addChat('a', '「' + title + '」已存在，已补全缺失信息。'); }
+        else { shotEvents[i]._merged = true; addChat('a', '「' + title + '」已存在且信息完整，未重复添加。'); }
         renderShotResults();
         renderEvents();
-        addChat('a', '已添加日程「' + title + '」。');
+      });
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('.add.merge'), function (b) {
+      b.addEventListener('click', function () {
+        var i = Number(b.getAttribute('data-i'));
+        var card = box.querySelector('.shot-ev[data-i="' + i + '"]');
+        var title = ((card.querySelector('.e-title') || {}).value || '').trim();
+        var at = (card.querySelector('.e-at') || {}).value || '';
+        var endv = (card.querySelector('.e-end') || {}).value || '';
+        var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
+        var existing = findExistingEvent(title, at ? new Date(at).toISOString() : '');
+        var merged = mergeIntoExisting(existing, {
+          location: loc, link: shotEvents[i].link || '', note: shotEvents[i].note || '',
+          end: endv ? new Date(endv).toISOString() : '', agenda: shotEvents[i].agenda || [],
+        });
+        shotEvents[i]._merged = true;
+        addChat('a', merged ? '已补全「' + title + '」的缺失信息。' : '「' + title + '」信息已完整，无需补全。');
+        renderShotResults();
+        renderEvents();
       });
     });
   }
 
-  /* 一键添加全部识别结果（跳过已添加/无标题/无时间的） */
+  /* 一键添加全部识别结果（重复项自动补全，非重复项新增） */
   function addAllShots() {
     var box = document.getElementById('evResults');
     if (!box) return;
-    var n = 0;
+    var added = 0, merged = 0;
     Array.prototype.forEach.call(box.querySelectorAll('.shot-ev:not(.added)'), function (card) {
       var i = Number(card.getAttribute('data-i'));
       var title = ((card.querySelector('.e-title') || {}).value || '').trim();
       var at = (card.querySelector('.e-at') || {}).value || '';
+      var endv = (card.querySelector('.e-end') || {}).value || '';
       var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
       if (!title || !at) return;
-      events.add({
-        title: title, at: new Date(at).toISOString(), location: loc,
-        link: shotEvents[i].link || '', note: shotEvents[i].note || '',
-        reminderMin: 1440, source: '截图识别',
+      var r = addEventSmart({
+        title: title, at: new Date(at).toISOString(), end: endv ? new Date(endv).toISOString() : '',
+        location: loc, link: shotEvents[i].link || '', note: shotEvents[i].note || '',
+        agenda: shotEvents[i].agenda || [], reminderMin: 1440, source: '截图识别',
       });
-      shotEvents[i]._added = true;
-      n++;
+      if (r.mode === 'added') { shotEvents[i]._added = true; added++; }
+      else { shotEvents[i]._merged = true; merged++; }
     });
-    if (n) { renderShotResults(); renderEvents(); addChat('a', '已批量添加 ' + n + ' 条日程。'); }
+    var msg = [];
+    if (added) msg.push('新增 ' + added + ' 条');
+    if (merged) msg.push('补全 ' + merged + ' 条重复活动');
+    if (msg.length) { renderShotResults(); renderEvents(); addChat('a', '已' + msg.join('、') + '。'); }
   }
   function toLocal(d) {
     var p = function (n) { return ('0' + n).slice(-2); };
@@ -769,19 +836,40 @@
     else if ((dm = src.match(/\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/i))) dateText = dm[0];
     else if ((dm = src.match(/\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}/))) dateText = dm[0];
 
-    // 时间原文
-    var timeText = '', tm;
-    if ((tm = src.match(/(\d{1,2})[:：]\s*\d{1,2}\s*(?:am|pm)?/i))) timeText = tm[0];
-    else if ((tm = src.match(/(上午|下午|晚上|中午)\s*\d{1,2}\s*点(?:\s*(?:半|\d{1,2}\s*分)?)?/))) timeText = tm[0];
+    // 时间原文（开始/结束，支持「15:00-17:00」「下午2点-5点」）
+    var timeText = '', endTimeText = '', tm;
+    if ((tm = src.match(/(\d{1,2})[:：]\s*(\d{1,2})\s*(am|pm)?\s*[-—~至到]\s*(\d{1,2})[:：]\s*(\d{1,2})\s*(am|pm)?/i))) {
+      timeText = tm[1] + ':' + tm[2] + (tm[3] || '');
+      endTimeText = tm[4] + ':' + tm[5] + (tm[6] || '');
+    } else if ((tm = src.match(/(上午|下午|晚上|中午)\s*(\d{1,2})\s*点\s*[-—~至到]\s*(上午|下午|晚上|中午)?\s*(\d{1,2})\s*点/))) {
+      timeText = tm[1] + tm[2] + '点';
+      endTimeText = (tm[3] || tm[1]) + tm[4] + '点';
+    } else if ((tm = src.match(/(\d{1,2})[:：]\s*\d{1,2}\s*(?:am|pm)?/i))) {
+      timeText = tm[0];
+    } else if ((tm = src.match(/(上午|下午|晚上|中午)\s*\d{1,2}\s*点(?:\s*(?:半|\d{1,2}\s*分)?)?/))) {
+      timeText = tm[0];
+    }
 
     // 地点
     var location = '', lm;
     if ((lm = src.match(/(?:地点|地址|位置|venue|location)\s*[：:]\s*([^\n,，。]{2,50})/i))) location = lm[1].trim();
     else if ((lm = src.match(/(?:在|于)\s*([^\n,，。]{2,40}(?:会议室|教室|礼堂|报告厅|厅|馆|中心|酒店|大厦|楼|号|room|hall|college|street|road|campus))/i))) location = lm[1].trim();
 
+    // 议程（本地规则兜底：匹配「时间 事项」行，至少2项）
+    var agenda = [];
+    var agRe = /(?:^|\n)[ \t]*(\d{1,2}[:：]\d{2}|(?:上午|下午|晚上|中午)[ \t]*\d{1,2}[ \t]*点)[ \t]+([^\n]{2,40})/g;
+    var am;
+    while ((am = agRe.exec(src))) {
+      var agTitle = am[2].replace(/^[-—:：·\s]+/, '').trim();
+      if (agTitle && !/^\d/.test(agTitle)) agenda.push({ timeText: am[1].trim(), title: agTitle });
+      if (agenda.length >= 12) break;
+    }
+    if (agenda.length < 2) agenda = [];
+
     var at = parseEventDateTime(dateText, timeText, base);
+    var end = endTimeText ? parseEventDateTime(dateText, endTimeText, base) : '';
     if (!title && !at) return [];
-    return [{ title: title, at: at, location: location, link: link, note: '', dateText: dateText, timeText: timeText }];
+    return [{ title: title, at: at, end: end, location: location, link: link, note: '', dateText: dateText, timeText: timeText, endTimeText: endTimeText, agenda: agenda }];
   }
 
   /* 用本地文本模型从文字提取日程（返回原始 dateText/timeText，本地换算日期）。
@@ -794,8 +882,8 @@
       var msgs = [{ role: 'user', content:
         '今天是 ' + today + '。你是日程识别助手。请从下面这段文字里识别所有日程 / 活动 / 预订信息。\n\n文字：\n"""\n' + String(text || '').slice(0, 6000) + '\n"""\n\n' +
         '只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown。数组每一项是一条日程，格式严格为：' +
-        '{"title":"标题","dateText":"日期原文","timeText":"时间原文","location":"地点","link":"链接","note":"备注"}。' +
-        '\n规则：dateText / timeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」），绝对不要换算、不要猜测年份；没有的字段填空字符串；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
+        '{"title":"标题","dateText":"日期原文","timeText":"开始时间原文","endTimeText":"结束时间原文","location":"地点","link":"链接","note":"备注","agenda":[{"timeText":"时间原文","title":"议程项"}]}。' +
+        '\n规则：dateText / timeText / endTimeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算、不要猜测年份；timeText 填开始时间、endTimeText 填结束时间（若文字是「15:00-17:00」则 timeText 取「15:00」、endTimeText 取「17:00」），没有的字段填空字符串；若文字里含详细议程/时间表（多个「时间+事项」）逐项提取到 agenda 数组，否则输出空数组 []；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
       var out = '';
       window.ingrid.chatStream({ engine: 'ollama', messages: msgs, sessionId: 'sec-text' }, {
         onDelta: function (c) { if (c && c.text) out += c.text; },
@@ -807,14 +895,21 @@
             var arr = JSON.parse(m[0]);
             if (!Array.isArray(arr) || !arr.length) { resolve(parseEventsFromText(text, base)); return; }
             var list = arr.map(function (j) {
+              var endText = String(j.endTimeText || '').trim();
+              var ag = Array.isArray(j.agenda) ? j.agenda.map(function (a) {
+                return { timeText: String((a && a.timeText) || '').trim(), title: String((a && a.title) || '').trim() };
+              }).filter(function (a) { return a.title || a.timeText; }) : [];
               return {
                 title: String(j.title || '').trim(),
                 at: parseEventDateTime(j.dateText, j.timeText, base),
+                end: endText ? parseEventDateTime(j.dateText, endText, base) : '',
                 location: String(j.location || '').trim(),
                 link: String(j.link || '').trim(),
                 note: String(j.note || '').trim(),
                 dateText: String(j.dateText || '').trim(),
                 timeText: String(j.timeText || '').trim(),
+                endTimeText: endText,
+                agenda: ag,
               };
             }).filter(function (e) { return e.title || e.at; });
             resolve(list.length ? list : parseEventsFromText(text, base));
@@ -833,16 +928,55 @@
     window.ingrid.notify({ title: title, body: body });
   }
 
-  /* 日程去重：同标题 + 同 ISO 时间视为已存在（防止邮件/短信重复扫描重复添加） */
-  function eventExists(title, at) {
-    var t = String(title || '').trim(), a = String(at || '');
-    if (!t && !a) return false;
-    return events.events.some(function (e) {
-      if (t && a) return e.title === t && e.at === a;
-      if (t) return e.title === t;
-      return e.at === a;
-    });
+  /* 查找已存在的重复活动：优先「同标题 + 同 ISO 时间」，其次「同标题 + 同一天」。返回匹配事件对象或 null。 */
+  function findExistingEvent(title, at) {
+    var t = String(title || '').trim();
+    var a = String(at || '');
+    if (!t) return null;
+    var day = '';
+    if (a) { var d = new Date(a); if (isFinite(d.getTime())) day = d.toDateString(); }
+    var byDay = null;
+    for (var i = 0; i < events.events.length; i++) {
+      var e = events.events[i];
+      if (e.title !== t) continue;
+      if (a && e.at === a) return e;                 // 精确匹配
+      if (day && e.at) {
+        var ed = new Date(e.at);
+        if (isFinite(ed.getTime()) && ed.toDateString() === day && !byDay) byDay = e;   // 同一天
+      }
+    }
+    return byDay;
   }
+
+  /* 用新识别的信息补全已有日程的缺失字段（不重复新增、不覆盖已有内容）。返回是否发生了补全。 */
+  function mergeIntoExisting(existing, incoming) {
+    if (!existing || !incoming) return false;
+    var changed = false;
+    ['location', 'link', 'note', 'end'].forEach(function (k) {
+      var v = incoming[k];
+      if (!v) return;
+      if (!existing[k]) { existing[k] = v; changed = true; }
+    });
+    // agenda：已有为空且新识别有议程时补入
+    if (Array.isArray(incoming.agenda) && incoming.agenda.length && !(Array.isArray(existing.agenda) && existing.agenda.length)) {
+      existing.agenda = incoming.agenda; changed = true;
+    }
+    if (changed) events.update(existing.id, existing);
+    return changed;
+  }
+
+  /* 智能添加：重复活动补全缺失内容，否则新增。返回 { mode:'added'|'merged'|'duplicate', event } */
+  function addEventSmart(incoming) {
+    var existing = findExistingEvent(incoming.title, incoming.at);
+    if (existing) {
+      var merged = mergeIntoExisting(existing, incoming);
+      return { mode: merged ? 'merged' : 'duplicate', event: existing };
+    }
+    return { mode: 'added', event: events.add(incoming) };
+  }
+
+  /* 兼容旧引用：eventExists 返回布尔 */
+  function eventExists(title, at) { return !!findExistingEvent(title, at); }
 
   /* 统一确认弹窗：识别到日程后请用户确认是否添加（可编辑、逐条添加/忽略、一键全部） */
   function openConfirmEvents(list, sourceLabel, sourceLink) {
@@ -859,7 +993,13 @@
     renderConfirmCards(list, sourceLabel, sourceLink);
   }
 
-  /* 渲染确认卡片（可编辑标题/时间/地点，逐条「＋ 添加」/「忽略」） */
+  /* 议程预览文本（供卡片显示） */
+  function agendaPreview(ag) {
+    if (!Array.isArray(ag) || !ag.length) return '';
+    return ag.map(function (a) { return ((a.timeText || '') + ' ' + (a.title || '')).trim(); }).filter(Boolean).join(' · ');
+  }
+
+  /* 渲染确认卡片（可编辑标题/起止时间/地点，逐条「＋ 添加」/「补全」/「忽略」） */
   function renderConfirmCards(list, sourceLabel, sourceLink) {
     var box = document.getElementById('cfResults');
     if (!box) return;
@@ -868,66 +1008,98 @@
       return;
     }
     box.innerHTML = list.map(function (ev, i) {
-      var atLocal = '';
+      var atLocal = '', endLocal = '';
       if (ev.at) { var dd = new Date(ev.at); if (isFinite(dd.getTime())) atLocal = toLocal(dd); }
-      var added = ev._added;
-      var dup = !added && ev.at && eventExists(ev.title, ev.at);
-      return '<div class="shot-ev' + (added || dup ? ' added' : '') + '" data-i="' + i + '">' +
+      if (ev.end) { var de = new Date(ev.end); if (isFinite(de.getTime())) endLocal = toLocal(de); }
+      var added = ev._added, merged = ev._merged;
+      var existing = !added && !merged && ev.at ? findExistingEvent(ev.title, ev.at) : null;
+      var ag = agendaPreview(ev.agenda);
+      return '<div class="shot-ev' + (added || merged || existing ? ' added' : '') + '" data-i="' + i + '">' +
         '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
-        '<div class="g"><span class="lbl">时</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
-        '<span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
+        '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
+        '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        (ag ? '<div class="agenda-prev">' + esc(ag) + '</div>' : '') +
         '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
-        (dup
-          ? '<button class="add on" disabled>已在日历</button>'
-          : '<button class="add' + (added ? ' on' : '') + '" data-i="' + i + '">' + (added ? '✓ 已添加' : '＋ 添加') + '</button>') +
+        (existing
+          ? '<button class="add on merge" data-i="' + i + '">⇄ 补全信息</button>'
+          : (merged
+            ? '<button class="add on" disabled>✓ 已补全</button>'
+            : '<button class="add' + (added ? ' on' : '') + '" data-i="' + i + '">' + (added ? '✓ 已添加' : '＋ 添加') + '</button>')) +
         '</div></div>';
     }).join('');
     Array.prototype.forEach.call(box.querySelectorAll('.skip'), function (b) {
       b.addEventListener('click', function () { list.splice(Number(b.getAttribute('data-i')), 1); renderConfirmCards(list, sourceLabel, sourceLink); });
     });
-    Array.prototype.forEach.call(box.querySelectorAll('.add:not(.on)'), function (b) {
+    // 单条添加（非重复项）
+    Array.prototype.forEach.call(box.querySelectorAll('.add:not(.on):not(.merge)'), function (b) {
       b.addEventListener('click', function () {
         var i = Number(b.getAttribute('data-i'));
         var card = box.querySelector('.shot-ev[data-i="' + i + '"]');
         var title = ((card.querySelector('.e-title') || {}).value || '').trim();
         var at = (card.querySelector('.e-at') || {}).value || '';
+        var endv = (card.querySelector('.e-end') || {}).value || '';
         var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
         if (!title) { alert('请填写标题'); return; }
         if (!at) { alert('请填写时间'); return; }
-        events.add({
-          title: title, at: new Date(at).toISOString(), location: loc,
-          link: list[i].link || sourceLink || '', note: list[i].note || '',
-          reminderMin: 1440, source: sourceLabel || '自动识别',
+        var r = addEventSmart({
+          title: title, at: new Date(at).toISOString(), end: endv ? new Date(endv).toISOString() : '',
+          location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '',
+          agenda: list[i].agenda || [], reminderMin: 1440, source: sourceLabel || '自动识别',
         });
-        list[i]._added = true;
+        if (r.mode === 'added') { list[i]._added = true; addChat('a', '已添加日程「' + title + '」。'); }
+        else if (r.mode === 'merged') { list[i]._merged = true; addChat('a', '「' + title + '」已存在，已补全缺失信息。'); }
+        else { list[i]._merged = true; addChat('a', '「' + title + '」已存在且信息完整，未重复添加。'); }
         renderConfirmCards(list, sourceLabel, sourceLink);
         renderEvents();
-        addChat('a', '已添加日程「' + title + '」。');
+      });
+    });
+    // 补全按钮（重复项）
+    Array.prototype.forEach.call(box.querySelectorAll('.add.merge'), function (b) {
+      b.addEventListener('click', function () {
+        var i = Number(b.getAttribute('data-i'));
+        var card = box.querySelector('.shot-ev[data-i="' + i + '"]');
+        var title = ((card.querySelector('.e-title') || {}).value || '').trim();
+        var at = (card.querySelector('.e-at') || {}).value || '';
+        var endv = (card.querySelector('.e-end') || {}).value || '';
+        var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
+        var existing = findExistingEvent(title, at ? new Date(at).toISOString() : '');
+        var merged = mergeIntoExisting(existing, {
+          location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '',
+          end: endv ? new Date(endv).toISOString() : '', agenda: list[i].agenda || [],
+        });
+        list[i]._merged = true;
+        addChat('a', merged ? '已补全「' + title + '」的缺失信息。' : '「' + title + '」信息已完整，无需补全。');
+        renderConfirmCards(list, sourceLabel, sourceLink);
+        renderEvents();
       });
     });
   }
 
-  /* 一键添加全部确认卡片（跳过已添加/已在日历/缺字段的） */
+  /* 一键添加全部确认卡片（重复项自动补全，非重复项新增） */
   function confirmAddAll(list, sourceLabel, sourceLink) {
     var box = document.getElementById('cfResults');
     if (!box) return;
-    var n = 0;
+    var added = 0, merged = 0;
     Array.prototype.forEach.call(box.querySelectorAll('.shot-ev:not(.added)'), function (card) {
       var i = Number(card.getAttribute('data-i'));
       var title = ((card.querySelector('.e-title') || {}).value || '').trim();
       var at = (card.querySelector('.e-at') || {}).value || '';
+      var endv = (card.querySelector('.e-end') || {}).value || '';
       var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
       if (!title || !at) return;
-      if (eventExists(title, new Date(at).toISOString())) return;
-      events.add({
-        title: title, at: new Date(at).toISOString(), location: loc,
-        link: list[i].link || sourceLink || '', note: list[i].note || '',
-        reminderMin: 1440, source: sourceLabel || '自动识别',
+      var r = addEventSmart({
+        title: title, at: new Date(at).toISOString(), end: endv ? new Date(endv).toISOString() : '',
+        location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '',
+        agenda: list[i].agenda || [], reminderMin: 1440, source: sourceLabel || '自动识别',
       });
-      list[i]._added = true;
-      n++;
+      if (r.mode === 'added') { list[i]._added = true; added++; }
+      else { list[i]._merged = true; merged++; }
     });
-    if (n) { renderConfirmCards(list, sourceLabel, sourceLink); renderEvents(); addChat('a', '已批量添加 ' + n + ' 条日程。'); }
+    var msg = [];
+    if (added) msg.push('新增 ' + added + ' 条');
+    if (merged) msg.push('补全 ' + merged + ' 条重复活动');
+    if (msg.length) { renderConfirmCards(list, sourceLabel, sourceLink); renderEvents(); addChat('a', '已' + msg.join('、') + '。'); }
   }
 
   /* 截图模式下的粘贴：⌘V / Ctrl+V 追加剪贴板图片（支持多张一起） */

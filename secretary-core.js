@@ -47,6 +47,7 @@
       link: String(e.link || ''),             // 来源链接（如原邮件）
       source: String(e.source || ''),         // 来源说明（如「邮件截图」）
       note: String(e.note || ''),
+      agenda: Array.isArray(e.agenda) ? e.agenda : [],   // 议程子项 [{time,title}]（可空）
       reminderMin: Number(e.reminderMin) || 0,// 提前提醒分钟数（0=不提醒）
       reminded: !!e.reminded,                 // 是否已提醒过
       done: !!e.done,
