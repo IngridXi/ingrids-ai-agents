@@ -4114,11 +4114,12 @@ function readAppleMail() {
       '}';
     execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
-        const msg = String((err && err.message) || err) + ' ' + String(stderr || '');
-        if (/privilege violation|-10004/i.test(msg)) {
-          resolve({ ok: false, error: '未获授权读取邮件 App。请到 系统设置 → 隐私与安全性 → 自动化，允许本应用控制「邮件」，然后重试。' });
+        // 只取 stderr（真正的错误原因），去掉 execFile 那行超长的 "Command failed: ..." 噪音
+        const msg = String(stderr || '').trim() || String((err && err.message) || err);
+        if (/privilege violation|-10004|-1743|not authorized|not permitted/i.test(msg)) {
+          resolve({ ok: false, error: '未获授权控制「邮件」App。请到 系统设置 → 隐私与安全性 → 自动化，找到本应用并把「邮件」勾选允许（若已勾选仍报错，先在列表里删除本应用，再回来点一次按钮重新授权）。' });
         } else {
-          resolve({ ok: false, error: '读取 Apple Mail 失败：' + msg + '（请确认已在 系统设置 → 互联网账户 里添加剑桥邮箱）' });
+          resolve({ ok: false, error: '读取 Apple Mail 失败：' + msg + '（请确认已在 系统设置 → 互联网账户 里添加剑桥邮箱，并打开一次「邮件」App）' });
         }
         return;
       }
