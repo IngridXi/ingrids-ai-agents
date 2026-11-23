@@ -301,16 +301,52 @@ def _install_elbow_patch():
     PythonPptxRenderer._render_connector = _render_connector_elbow
 
 
+def _fix_connector_geometry(slide):
+    """修正连接线几何，让 PowerPoint 正确识别并支持拖动跟随。
+
+    python-pptx 有两个问题：
+    1) MSO_CONNECTOR.STRAIGHT 映射到 prst='line'（普通线条），PowerPoint 不认
+       stCxn/endCxn 连接点，拖动不跟随 —— 修正为 'straightConnector1'。
+    2) MSO_CONNECTOR.ELBOW 生成的 bentConnector3 缺少必需的拐点调整值 gd，
+       补一个默认 gd，PowerPoint 才能正确布线肘形。
+    """
+    import lxml.etree as etree
+
+    A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    fixed = 0
+    for sh in slide.shapes:
+        el = sh._element
+        if etree.QName(el).localname != "cxnSp":
+            continue
+        prst_geom = el.find(".//{%s}prstGeom" % A)
+        if prst_geom is None:
+            continue
+        prst = prst_geom.get("prst")
+        if prst == "line":
+            prst_geom.set("prst", "straightConnector1")
+            fixed += 1
+        elif prst == "bentConnector3":
+            avlst = prst_geom.find("{%s}avLst" % A)
+            if avlst is not None and not avlst.findall("{%s}gd" % A):
+                gd = etree.SubElement(avlst, "{%s}gd" % A)
+                gd.set("name", "adj1")
+                gd.set("fmla", "val 50000")
+                fixed += 1
+    return fixed
+
+
 def render_editable(source, slide, style):
     """渲染可编辑原生形状，并启用连线跟随修复。返回 CompileResult。"""
     _install_elbow_patch()
-    return render_mermaid(
+    result = render_mermaid(
         source,
         slide=slide,
         relative_bounds=(0.05, 0.05, 0.90, 0.90),  # 四周留 5% 边距
         style=style,
         group=False,  # 形状平铺 slide，保证拖动节点时连线跟随
     )
+    _fix_connector_geometry(slide)
+    return result
 
 
 def main():
