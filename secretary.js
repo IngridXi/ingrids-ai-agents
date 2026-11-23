@@ -49,7 +49,7 @@
   }
 
   var minimized = false;
-  var shotDataUrls = [];   // 截图列表（支持多张辅助识别一条日程）
+  var shotDataUrls = [];   // 截图列表（同一活动多张合并 / 不同活动分别识别）
   var shotEvents = [];     // 识别出的日程结果（待确认，可多条）
 
   /* ---------- 样式 ---------- */
@@ -437,16 +437,17 @@
       var today = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日（星期' + '日一二三四五六'[now.getDay()] + '）';
       var content = [{ type: 'text', text:
         '今天是 ' + today + '。你是日程识别助手。请识别下面这些截图里的所有日程信息。' +
-        '这些截图可能是同一个活动/日程的多张截图（信息互补），也可能一张图里包含多个不同日程。' +
+        '这些截图可能是同一个活动的多张截图（信息互补），也可能是多个不同活动的截图，或一张图里包含多个不同日程。' +
         '\n\n只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown 代码块。数组每一项是一条日程，格式严格为：' +
         '{"title":"标题","dateText":"日期原文","timeText":"时间原文","location":"地点","link":"链接","note":"备注"}。' +
         '\n\n规则：' +
-        '\n1) 多张截图若描述同一条日程（如邮件正文+日历+海报是同一活动），合并为一条，字段取最完整的。' +
-        '\n2) 一张图里有多个不同日程时，分别输出多条。' +
-        '\n3) dateText 和 timeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」），绝对不要换算成日期、不要猜测年份。' +
-        '\n4) 没有明确日期的 dateText 留空，没有明确时间的 timeText 留空。' +
-        '\n5) 地点/链接/备注从截图提取，没有就留空字符串。' +
-        '\n6) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
+        '\n1) 逐张识别：每一张截图里的每个日程都要识别出来，不要漏掉任何一张。' +
+        '\n2) 多张截图若是同一个活动（如邮件正文+日历+海报描述同一件事），合并为一条，字段取最完整的。' +
+        '\n3) 不同的活动——无论出现在同一张图里还是不同的多张图里——都要分别输出为独立的多条。' +
+        '\n4) dateText 和 timeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」），绝对不要换算成日期、不要猜测年份。' +
+        '\n5) 没有明确日期的 dateText 留空，没有明确时间的 timeText 留空。' +
+        '\n6) 地点/链接/备注从截图提取，没有就留空字符串。' +
+        '\n7) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
       (dataUrls || []).forEach(function (u) { content.push({ type: 'image_url', image_url: { url: u } }); });
       var msgs = [{ role: 'user', content: content }];
       var out = '';
@@ -574,7 +575,7 @@
     modalMask.style.display = 'flex';
     var html =
       '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 发截图 · 自动识别日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
-      '<div class="sub">' + (isShot ? '可直接拖入、多选或多次粘贴图片（多图合并成一条，一张图多个日程会全部列出）；本地视觉模型识别，不联网不花钱。' : '保存后秘书会按提醒时间通知你。') + '</div>';
+      '<div class="sub">' + (isShot ? '可直接拖入、多选或多次粘贴图片；同一活动的多张会合并成一条，不同活动（一图多日程或多图多活动）会分别列出，本地识别不联网不花钱。' : '保存后秘书会按提醒时间通知你。') + '</div>';
     if (isShot) {
       html += '<div class="shot-thumbs" id="evThumbs">' + shotDataUrls.map(function (u, i) {
         return '<div class="shot-thumb"><img src="' + u + '"><button class="rm" data-rm="' + i + '" title="移除">✕</button></div>';
