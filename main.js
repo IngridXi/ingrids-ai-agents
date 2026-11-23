@@ -3880,33 +3880,79 @@ ipcMain.handle('messages:read', (_e, payload) => readMacMessages(payload));
  * 直接通过系统脚本桥读取「已登录的本机 Microsoft Outlook」收件箱邮件。
  * 需用户在「系统设置 → 隐私与安全性 → 自动化」里允许本应用控制 Microsoft Outlook。
  */
+function buildOutlookDiag(obj) {
+  const parts = [];
+  if (obj && Array.isArray(obj.found) && obj.found.length) parts.push('账号：' + obj.found.map((s) => String(s || '').trim()).filter(Boolean).join('；'));
+  if (obj && Array.isArray(obj.folders) && obj.folders.length) parts.push('文件夹：' + obj.folders.map((s) => String(s || '').trim()).filter(Boolean).join('；'));
+  return parts.join(' | ');
+}
+
 function readOutlookMail() {
   return new Promise((resolve) => {
     if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取本机 Outlook' }); return; }
     const script = 'function run(){\n' +
       '  var Outlook = Application("Microsoft Outlook");\n' +
-      '  var inbox = Outlook.inbox;\n' +
-      '  var accName = "";\n' +
-      '  // 遍历所有账号，优先定位剑桥邮箱（cam.ac.uk）的收件箱；默认 inbox 只指向默认账号(outlook.com)\n' +
-      '  try {\n' +
-      '    var accounts = Outlook.accounts;\n' +
-      '    var ac = accounts.length;\n' +
-      '    for (var a = 0; a < ac; a++) {\n' +
-      '      var addr = "";\n' +
-      '      try { addr = String(accounts[a].emailAddress() || ""); } catch (e) {}\n' +
-      '      if (/cam\\.ac\\.uk/i.test(addr)) {\n' +
-      '        try { inbox = accounts[a].inbox; accName = addr; } catch (e) {}\n' +
-      '        break;\n' +
+      '  var res = { account: "", found: [], folders: [], total: 0, inWindow: 0, mails: [] };\n' +
+      '  // 收集具体账号类型（account 是抽象类，新版 Outlook 里不能用 Outlook.accounts 枚举）\n' +
+      '  function addAccounts(getter, all) {\n' +
+      '    try {\n' +
+      '      var arr = getter();\n' +
+      '      var ac = arr.length;\n' +
+      '      for (var i = 0; i < ac; i++) {\n' +
+      '        var addr = ""; var nm = "";\n' +
+      '        try { addr = String(arr[i].emailAddress() || ""); } catch (e) {}\n' +
+      '        try { nm = String(arr[i].name() || ""); } catch (e) {}\n' +
+      '        all.push({ addr: addr, name: nm, ref: arr[i] });\n' +
       '      }\n' +
-      '    }\n' +
-      '  } catch (e) {}\n' +
-      '  var msgs = inbox.messages;\n' +
+      '    } catch (e) {}\n' +
+      '  }\n' +
+      '  var all = [];\n' +
+      '  addAccounts(function(){ return Outlook.exchangeAccounts(); }, all);\n' +
+      '  addAccounts(function(){ return Outlook.imapAccounts(); }, all);\n' +
+      '  addAccounts(function(){ return Outlook.popAccounts(); }, all);\n' +
+      '  addAccounts(function(){ return Outlook.easAccounts(); }, all);\n' +
+      '  var cam = null;\n' +
+      '  for (var a = 0; a < all.length; a++) {\n' +
+      '    res.found.push((all[a].addr || "") + " " + (all[a].name || ""));\n' +
+      '    if (!cam && /cam\\.ac\\.uk/i.test(all[a].addr)) cam = all[a].ref;\n' +
+      '  }\n' +
+      '  var msgs = null;\n' +
+      '  // 优先：找到剑桥账号 → 直接读它的收件箱\n' +
+      '  if (cam) {\n' +
+      '    try {\n' +
+      '      var addr2 = String(cam.emailAddress() || "");\n' +
+      '      msgs = cam.inbox.messages;\n' +
+      '      res.account = addr2;\n' +
+      '    } catch (e) { cam = null; msgs = null; }\n' +
+      '  }\n' +
+      '  // 兜底 A：账号枚举失败 → 遍历所有 mail folder，按所属账号反查剑桥收件箱\n' +
+      '  if (!msgs) {\n' +
+      '    try {\n' +
+      '      var folders = Outlook.mailFolders();\n' +
+      '      var fn = folders.length;\n' +
+      '      for (var f = 0; f < fn; f++) {\n' +
+      '        var fname = ""; var facc = ""; var unread = "";\n' +
+      '        try { fname = String(folders[f].name() || ""); } catch (e) {}\n' +
+      '        try { facc = String(folders[f].account.emailAddress() || ""); } catch (e2) {}\n' +
+      '        try { unread = String(folders[f].unreadCount()); } catch (e3) {}\n' +
+      '        if (res.folders.length < 60) res.folders.push(fname + " | " + facc + " | 未读=" + unread);\n' +
+      '        if (!msgs && /cam\\.ac\\.uk/i.test(facc) && /inbox/i.test(fname)) {\n' +
+      '          res.account = facc;\n' +
+      '          try { msgs = folders[f].messages; } catch (e4) {}\n' +
+      '        }\n' +
+      '      }\n' +
+      '    } catch (e) {}\n' +
+      '  }\n' +
+      '  // 兜底 B：默认收件箱\n' +
+      '  if (!msgs) {\n' +
+      '    try { msgs = Outlook.inbox.messages; } catch (e) {}\n' +
+      '  }\n' +
+      '  if (!msgs) { return JSON.stringify(res); }\n' +
+      '  var n = msgs.length;\n' +
       '  var now = Date.now();\n' +
       '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
-      '  var max = 300;\n' +
-      '  var n = Math.min(msgs.length, max);\n' +
       '  var kept = [];\n' +
-      '  // 第一遍：只读接收时间（轻量），筛出最近一周的邮件索引；不依赖收件箱排序\n' +
+      '  // 第一遍：只读接收时间（轻量），筛出最近一周的邮件索引；不依赖收件箱排序，扫全部而非只扫前 N 封\n' +
       '  for (var i = 0; i < n; i++) {\n' +
       '    var tm = null;\n' +
       '    try {\n' +
@@ -3941,9 +3987,12 @@ function readOutlookMail() {
       '    if (!body) { try { body = String(m.content() || ""); } catch (e) {} }\n' +
       '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
       '  }\n' +
-      '  return JSON.stringify({ account: accName, total: n, inWindow: kept.length, mails: out });\n' +
+      '  res.total = n;\n' +
+      '  res.inWindow = kept.length;\n' +
+      '  res.mails = out;\n' +
+      '  return JSON.stringify(res);\n' +
       '}';
-    execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const msg = String((err && err.message) || err) + ' ' + String(stderr || '');
         if (/privilege violation|-10004/i.test(msg)) {
@@ -3972,6 +4021,7 @@ function readOutlookMail() {
           total: (obj && obj.total) || 0,
           inWindow: (obj && obj.inWindow) || 0,
           account: (obj && obj.account) || '',
+          diag: buildOutlookDiag(obj),
         });
       } catch (e) {
         resolve({ ok: false, error: '解析 Outlook 数据失败：' + String((e && e.message) || e) });
