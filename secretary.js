@@ -125,6 +125,8 @@
     '.sec-modal .divider{border:none;border-top:1px dashed var(--line);margin:12px 0;}',
     '.sec-modal .agenda-prev{font-size:11px;color:var(--ink-soft);background:var(--surface-2);border-radius:7px;padding:6px 8px;margin-bottom:6px;line-height:1.5;word-break:break-all;}',
     '.sec-modal .dup-warn{font-size:11px;color:#b45309;background:#fff7e6;border:1px solid #f6d9a0;border-radius:7px;padding:6px 8px;margin-bottom:6px;line-height:1.5;word-break:break-all;}',
+    '.sec-modal .src-text{font-size:11px;color:var(--ink-soft);background:var(--surface-2);border-left:2px solid var(--accent);border-radius:7px;padding:6px 8px;margin-bottom:6px;line-height:1.6;word-break:break-word;max-height:96px;overflow-y:auto;white-space:pre-wrap;}',
+    '.sec-modal .src-text .src-label{display:block;font-size:10px;font-weight:700;color:var(--accent);margin-bottom:2px;}',
     '.sec-modal .shot-ev .acts .add.merge{opacity:1;cursor:pointer;background:var(--accent-soft,#eef3ff);border-color:var(--accent);color:var(--accent);}',
     '.sec-panel.drag-over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft);}',
     '.sec-modal.drag-over{outline:3px dashed var(--accent);outline-offset:-4px;}',
@@ -366,6 +368,7 @@
           if (!dup.link && ev.link) dup.link = ev.link;
           if (!dup.note && ev.note) dup.note = ev.note;
           if (!dup.end && ev.end) dup.end = ev.end;
+          if (!dup.sourceText && ev.sourceText) dup.sourceText = ev.sourceText;
           if (!(dup.agenda && dup.agenda.length) && (ev.agenda && ev.agenda.length)) dup.agenda = ev.agenda;
         } else {
           out.push(ev);
@@ -389,6 +392,16 @@
     var blob = ((m.subject || '') + ' ' + (m.body || '')).toLowerCase();
     var words = ['确认', '报名成功', '已报名', '已预订', '预订成功', '注册成功', '已注册', '出票', '已出票', '订单', '预约成功',
       'confirmation', 'confirmed', 'booking', 'reservation', 'rsvp', 'ticket', 'boarding', 'registration', '您已成功', '席位', '名额', '参会', '邀请函'];
+    return words.some(function (w) { return blob.indexOf(w) >= 0; });
+  }
+
+  /* 判定一条短信是否含「活动确认」信息（报名 / 预订 / 出票 / 预约等）。过滤只决定「是否送去识别」，不决定是否添加，
+   * 因此关键词可略宽，误送的多余短信识别不出日程自然被丢弃。 */
+  function isConfirmationMessage(m) {
+    var blob = String((m && m.text) || '').toLowerCase();
+    var words = ['报名成功', '已报名', '已预订', '预订成功', '预约成功', '已预约', '注册成功', '已注册', '出票', '已出票',
+      '订单', '确认', '已确认', '席位', '名额', '参会', '邀请函', '您已成功', '订了', '订好',
+      'confirmation', 'confirmed', 'booking', 'reservation', 'rsvp', 'ticket', 'boarding', 'registration'];
     return words.some(function (w) { return blob.indexOf(w) >= 0; });
   }
 
@@ -430,15 +443,23 @@
       }
       var msgs = r.messages || [];
       if (!msgs.length) { out.textContent = '未读到短信（可能权限不足或暂无短信）。'; return; }
-      out.textContent = '读到 ' + msgs.length + ' 条短信，正在识别确认信息…';
-      var text = msgs.map(function (m) {
-        return '【' + (m.from || '') + ' ' + (m.dateText || '') + '】' + m.text;
-      }).join('\n');
-      extractEventsFromText(text).then(function (list) {
-        if (!list.length) { out.textContent = '读完 ' + msgs.length + ' 条短信，未发现活动确认信息。'; addChat('a', '读完短信，未发现活动确认信息。'); return; }
+      var candidates = msgs.filter(isConfirmationMessage);
+      if (!candidates.length) { out.textContent = '读完 ' + msgs.length + ' 条短信，未发现活动确认信息。'; addChat('a', '读完短信，未发现活动确认信息。'); return; }
+      out.textContent = '读到 ' + msgs.length + ' 条短信，发现 ' + candidates.length + ' 条确认信息，正在识别…';
+      // 逐条识别确认类短信：每条日程都附上原始短信内容（发送人 + 时间 + 正文）作为核对参考
+      var tasks = candidates.slice(0, 12).map(function (m) {
+        var srcText = '【' + (m.from || '') + ' ' + (m.dateText || '') + '】' + m.text;
+        return extractEventsFromText(srcText).then(function (list) {
+          (list || []).forEach(function (ev) { ev.sourceText = srcText; });
+          return list;
+        });
+      });
+      Promise.all(tasks).then(function (lists) {
+        var merged = mergeEventLists(lists);
+        if (!merged.length) { out.textContent = '读完短信，未发现活动确认信息。'; addChat('a', '读完短信，未发现活动确认信息。'); return; }
         out.textContent = '';
-        notifyConfirm(list, '短信确认');
-        openConfirmEvents(list, '短信确认', '');
+        notifyConfirm(merged, '短信确认');
+        openConfirmEvents(merged, '短信确认', '');
       });
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = '读取短信 · 识别活动';
@@ -784,6 +805,7 @@
         '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
         '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
         '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        (ev.sourceText ? '<div class="src-text"><span class="src-label">📱 短信原文</span>' + esc(ev.sourceText) + '</div>' : '') +
         (nearDup ? '<div class="dup-warn">⚠ 疑似重复：日历已有「' + nearText + '」，请核对本条的日期时间。</div>' : '') +
         (ag ? '<div class="agenda-prev">' + esc(ag) + '</div>' : '') +
         '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
@@ -1044,7 +1066,7 @@
   function mergeIntoExisting(existing, incoming) {
     if (!existing || !incoming) return false;
     var changed = false;
-    ['location', 'link', 'note', 'end'].forEach(function (k) {
+    ['location', 'link', 'note', 'end', 'sourceText'].forEach(function (k) {
       var v = incoming[k];
       if (!v) return;
       if (!existing[k]) { existing[k] = v; changed = true; }
@@ -1119,6 +1141,7 @@
         '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
         '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
         '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        (ev.sourceText ? '<div class="src-text"><span class="src-label">📱 短信原文</span>' + esc(ev.sourceText) + '</div>' : '') +
         (nearDup ? '<div class="dup-warn">⚠ 疑似重复：日历已有「' + nearText + '」，请核对本条的日期时间。</div>' : '') +
         (ag ? '<div class="agenda-prev">' + esc(ag) + '</div>' : '') +
         '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
@@ -1145,7 +1168,7 @@
         if (!at) { alert('请填写时间'); return; }
         var r = addEventSmart({
           title: title, at: new Date(at).toISOString(), end: endv ? new Date(endv).toISOString() : '',
-          location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '',
+          location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '', sourceText: list[i].sourceText || '',
           agenda: list[i].agenda || [], reminderMin: 1440, source: sourceLabel || '自动识别',
         });
         if (r.mode === 'added') { list[i]._added = true; addChat('a', '已添加日程「' + title + '」。'); }
@@ -1166,7 +1189,7 @@
         var loc = ((card.querySelector('.e-loc') || {}).value || '').trim();
         var existing = findExistingEvent(title, at ? new Date(at).toISOString() : '');
         var merged = mergeIntoExisting(existing, {
-          location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '',
+          location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '', sourceText: list[i].sourceText || '',
           end: endv ? new Date(endv).toISOString() : '', agenda: list[i].agenda || [],
         });
         list[i]._merged = true;
@@ -1191,7 +1214,7 @@
       if (!title || !at) return;
       var r = addEventSmart({
         title: title, at: new Date(at).toISOString(), end: endv ? new Date(endv).toISOString() : '',
-        location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '',
+        location: loc, link: list[i].link || sourceLink || '', note: list[i].note || '', sourceText: list[i].sourceText || '',
         agenda: list[i].agenda || [], reminderMin: 1440, source: sourceLabel || '自动识别',
       });
       if (r.mode === 'added') { list[i]._added = true; added++; }
