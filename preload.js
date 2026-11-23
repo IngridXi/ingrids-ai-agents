@@ -165,6 +165,8 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // 文档生成（内建：Word / PPT / Excel，本地生成不依赖宿主 skill）
   docGenerate: (payload) => ipcRenderer.invoke('doc:generate', payload),
+  // Mermaid -> PPT 流程图导出（调本机 diagram-pptx，生成原生可编辑形状）
+  mermaid2pptExport: (payload) => ipcRenderer.invoke('mermaid2ppt:export', payload),
   openPath: (p) => ipcRenderer.invoke('fs:open', p),
   revealPath: (p) => ipcRenderer.invoke('fs:reveal', p),
 

@@ -2821,6 +2821,19 @@ function execPy(args, timeoutMs) {
     });
   });
 }
+// Mermaid→PPT 导出专用 python：diagram-pptx 要求 Python >= 3.10，系统 python3（3.9）装不上，
+// 固定走桌面的 venv_mermaid（Python 3.15）。优先环境变量 MERMAID2PPT_PY 覆盖，其次探测已知路径。
+function mermaidPyBin() {
+  const cands = [
+    process.env.MERMAID2PPT_PY,
+    path.join(os.homedir(), 'Desktop', 'venv_mermaid', 'bin', 'python'),
+    path.join(os.homedir(), 'Desktop', 'venv_mermaid', 'bin', 'python3'),
+  ];
+  for (const c of cands) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return null;
+}
 ipcMain.handle('browser:automate', async (_e, payload) => {
   const p = payload || {};
   const action = String(p.action || '');
@@ -3348,6 +3361,42 @@ ipcMain.handle('doc:generate', async (_e, payload) => {
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
+});
+
+/* ---------------- IPC：Mermaid -> PPT 流程图导出（diagram-pptx） ---------------- */
+ipcMain.handle('mermaid2ppt:export', async (_e, p) => {
+  const py = mermaidPyBin();
+  if (!py) return { ok: false, error: '未找到 diagram-pptx 环境（venv_mermaid）。请确认桌面存在 venv_mermaid 并已安装 diagram-pptx，或设置环境变量 MERMAID2PPT_PY 指向含 diagram-pptx 的 python' };
+  const script = path.join(__dirname, 'scripts', 'mermaid2ppt_export.py');
+  if (!fs.existsSync(script)) return { ok: false, error: '缺少导出脚本 scripts/mermaid2ppt_export.py' };
+  const source = String((p && p.source) || '').trim();
+  if (!source) return { ok: false, error: 'Mermaid 源码为空' };
+  const style = String((p && p.style) || 'native');
+
+  const save = await dialog.showSaveDialog({
+    title: '导出 PPT',
+    defaultPath: path.join(exportDir(), safeFilename('流程图') + '.pptx'),
+    filters: [{ name: 'PowerPoint 演示文稿', extensions: ['pptx'] }],
+  });
+  if (save.canceled || !save.filePath) return { ok: false, canceled: true };
+
+  const payload = JSON.stringify({ source, style, out_path: save.filePath });
+  return new Promise((resolve) => {
+    const child = spawn(py, [script], { env: pyEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', (d) => { out += String(d); });
+    child.stderr.on('data', (d) => { err += String(d); });
+    child.on('error', (e) => resolve({ ok: false, error: String((e && e.message) || e) }));
+    child.on('close', () => {
+      try {
+        resolve(JSON.parse(out.trim()));
+      } catch (e) {
+        resolve({ ok: false, error: '导出脚本无有效输出：' + String((err || out || '').slice(0, 400)) });
+      }
+    });
+    child.stdin.write(payload);
+    child.stdin.end();
+  });
 });
 
 /* ---------------- IPC：打开 / 在文件夹中显示 本地文件 ---------------- */

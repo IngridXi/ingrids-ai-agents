@@ -127,6 +127,7 @@
 
     // 信息（仅参考）
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>',
+    flow: '<rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="3" width="6" height="6" rx="1.5"/><rect x="9" y="15" width="6" height="6" rx="1.5"/><path d="M6 9v3a3 3 0 0 0 3 3"/><path d="M18 9v3a3 3 0 0 1-3 3"/>',
 
     // 烧瓶（研究助手 / 实验）
     flask: '<path d="M10 2v6.3L4.7 17a2 2 0 0 0 1.7 3h11.2a2 2 0 0 0 1.7-3L14 8.3V2"/><path d="M8.5 2h7"/><path d="M7 14h10"/>',
