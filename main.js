@@ -3884,12 +3884,14 @@ function readOutlookMail() {
   return new Promise((resolve) => {
     if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取本机 Outlook' }); return; }
     const script = 'function run(){\n' +
-      '  var limit = 30;\n' +
       '  var Outlook = Application("Microsoft Outlook");\n' +
       '  var inbox = Outlook.inbox;\n' +
       '  var msgs = inbox.messages;\n' +
       '  var out = [];\n' +
-      '  var n = Math.min(msgs.length, limit);\n' +
+      '  var now = Date.now();\n' +
+      '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
+      '  var max = 300;\n' +
+      '  var n = Math.min(msgs.length, max);\n' +
       '  for (var i = 0; i < n; i++) {\n' +
       '    var m = msgs[i];\n' +
       '    var subject = "", sender = "", body = "", time = "";\n' +
@@ -3902,9 +3904,12 @@ function readOutlookMail() {
       '        if (!sender) { try { sender = String(s.address() || ""); } catch (e3) {} }\n' +
       '      }\n' +
       '    } catch (e) {}\n' +
+      '    // 先读接收时间：早于一周前即停止（收件箱按接收时间倒序），省去读正文的开销\n' +
+      '    var tm = null;\n' +
+      '    try { var d = m.timeReceived(); if (d) { tm = (d instanceof Date) ? d.getTime() : new Date(d).getTime(); time = String(d); } } catch (e) {}\n' +
+      '    if (tm !== null && !isNaN(tm) && tm < weekAgo) { break; }\n' +
       '    try { body = String(m.plainTextContent() || ""); } catch (e) { body = ""; }\n' +
       '    if (!body) { try { body = String(m.content() || ""); } catch (e) {} }\n' +
-      '    try { var t = m.timeReceived(); if (t) { time = String(t); } } catch (e) {}\n' +
       '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
       '  }\n' +
       '  return JSON.stringify(out);\n' +
