@@ -84,6 +84,8 @@
     '.sec-modal .f label{display:block;font-size:12px;font-weight:650;color:var(--ink-soft);margin-bottom:5px;}',
     '.sec-modal .f input,.sec-modal .f textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;color:var(--ink);background:#fff;font-family:inherit;}',
     '.sec-modal .shot{max-width:100%;max-height:180px;border-radius:10px;border:1px solid var(--line);margin-bottom:12px;display:block;}',
+    '.sec-modal .shot-drop{display:flex;align-items:center;justify-content:center;gap:8px;padding:26px 16px;border:2px dashed var(--line);border-radius:12px;color:var(--ink-faint);font-size:12.5px;cursor:pointer;margin-bottom:12px;transition:border-color .15s,color .15s,background .15s;}',
+    '.sec-modal .shot-drop:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}',
     '.sec-modal .foot{display:flex;gap:9px;justify-content:flex-end;margin-top:16px;}',
     '.sec-modal .foot button{padding:9px 16px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-size:13px;font-weight:650;cursor:pointer;}',
     '.sec-modal .foot .primary{background:var(--accent);border-color:var(--accent);color:#fff;}',
@@ -109,9 +111,9 @@
         '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
         '<div class="sec-chat" id="secChat"></div></div>' +
       '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 添加日程</button>' +
-        '<button class="sec-btn ghost" id="secFromShot">' + iconSvg('camera') + ' 从邮件截图添加</button></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历（iCloud）</button></div></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 发截图 · 自动识别加日程</button></div>' +
+        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 手动添加日程</button>' +
+        '<button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历</button></div></div>' +
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook 邮箱</button></div></div>' +
@@ -233,16 +235,20 @@
   /* 添加日程 */
   document.getElementById('secAddEvent').addEventListener('click', function () { openEventModal(null); });
 
-  /* 从邮件截图添加 */
+  /* 发截图 → 自动识别日程（支持选文件 + ⌘V 粘贴两种方式） */
   document.getElementById('secFromShot').addEventListener('click', function () {
     shotDataUrl = '';
-    fileInput.click();
+    openEventModal(null, true);
   });
+  function setShotAndRerun(dataUrl) {
+    shotDataUrl = dataUrl;
+    openEventModal(null, true);   // 重新渲染弹窗并自动触发识别
+  }
   fileInput.addEventListener('change', function () {
     var f = fileInput.files && fileInput.files[0];
     if (!f) return;
     var reader = new FileReader();
-    reader.onload = function () { shotDataUrl = reader.result; openEventModal(null, true); };
+    reader.onload = function () { setShotAndRerun(reader.result); };
     reader.readAsDataURL(f);
   });
 
@@ -272,20 +278,52 @@
   document.getElementById('secBrowseShot').addEventListener('click', function () { secBrowseRun('shot'); });
   document.getElementById('secBrowseText').addEventListener('click', function () { secBrowseRun('text'); });
 
+  /* 用视觉模型识别截图中的日程信息，返回 { title, at, location, link, note, raw } */
+  function recognizeShot(dataUrl, onProgress) {
+    return new Promise(function (resolve, reject) {
+      if (!DESKTOP || !window.ingrid || !window.ingrid.chatStream) { reject(new Error('仅桌面应用支持识图')); return; }
+      var msgs = [{ role: 'user', content: [
+        { type: 'text', text: '你是日程识别助手。请识别这张截图（邮件、海报、通知、聊天记录、网页等）里的日程信息，并只输出一行 JSON，格式严格为：{"title":"活动标题","at":"YYYY-MM-DDTHH:MM","location":"地点","link":"链接","note":"备注"}。规则：1) 标题尽量简短；2) 日期时间若截图里没有明确年份，按最近未来的日期推断，并转成 24 小时制 YYYY-MM-DDTHH:MM；3) 若只有日期没时间，用 09:00；4) 没有的字段填空字符串；5) 只输出这一行 JSON，不要输出任何其他文字、解释或 markdown 代码块。' },
+        { type: 'image_url', image_url: { url: dataUrl } },
+      ]}];
+      var out = '';
+      window.ingrid.chatStream({ engine: 'ollama-vision', model: 'qwen2.5vl:7b', messages: msgs, sessionId: 'sec-shot' }, {
+        onDelta: function (chunk) { if (chunk && chunk.text) { out += chunk.text; if (onProgress) onProgress(out); } },
+        onDone: function (d) {
+          if (!d || !d.ok) { reject(new Error((d && d.error) || '识别失败')); return; }
+          // 从模型输出里提取第一个 JSON 对象
+          var m = out.match(/\{[\s\S]*\}/);
+          if (!m) { reject(new Error('未从截图识别出日程信息')); return; }
+          try {
+            var j = JSON.parse(m[0]);
+            resolve({
+              title: String(j.title || '').trim(),
+              at: String(j.at || '').trim(),
+              location: String(j.location || '').trim(),
+              link: String(j.link || '').trim(),
+              note: String(j.note || '').trim(),
+              raw: out,
+            });
+          } catch (e) { reject(new Error('识别结果解析失败')); }
+        },
+      });
+    });
+  }
+
   /* 事件弹窗（新增日程 / 截图→日历） */
   function openEventModal(prefill, isShot) {
     var hint = prefill || {};
     modalMask.style.display = 'flex';
     modalMask.innerHTML =
-      '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 从邮件截图添加日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
-      '<div class="sub">' + (isShot ? '可先粘贴邮件文字让秘书自动提取，或直接手填；保存后会自动设提醒并附上邮件链接。' : '保存后秘书会按提醒时间通知你。') + '</div>' +
-      (shotDataUrl ? '<img class="shot" src="' + shotDataUrl + '">' : '') +
-      '<div class="f"><label>邮件文字（可选，帮秘书提取）</label><textarea id="evText" rows="3">' + esc(hint.raw || '') + '</textarea>' +
-        '<div style="margin-top:6px"><button class="sec-btn ghost" id="evExtract">' + iconSvg('sparkles') + ' 从文字自动提取</button></div></div>' +
+      '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 发截图 · 自动识别日程' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
+      '<div class="sub">' + (isShot ? '秘书会用本地视觉模型识别截图内容，自动填好标题/时间/地点，你核对后保存即可（不联网、不花钱）。' : '保存后秘书会按提醒时间通知你。') + '</div>' +
+      (shotDataUrl ? '<img class="shot" src="' + shotDataUrl + '">' :
+        (isShot ? '<div class="shot-drop" id="evDrop">' + iconSvg('camera') + ' 点击选择截图，或直接 ⌘V / Ctrl+V 粘贴</div>' : '')) +
+      (isShot ? '<div class="f"><div id="evShotState" style="font-size:12px;color:var(--ink-faint);min-height:18px;line-height:1.5;"></div></div>' : '') +
       '<div class="f"><label>标题 *</label><input id="evTitle" value="' + esc(hint.title || '') + '"></div>' +
       '<div class="f"><label>时间 *</label><input type="datetime-local" id="evAt" value="' + esc(hint.atLocal || '') + '"></div>' +
       '<div class="f"><label>地点</label><input id="evLoc" value="' + esc(hint.location || '') + '"></div>' +
-      '<div class="f"><label>邮件链接</label><input id="evLink" value="' + esc(hint.link || '') + '"></div>' +
+      '<div class="f"><label>链接</label><input id="evLink" value="' + esc(hint.link || '') + '"></div>' +
       '<div class="f"><label>备注</label><textarea id="evNote" rows="2">' + esc(hint.note || '') + '</textarea></div>' +
       '<div class="f"><label>提前提醒</label><select id="evRemind">' +
         '<option value="0">不提醒</option><option value="15">15 分钟</option><option value="60">1 小时</option><option value="1440" selected>1 天</option><option value="4320">3 天</option></select></div>' +
@@ -297,12 +335,39 @@
       atInput.value = toLocal(d);
     }
     modalMask.querySelector('#evCancel').addEventListener('click', closeModal);
-    modalMask.querySelector('#evExtract').addEventListener('click', function () {
-      var h = SC.extractEventHint(modalMask.querySelector('#evText').value, Date.now());
-      if (h.title) modalMask.querySelector('#evTitle').value = h.title;
-      if (h.at) modalMask.querySelector('#evAt').value = toLocal(new Date(h.at));
-      if (h.link) modalMask.querySelector('#evLink').value = h.link;
-    });
+
+    /* 截图模式：无图时支持点击选图 + 粘贴 */
+    if (isShot && !shotDataUrl) {
+      var drop = modalMask.querySelector('#evDrop');
+      if (drop) drop.addEventListener('click', function () { shotDataUrl = ''; fileInput.click(); });
+    }
+
+    /* 截图时：自动调用视觉模型识别并回填表单 */
+    if (isShot && shotDataUrl) {
+      var stEl = modalMask.querySelector('#evShotState');
+      var titleInput = modalMask.querySelector('#evTitle');
+      var atInputEl = modalMask.querySelector('#evAt');
+      var locInput = modalMask.querySelector('#evLoc');
+      var linkInput = modalMask.querySelector('#evLink');
+      var noteInput = modalMask.querySelector('#evNote');
+      stEl.textContent = '🔍 正在识别截图内容…';
+      recognizeShot(shotDataUrl, function (stream) {
+        stEl.textContent = '🔍 正在识别…（' + Math.min(stream.length, 40) + ' 字符）';
+      }).then(function (r) {
+        if (r.title) titleInput.value = r.title;
+        if (r.at) {
+          var d = new Date(r.at);
+          if (isFinite(d.getTime())) atInputEl.value = toLocal(d);
+        }
+        if (r.location) locInput.value = r.location;
+        if (r.link) linkInput.value = r.link;
+        if (r.note) noteInput.value = r.note;
+        stEl.textContent = '✅ 已自动识别，请核对下方信息后保存。';
+      }).catch(function (e) {
+        stEl.textContent = '⚠️ 自动识别失败：' + (e && e.message || e) + '（可手动填写后保存）';
+      });
+    }
+
     modalMask.querySelector('#evSave').addEventListener('click', function () {
       var title = modalMask.querySelector('#evTitle').value.trim();
       var at = modalMask.querySelector('#evAt').value;
@@ -313,7 +378,7 @@
         link: modalMask.querySelector('#evLink').value.trim(),
         note: modalMask.querySelector('#evNote').value.trim(),
         reminderMin: Number(modalMask.querySelector('#evRemind').value) || 0,
-        source: isShot ? '邮件截图' : '',
+        source: isShot ? '截图识别' : '',
       });
       closeModal(); renderEvents();
       addChat('a', '已添加日程「' + title + '」，到点会提醒你。');
@@ -325,6 +390,24 @@
   }
   function closeModal() { modalMask.style.display = 'none'; modalMask.innerHTML = ''; shotDataUrl = ''; }
   modalMask.addEventListener('click', function (e) { if (e.target === modalMask) closeModal(); });
+
+  /* 截图模式下的粘贴：⌘V / Ctrl+V 直接识别剪贴板图片 */
+  document.addEventListener('paste', function (e) {
+    if (modalMask.style.display !== 'flex') return;   // 仅弹窗打开时响应
+    var items = (e.clipboardData || {}).items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && items[i].type && items[i].type.indexOf('image') === 0) {
+        var blob = items[i].getAsFile();
+        if (!blob) continue;
+        var reader = new FileReader();
+        reader.onload = function () { setShotAndRerun(reader.result); };
+        reader.readAsDataURL(blob);
+        e.preventDefault();
+        break;
+      }
+    }
+  });
 
   /* 导入邮件 */
   document.getElementById('secAddEmail').addEventListener('click', function () {
