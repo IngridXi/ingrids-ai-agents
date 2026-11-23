@@ -535,8 +535,9 @@
         '\n3) 不同的活动——无论出现在同一张图里还是不同的多张图里——都要分别输出为独立的多条。' +
         '\n4) dateText / timeText / endTimeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算成日期、不要猜测年份。' +
         '\n4.1) dateText 只填「活动举办日期」；报名截止、简餐/票务预留截止、早鸟价截止、材料提交截止等日期都不是活动日期，不要填进 dateText（可放进 note）。' +
-        '\n4.2) 若某张截图没有明确写出活动日期，dateText 留空字符串，绝不要填「今天」或任何猜测的日期。' +
+        '\n4.2) 【关键】若截图没有明确写出「活动举办的日期」，dateText 留空字符串，绝不要填「今天」、绝不要猜日期（如 12/20）。' +
         '\n5) timeText 填开始时间；endTimeText 填结束时间。若截图只给一段「15:00-17:00」，则 timeText 取「15:00」、endTimeText 取「17:00」；没有结束时间就留空。' +
+        '\n5.1) 【关键】若截图没有明确写出「活动开始的时间」，timeText 留空字符串，绝不要编造 09:00、12:00 这类默认时间。「预约提醒 / 通知 / 温馨提示 / 提醒」这类文字通常不含具体活动日期和时间，此时 dateText 与 timeText 都应留空，宁可留空让用户手动补，也不要编造。' +
         '\n6) 若截图里有活动的详细议程/时间表（多个「时间+事项」，如「9:00 签到」「10:30 主题演讲」），逐项提取到 agenda 数组（每项 timeText 保留原始时间写法、title 为该议程项标题）；没有议程就输出空数组 []。' +
         '\n7) 地点/链接/备注从截图提取，没有就留空字符串。' +
         '\n8) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
@@ -592,6 +593,9 @@
     var dt = String(dateText || '').replace(/\s+/g, ' ').trim();
     var date = null;
     var m;
+
+    // 既无日期原文也无时间原文 → 时间待定，返回空（绝不捏造「今天 09:00」这类默认时间）
+    if (!dt && !String(timeText || '').trim()) return '';
 
     if (!dt) {
       date = new Date(base.getFullYear(), base.getMonth(), base.getDate());
@@ -804,6 +808,7 @@
         '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
         '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
         '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
+        (!ev.at ? '<div class="dup-warn">⚠ 未识别到时间：请手动填写准确的日期时间，或点「忽略」跳过。</div>' : '') +
         '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
         (ev.sourceText ? '<div class="src-text"><span class="src-label">📱 短信原文</span>' + esc(ev.sourceText) + '</div>' : '') +
         (nearDup ? '<div class="dup-warn">⚠ 疑似重复：日历已有「' + nearText + '」，请核对本条的日期时间。</div>' : '') +
@@ -980,7 +985,7 @@
         '今天是 ' + today + '。你是日程识别助手。请从下面这段文字里识别所有日程 / 活动 / 预订信息。\n\n文字：\n"""\n' + String(text || '').slice(0, 6000) + '\n"""\n\n' +
         '只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown。数组每一项是一条日程，格式严格为：' +
         '{"title":"标题","dateText":"日期原文","timeText":"开始时间原文","endTimeText":"结束时间原文","location":"地点","link":"链接","note":"备注","agenda":[{"timeText":"时间原文","title":"议程项"}]}。' +
-        '\n规则：dateText / timeText / endTimeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算、不要猜测年份；dateText 只填「活动举办日期」，报名截止/预留截止/早鸟价截止等日期不是活动日期、不要填进 dateText（可放进 note），若文字里没有明确活动日期就留空、绝不要填「今天」或任何猜测的日期；timeText 填开始时间、endTimeText 填结束时间（若文字是「15:00-17:00」则 timeText 取「15:00」、endTimeText 取「17:00」），没有的字段填空字符串；若文字里含详细议程/时间表（多个「时间+事项」）逐项提取到 agenda 数组，否则输出空数组 []；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
+        '\n规则：dateText / timeText / endTimeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算、不要猜测年份；dateText 只填「活动举办日期」，报名截止/预留截止/早鸟价截止等日期不是活动日期、不要填进 dateText（可放进 note），若文字里没有明确活动日期就留空、绝不要填「今天」或任何猜测的日期；timeText 填开始时间、endTimeText 填结束时间（若文字是「15:00-17:00」则 timeText 取「15:00」、endTimeText 取「17:00」），若文字没有明确写出开始时间，timeText 留空、绝不要编造 09:00 等默认时间；「预约提醒 / 通知 / 温馨提示」这类文字通常不含具体活动日期和时间，dateText 与 timeText 都应留空、不要硬填，宁可留空让用户手动补也不要编造；没有的字段填空字符串；若文字里含详细议程/时间表（多个「时间+事项」）逐项提取到 agenda 数组，否则输出空数组 []；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
       // 引擎优先级：DeepSeek（deepseek-flash 便宜、质量高）→ 本地文本模型 → 纯本地规则兜底
       var engines = [
         { engine: 'deepseek', model: 'deepseek-flash' },
@@ -1140,6 +1145,7 @@
         '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
         '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
         '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
+        (!ev.at ? '<div class="dup-warn">⚠ 未识别到时间：请手动填写准确的日期时间，或点「忽略」跳过。</div>' : '') +
         '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
         (ev.sourceText ? '<div class="src-text"><span class="src-label">📱 短信原文</span>' + esc(ev.sourceText) + '</div>' : '') +
         (nearDup ? '<div class="dup-warn">⚠ 疑似重复：日历已有「' + nearText + '」，请核对本条的日期时间。</div>' : '') +
