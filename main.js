@@ -4072,20 +4072,30 @@ function readAppleMail() {
       '      try {\n' +
       '        var eas = accounts[a].emailAddresses();\n' +
       '        for (var e = 0; e < eas.length; e++) {\n' +
-      '          try { addrs.push(String(eas[e].address() || "")); } catch (e2) { try { addrs.push(String(eas[e] || "")); } catch (e3) {} }\n' +
+      '          try { addrs.push(String(eas[e] || "")); } catch (e2) {}\n' +
       '        }\n' +
       '      } catch (e) {}\n' +
       '      var nm = ""; try { nm = String(accounts[a].name() || ""); } catch (e) {}\n' +
       '      res.found.push(nm + " [" + addrs.join(",") + "]");\n' +
       '      if (!msgs && addrs.join(",").toLowerCase().indexOf("cam.ac.uk") >= 0) {\n' +
       '        res.account = addrs.join(",");\n' +
-      '        try { msgs = accounts[a].inbox.messages; } catch (e) {}\n' +
+      '        // account 没有 inbox 属性，只能遍历 mailboxes 找 Inbox 文件夹\n' +
+      '        try {\n' +
+      '          var mbs = accounts[a].mailboxes();\n' +
+      '          for (var b = 0; b < mbs.length; b++) {\n' +
+      '            var bn = ""; try { bn = String(mbs[b].name() || ""); } catch (e) {}\n' +
+      '            if (/^inbox$/i.test(bn) || bn.indexOf("收件箱") >= 0) {\n' +
+      '              try { msgs = mbs[b].messages; } catch (e) {}\n' +
+      '              if (msgs) break;\n' +
+      '            }\n' +
+      '          }\n' +
+      '        } catch (e) {}\n' +
       '      }\n' +
       '    }\n' +
       '  } catch (e) { res.accountsErr = String(e); }\n' +
       '  if (!msgs) { try { msgs = Mail.inbox.messages; } catch (e) {} }\n' +
       '  if (!msgs) { return JSON.stringify(res); }\n' +
-      '  var n = msgs.length;\n' +
+      '  var n = Math.min(msgs.length, 800);\n' +
       '  var now = Date.now();\n' +
       '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
       '  var kept = [];\n' +
