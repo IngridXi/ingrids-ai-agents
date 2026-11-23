@@ -156,7 +156,8 @@
       '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook</button></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div></div>' +
+        '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div>' +
+        '<div class="sec-bout" id="secMailOut" hidden></div></div>' +
       '<div class="sec-sec"><label>短信 · 确认信息</label>' +
         '<div class="sec-row"><button class="sec-btn" id="secReadSms" style="flex:1">' + iconSvg('message') + ' 读取短信 · 识别活动</button></div>' +
         '<div class="sec-bout" id="secSmsOut" hidden></div>' +
@@ -409,15 +410,29 @@
    * silent=true 时（自动同步触发）无结果不刷屏，只提示发现的新日程。 */
   document.getElementById('secScanMail').addEventListener('click', function () { scanEmailsForEvents(false); });
   function scanEmailsForEvents(silent) {
-    if (!emails.emails || !emails.emails.length) { if (!silent) addChat('a', '暂无邮件。可先「同步 Outlook」或「导入邮件」。'); return; }
+    var out = document.getElementById('secMailOut');
+    function show(msg, isErr) {
+      if (out) { out.hidden = false; out.innerHTML = (isErr ? '⚠️ ' : '') + esc(msg); }
+    }
+    if (!emails.emails || !emails.emails.length) {
+      show('还没有邮件可扫描。请先点「同步 Outlook」拉取邮箱，或点「＋ 导入邮件」粘贴一封邮件。', true);
+      if (!silent) addChat('a', '暂无邮件。可先「同步 Outlook」或「导入邮件」。');
+      return;
+    }
     var candidates = emails.emails.filter(isConfirmationEmail);
-    if (!candidates.length) { if (!silent) addChat('a', '未在邮件里发现「确认信息」类内容。'); return; }
+    if (!candidates.length) {
+      show('已扫描 ' + emails.emails.length + ' 封邮件，未发现报名 / 预订 / 出票等「确认信息」。');
+      if (!silent) addChat('a', '未在邮件里发现「确认信息」类内容。');
+      return;
+    }
     var text = candidates.slice(0, 12).map(function (m) {
       return '【' + (m.fromName || m.from || '') + '】' + m.subject + '\n' + m.body;
     }).join('\n\n---\n\n');
+    show('发现 ' + candidates.length + ' 封确认类邮件，正在识别日程…');
     if (!silent) addChat('a', '发现 ' + candidates.length + ' 封确认类邮件，正在识别日程…');
     extractEventsFromText(text).then(function (list) {
-      if (!list.length) { if (!silent) addChat('a', '扫描了确认邮件，未识别出明确日程。'); return; }
+      if (!list.length) { show('扫描了确认邮件，未识别出明确日程。'); if (!silent) addChat('a', '扫描了确认邮件，未识别出明确日程。'); return; }
+      show('识别出 ' + list.length + ' 条日程，请在弹出的确认框里核对。');
       notifyConfirm(list, '邮件确认');
       openConfirmEvents(list, '邮件确认', (candidates[0] && candidates[0].link) || '');
     });
@@ -533,14 +548,17 @@
         '\n2) 多张截图若是同一个活动（如邮件正文+日历+海报描述同一件事），合并为一条，字段取最完整的。' +
         '\n2.1) 【重要】同一个活动即使标题措辞不同（如活动全称 vs 主题口号、简称 vs 全称），只要时间地点一致，就必须合并成一条，输出最完整、最正式的标题，绝不允许把同一活动拆成多条。' +
         '\n3) 不同的活动——无论出现在同一张图里还是不同的多张图里——都要分别输出为独立的多条。' +
+        '\n3.1) 【关键】每条日程的日期时间只能来自它自己所在的那张截图，绝不能把一张图的日期/时间安到另一张图的活动上（例如把海报的结束时间「20:00」当成短信预约的时间、把海报日期安到短信预约上）。' +
         '\n4) dateText / timeText / endTimeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算成日期、不要猜测年份。' +
         '\n4.1) dateText 只填「活动举办日期」；报名截止、简餐/票务预留截止、早鸟价截止、材料提交截止等日期都不是活动日期，不要填进 dateText（可放进 note）。' +
         '\n4.2) 【关键】若截图没有明确写出「活动举办的日期」，dateText 留空字符串，绝不要填「今天」、绝不要猜日期（如 12/20）。' +
+        '\n4.3) 【关键】英文日期必须逐字符精确读取，数字严格对应：如「03 Dec 2026」的日就是 03、「26 Nov 2026」的日就是 26，绝不要把 03 读成 20、把 26 读成别的数字，也不要把 Nov 和 Dec 混淆。' +
         '\n5) timeText 填开始时间；endTimeText 填结束时间。若截图只给一段「15:00-17:00」，则 timeText 取「15:00」、endTimeText 取「17:00」；没有结束时间就留空。' +
         '\n5.1) 【关键】若截图没有明确写出「活动开始的时间」，timeText 留空字符串，绝不要编造 09:00、12:00 这类默认时间。「预约提醒 / 通知 / 温馨提示 / 提醒」这类文字通常不含具体活动日期和时间，此时 dateText 与 timeText 都应留空，宁可留空让用户手动补，也不要编造。' +
         '\n6) 若截图里有活动的详细议程/时间表（多个「时间+事项」，如「9:00 签到」「10:30 主题演讲」），逐项提取到 agenda 数组（每项 timeText 保留原始时间写法、title 为该议程项标题）；没有议程就输出空数组 []。' +
         '\n7) 地点/链接/备注从截图提取，没有就留空字符串。' +
-        '\n8) 标题简短准确，去掉「邀请函」「通知」等装饰词。' }];
+        '\n8) 标题简短准确，去掉「邀请函」「通知」等装饰词。' +
+        '\n9) 【关键】「预约取消提醒」「请勿前往诊所」「请致电取消预约」这类短信（含 cancel / do not wish / 请勿前往 / 取消预约 等）不是预约日程，不要输出为日程；只有真正有明确日期时间的预约、报名、出票、会议、活动才输出。' }];
       (dataUrls || []).forEach(function (u) { content.push({ type: 'image_url', image_url: { url: u } }); });
       var msgs = [{ role: 'user', content: content }];
       // 引擎优先级：DeepSeek（deepseek-flash 已支持图片、语义分组强、重复少）→ 本地视觉模型兜底
@@ -577,7 +595,7 @@
                   endTimeText: endText,
                   agenda: ag,
                 };
-              }).filter(function (e) { return e.title || e.at; });
+              }).filter(function (e) { return (e.title || e.at) && !isCancellationNotice(e); });
               if (!list.length) { attempt(i + 1); return; }
               resolve(list);
             } catch (e) { attempt(i + 1); }
@@ -617,12 +635,17 @@
       if (diff === 0) diff = 7;             // 本周当天已过 → 下同星期
       date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diff);
       if (/下|next/i.test(dt)) date = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7);
-    } else if ((m = dt.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?/i))) {
-      var MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-      date = new Date(base.getFullYear(), MON.indexOf(m[1].toLowerCase().slice(0, 3)), Number(m[2]));
-    } else if ((m = dt.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*/i))) {
-      var MON2 = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-      date = new Date(base.getFullYear(), MON2.indexOf(m[2].toLowerCase().slice(0, 3)), Number(m[1]));
+    } else if ((m = dt.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?(\s+\d{4})?/i))) {
+      // 日 月 [年]："03 Dec 2026" / "3rd Dec 2026" / "26 Nov"。必须放在「月 日」之前，
+      // 否则 "03 Dec 2026" 会被「月 日」正则误匹配成 "Dec 20"（把年份 2026 前两位当日期）。
+      var MON_DF = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      var yrDF = m[3] ? Number(m[3].trim()) : base.getFullYear();
+      date = new Date(yrDF, MON_DF.indexOf(m[2].toLowerCase().slice(0, 3)), Number(m[1]));
+    } else if ((m = dt.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(\s+\d{4})?/i))) {
+      // 月 日 [年]："Dec 03 2026" / "Dec 3"
+      var MON_MF = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      var yrMF = m[3] ? Number(m[3].trim()) : base.getFullYear();
+      date = new Date(yrMF, MON_MF.indexOf(m[1].toLowerCase().slice(0, 3)), Number(m[2]));
     } else if ((m = dt.match(/(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})/))) {
       date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
     } else if ((m = dt.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/))) {
@@ -681,13 +704,20 @@
     return date.toISOString();
   }
 
+  /* 判断一条识别结果是否是「取消/提醒」类通知（不是真正的日程），应过滤掉。
+   * 典型：「预约取消提醒」「请勿前往诊所」「请致电取消预约」「Dear Patient...do not wish」等。 */
+  function isCancellationNotice(ev) {
+    var blob = String((ev.title || '') + ' ' + (ev.note || '') + ' ' + (ev.location || '')).toLowerCase();
+    return /cancel|do not wish|do not attend|please do not|请勿前往|取消预约|致电取消|取消提醒|退订|unsubscribe/.test(blob);
+  }
+
   /* 事件弹窗（新增日程 / 发截图自动识别：多图辅助一条 + 一图多日程 + 逐条核对） */
   function openEventModal(prefill, isShot) {
     var hint = prefill || {};
     modalMask.style.display = 'flex';
     var html =
       '<div class="sec-modal"><h3>' + (isShot ? iconSvg('camera') + ' 识别日程（图片＋链接）' : iconSvg('calendar') + ' 添加日程') + '</h3>' +
-      '<div class="sub">' + (isShot ? '拖入 / 粘贴 / 选择截图，可同时粘贴活动链接；点「开始识别」一次性识别。同一活动的多张会合并，不同活动会分别列出；重复活动自动补全缺失信息、不重复添加。' : '保存后秘书会按提醒时间通知你。') + '</div>';
+      '<div class="sub">' + (isShot ? '拖入 / 粘贴 / 选择截图，可同时粘贴活动链接；点「开始识别」一次性识别。同一活动的多张会合并，不同活动会分别列出；重复活动自动补全缺失信息、不重复添加。提示：短信 / 邮件这类文字截图，改用下方「读取短信」「扫描邮件」读原文会更准（看图识别数字偶尔会读错）。' : '保存后秘书会按提醒时间通知你。') + '</div>';
     if (isShot) {
       html += '<div class="shot-thumbs" id="evThumbs">' + shotDataUrls.map(function (u, i) {
         return '<div class="shot-thumb"><img src="' + u + '"><button class="rm" data-rm="' + i + '" title="移除">✕</button></div>';
@@ -1020,7 +1050,7 @@
                   endTimeText: endText,
                   agenda: ag,
                 };
-              }).filter(function (e) { return e.title || e.at; });
+              }).filter(function (e) { return (e.title || e.at) && !isCancellationNotice(e); });
               resolve(list.length ? list : parseEventsFromText(text, base));
             } catch (e) { attempt(i + 1); }
           },
