@@ -505,8 +505,12 @@
       var mails = r.mails || [];
       if (!mails.length) {
         var total = r.total || 0;
-        if (total === 0) { out.textContent = 'Outlook 收件箱为空（可能未登录剑桥账号，或邮件尚未同步到本机 Outlook）。'; }
-        else { out.textContent = '收件箱共 ' + total + ' 封，但最近一周没有新邮件。'; }
+        var acc = r.account || '';
+        if (total === 0) {
+          out.textContent = acc
+            ? '剑桥账号 ' + acc + ' 的收件箱为空（可能邮件未同步到本机 Outlook，或该账号收件箱无邮件）。'
+            : '未找到剑桥邮箱账号，读取的是默认收件箱且为空。请确认 Outlook 里已登录 yx447@cam.ac.uk 且能正常收发邮件。';
+        } else { out.textContent = '收件箱共 ' + total + ' 封，但最近一周没有新邮件。'; }
         addChat('a', '读完 Outlook 邮件，未发现活动确认信息。');
         return;
       }

@@ -3886,6 +3886,20 @@ function readOutlookMail() {
     const script = 'function run(){\n' +
       '  var Outlook = Application("Microsoft Outlook");\n' +
       '  var inbox = Outlook.inbox;\n' +
+      '  var accName = "";\n' +
+      '  // 遍历所有账号，优先定位剑桥邮箱（cam.ac.uk）的收件箱；默认 inbox 只指向默认账号(outlook.com)\n' +
+      '  try {\n' +
+      '    var accounts = Outlook.accounts;\n' +
+      '    var ac = accounts.length;\n' +
+      '    for (var a = 0; a < ac; a++) {\n' +
+      '      var addr = "";\n' +
+      '      try { addr = String(accounts[a].emailAddress() || ""); } catch (e) {}\n' +
+      '      if (/cam\\.ac\\.uk/i.test(addr)) {\n' +
+      '        try { inbox = accounts[a].inbox; accName = addr; } catch (e) {}\n' +
+      '        break;\n' +
+      '      }\n' +
+      '    }\n' +
+      '  } catch (e) {}\n' +
       '  var msgs = inbox.messages;\n' +
       '  var now = Date.now();\n' +
       '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
@@ -3927,7 +3941,7 @@ function readOutlookMail() {
       '    if (!body) { try { body = String(m.content() || ""); } catch (e) {} }\n' +
       '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
       '  }\n' +
-      '  return JSON.stringify({ total: n, inWindow: kept.length, mails: out });\n' +
+      '  return JSON.stringify({ account: accName, total: n, inWindow: kept.length, mails: out });\n' +
       '}';
     execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
@@ -3957,6 +3971,7 @@ function readOutlookMail() {
           ok: true, mails: mails, count: mails.length,
           total: (obj && obj.total) || 0,
           inWindow: (obj && obj.inWindow) || 0,
+          account: (obj && obj.account) || '',
         });
       } catch (e) {
         resolve({ ok: false, error: '解析 Outlook 数据失败：' + String((e && e.message) || e) });
