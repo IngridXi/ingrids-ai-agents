@@ -3884,6 +3884,7 @@ function buildOutlookDiag(obj) {
   const parts = [];
   if (obj && Array.isArray(obj.found) && obj.found.length) parts.push('账号：' + obj.found.map((s) => String(s || '').trim()).filter(Boolean).join('；'));
   if (obj && Array.isArray(obj.folders) && obj.folders.length) parts.push('文件夹：' + obj.folders.map((s) => String(s || '').trim()).filter(Boolean).join('；'));
+  if (obj && obj.selectedFolder) parts.push('当前选中：' + String(obj.selectedFolder).trim());
   return parts.join(' | ');
 }
 
@@ -3892,7 +3893,7 @@ function readOutlookMail() {
     if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取本机 Outlook' }); return; }
     const script = 'function run(){\n' +
       '  var Outlook = Application("Microsoft Outlook");\n' +
-      '  var res = { account: "", found: [], folders: [], total: 0, inWindow: 0, mails: [] };\n' +
+      '  var res = { account: "", found: [], folders: [], selectedFolder: "", total: 0, inWindow: 0, mails: [] };\n' +
       '  // 收集具体账号类型（account 是抽象类，新版 Outlook 里不能用 Outlook.accounts 枚举）\n' +
       '  function addAccounts(getter, all) {\n' +
       '    try {\n' +
@@ -3943,7 +3944,28 @@ function readOutlookMail() {
       '      }\n' +
       '    } catch (e) {}\n' +
       '  }\n' +
-      '  // 兜底 B：默认收件箱\n' +
+      '  // 兜底 B：读取当前选中的文件夹（用户先在 Outlook 里点选剑桥收件箱，selectedFolder 反映 UI 状态，可穿透 Hx 账号）\n' +
+      '  if (!msgs) {\n' +
+      '    try {\n' +
+      '      var sf = Outlook.selectedFolder();\n' +
+      '      if (sf) {\n' +
+      '        var sfName = ""; var sfAcc = "";\n' +
+      '        try { sfName = String(sf.name() || ""); } catch (e) {}\n' +
+      '        try { sfAcc = String(sf.account.emailAddress() || ""); } catch (e2) {}\n' +
+      '        res.selectedFolder = sfName + " | " + sfAcc;\n' +
+      '        if (/cam\\.ac\\.uk/i.test(sfAcc)) res.account = sfAcc;\n' +
+      '        try { var sfm = sf.messages; if (sfm && sfm.length > 0) msgs = sfm; } catch (e3) {}\n' +
+      '      }\n' +
+      '    } catch (e) {}\n' +
+      '  }\n' +
+      '  // 兜底 C：当前视图消息（Outlook 正在展示的邮件列表）\n' +
+      '  if (!msgs) {\n' +
+      '    try {\n' +
+      '      var cm = Outlook.currentMessages();\n' +
+      '      if (cm && cm.length > 0) msgs = cm;\n' +
+      '    } catch (e) {}\n' +
+      '  }\n' +
+      '  // 兜底 D：默认收件箱\n' +
       '  if (!msgs) {\n' +
       '    try { msgs = Outlook.inbox.messages; } catch (e) {}\n' +
       '  }\n' +

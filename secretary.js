@@ -509,7 +509,7 @@
         if (total === 0) {
           out.textContent = acc
             ? '剑桥账号 ' + acc + ' 的收件箱为空（可能邮件未同步到本机 Outlook，或该账号收件箱无邮件）。'
-            : '未找到剑桥邮箱账号，读取的是默认收件箱且为空。请确认 Outlook 里已登录 yx447@cam.ac.uk 且能正常收发邮件。';
+            : '读不到剑桥邮件。请先在 Outlook 里点选剑桥收件箱（Inbox），再点一次本按钮重试。';
           if (r.diag) out.innerHTML += '<br><span style="font-size:10px;color:var(--ink-faint)">诊断：' + esc(r.diag) + '</span>';
         } else { out.textContent = '收件箱共 ' + total + ' 封，但最近一周没有新邮件。'; }
         addChat('a', '读完 Outlook 邮件，未发现活动确认信息。');
