@@ -131,7 +131,8 @@ async function main() {
   ];
   for (const t of targets) {
     fs.rmSync(t, { recursive: true, force: true });
-    fs.cpSync(built, t, { recursive: true });
+    // 用 ditto 复制（保留签名 xattr）；fs.cpSync 会丢扩展属性导致 codesign 验证失败
+    execFileSync('ditto', [built, t]);
     console.log('已复制:', t);
   }
   console.log('完成。');
