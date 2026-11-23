@@ -13,6 +13,7 @@
     "url": "https://github.com/IngridXi/ingrids-ai-agents.git"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "electron": "^45.2.3"
   },
   "dependencies": {
