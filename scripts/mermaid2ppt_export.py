@@ -11,8 +11,10 @@
 import json
 import re
 import sys
+from math import hypot
 
 from pptx import Presentation
+from pptx.enum.shapes import MSO_CONNECTOR
 from pptx.util import Inches
 from diagram_pptx import render_mermaid
 
@@ -190,6 +192,127 @@ def normalize_mermaid_ids(source):
     return "\n".join(out), id_map
 
 
+# ---------------------------------------------------------------------------
+# 连线跟随修复：
+# 1) group=False —— 形状平铺到 slide。PowerPoint/WPS 对 group 内 connector 的
+#    连接点跟随支持不完整，去掉外层 group 后拖动节点连线才能正常跟随。
+# 2) 多段折线边改用 ELBOW connector —— 有拐点的边不再被拆成多段静态直线，
+#    拐点交给 PowerPoint 自动布线，拖动节点时整条线（含拐点）跟随。
+# ---------------------------------------------------------------------------
+
+_patch_applied = False
+
+
+def _install_elbow_patch():
+    """把 diagram-pptx 的多段折线边渲染为 ELBOW connector（幂等，带 fallback）。"""
+    global _patch_applied
+    if _patch_applied:
+        return
+    _patch_applied = True  # 只尝试一次；失败则静默回退到默认直线渲染
+    try:
+        from diagram_pptx.render.python_pptx import PythonPptxRenderer, _simplify_path
+        from diagram_pptx.scene import Point
+        from diagram_pptx.styles import ElementStyle
+    except ImportError:
+        return
+
+    _orig = PythonPptxRenderer._render_connector
+
+    def _render_connector_elbow(self, slide, item, transform):
+        try:
+            points = _simplify_path(item.points)
+        except Exception:
+            return _orig(self, slide, item, transform)
+        if len(points) <= 2:
+            return _orig(self, slide, item, transform)
+        try:
+            start, end = points[0], points[-1]
+            sx, sy = transform.point(start)
+            ex, ey = transform.point(end)
+            connector = slide.shapes.add_connector(MSO_CONNECTOR.ELBOW, sx, sy, ex, ey)
+            connector.name = self._shape_name(item)
+            self._apply_line(
+                connector.line, item.style, default="#536273", scale=transform.stroke_scale
+            )
+            if item.start_marker:
+                self._set_line_end(connector.line, "headEnd", item.start_marker)
+            if item.directed and item.end_marker:
+                self._set_line_end(connector.line, "tailEnd", item.end_marker)
+            connectors = [connector]
+
+            label_shape = None
+            if item.label:
+                raw_label_point = item.metadata.get("label_point")
+                midpoint, label_segment = self._path_midpoint_segment(points)
+                if isinstance(raw_label_point, (list, tuple)) and len(raw_label_point) == 2:
+                    midpoint = Point(float(raw_label_point[0]), float(raw_label_point[1]))
+                center_x, center_y = transform.point(midpoint)
+                label_width_inches = self._connector_label_width(
+                    item.label, item.style, font_scale=transform.font_scale,
+                    slide_height_points=transform.slide_height_points,
+                )
+                label_width = Inches(label_width_inches)
+                label_height = Inches(0.36)
+                label_top = center_y - Inches(0.18)
+                label_left = center_x - label_width // 2
+                placement = str(item.metadata.get("label_placement", "auto"))
+                seg_start, seg_end = label_segment
+                seg_h = abs(seg_end.x - seg_start.x) >= abs(seg_end.y - seg_start.y)
+                seg_len = hypot(seg_end.x - seg_start.x, seg_end.y - seg_start.y) * transform.scale
+                detached = placement == "above" or (
+                    placement == "auto"
+                    and seg_len < label_width_inches + 0.28
+                    and (len(points) == 2 or seg_h)
+                )
+                if placement == "above" or (detached and seg_h):
+                    label_top = center_y - label_height - Inches(0.06)
+                elif detached:
+                    label_left = center_x + Inches(0.06)
+                label_shape = slide.shapes.add_textbox(
+                    label_left, label_top, label_width, label_height
+                )
+                label_shape.name = f"{self._shape_name(item)}:label"
+                if detached and item.style.label_fill is None:
+                    label_shape.fill.background()
+                else:
+                    self._apply_fill(
+                        label_shape.fill,
+                        ElementStyle(fill=item.style.label_fill or "#FFFFFF"),
+                        default="#FFFFFF",
+                    )
+                label_shape.line.fill.background()
+                self._format_text_frame(
+                    label_shape.text_frame, item.label, item.style,
+                    default_color=item.style.line or "#536273", default_size=12.0,
+                    font_scale=transform.font_scale,
+                    slide_height_points=transform.slide_height_points,
+                    min_size=max(
+                        12.0,
+                        self.typography.edge_min_font_size.resolve(
+                            slide_height_points=transform.slide_height_points
+                        ),
+                    ),
+                    max_size=18.0, box_width=label_width, box_height=label_height,
+                )
+            return connectors, label_shape
+        except Exception:
+            return _orig(self, slide, item, transform)
+
+    PythonPptxRenderer._render_connector = _render_connector_elbow
+
+
+def render_editable(source, slide, style):
+    """渲染可编辑原生形状，并启用连线跟随修复。返回 CompileResult。"""
+    _install_elbow_patch()
+    return render_mermaid(
+        source,
+        slide=slide,
+        relative_bounds=(0.05, 0.05, 0.90, 0.90),  # 四周留 5% 边距
+        style=style,
+        group=False,  # 形状平铺 slide，保证拖动节点时连线跟随
+    )
+
+
 def main():
     data = json.loads(sys.stdin.read())
     source = str(data.get("source") or "").strip()
@@ -209,12 +332,7 @@ def main():
     prs.slide_width = Inches(13.333)   # 16:9
     prs.slide_height = Inches(7.5)
     slide = prs.slides.add_slide(prs.slide_layouts[6])  # 空白版式
-    result = render_mermaid(
-        source,
-        slide=slide,
-        relative_bounds=(0.05, 0.05, 0.90, 0.90),  # 四周留 5% 边距
-        style=style,
-    )
+    result = render_editable(source, slide, style)
     prs.save(out_path)
     diags = getattr(result, "diagnostics", None) or []
     print(json.dumps({
