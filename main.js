@@ -1902,7 +1902,10 @@ ipcMain.handle('chat:start', (e, payload) => {
       // 聊天自动记账：估算输入/输出 token 并写入用量账本。
       // 思考链 reasoning 也计入输出——它才是思考型模型烧钱的大头（此前只算正文，严重低估真实费用）
       try {
-        const tin = approxTokens(JSON.stringify(messages)), tout = approxTokens(outChars + reasoning);
+        // 注意：outChars 是数字（逐块累加的字符数），reasoning 是字符串。不能直接 outChars + reasoning
+        // （number+string 会把数字转成十进制字符串再拼，如 1500 → "1500"，token 数被算成 1，导致 tokensOut 恒为 0/1）。
+        // 这里按真实字符数估算：正文字符数 + 思考链字符数。
+        const tin = approxTokens(JSON.stringify(messages)), tout = Math.ceil((outChars + reasoning.length) / 4);
         appendUsage({
           at: Date.now(), engine: engine, model: model,
           agentId: '', agentName: '聊天', taskType: 'chat', source: 'chat',

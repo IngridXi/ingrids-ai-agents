@@ -124,6 +124,7 @@
     '.sec-modal .shot-bar .primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650;}',
     '.sec-modal .divider{border:none;border-top:1px dashed var(--line);margin:12px 0;}',
     '.sec-modal .agenda-prev{font-size:11px;color:var(--ink-soft);background:var(--surface-2);border-radius:7px;padding:6px 8px;margin-bottom:6px;line-height:1.5;word-break:break-all;}',
+    '.sec-modal .dup-warn{font-size:11px;color:#b45309;background:#fff7e6;border:1px solid #f6d9a0;border-radius:7px;padding:6px 8px;margin-bottom:6px;line-height:1.5;word-break:break-all;}',
     '.sec-modal .shot-ev .acts .add.merge{opacity:1;cursor:pointer;background:var(--accent-soft,#eef3ff);border-color:var(--accent);color:var(--accent);}',
     '.sec-panel.drag-over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft);}',
     '.sec-modal.drag-over{outline:3px dashed var(--accent);outline-offset:-4px;}',
@@ -332,6 +333,15 @@
   }
   // 两个事件是否「疑似重复」：标题语义相似（≥0.6）+ 时间接近（同一天 ± 90 分钟；缺时间则只看标题）
   function eventsSimilar(aTitle, aAt, bTitle, bAt) {
+    // 时间槽强匹配：同一天且开始时间几乎相同（≤5 分钟）→ 直接判同一活动，越过标题。
+    // 这是最强也最安全的重复信号——同一时间你不可能同时出现在两个活动。
+    // 它能救「活动全称 vs 主题口号」这类字面零重叠的同义标题（如「与光同行·信则将至」=「光尘杯青年领袖峰会」）。
+    if (aAt && bAt) {
+      var ta0 = new Date(aAt), tb0 = new Date(bAt);
+      if (isFinite(ta0.getTime()) && isFinite(tb0.getTime()) &&
+          ta0.toDateString() === tb0.toDateString() &&
+          Math.abs(ta0.getTime() - tb0.getTime()) <= 5 * 60000) return true;
+    }
     if (titleSimilarity(aTitle, bTitle) < 0.6) return false;
     if (!aAt || !bAt) return true;
     var ta = new Date(aAt), tb = new Date(bAt);
@@ -503,6 +513,8 @@
         '\n2.1) 【重要】同一个活动即使标题措辞不同（如活动全称 vs 主题口号、简称 vs 全称），只要时间地点一致，就必须合并成一条，输出最完整、最正式的标题，绝不允许把同一活动拆成多条。' +
         '\n3) 不同的活动——无论出现在同一张图里还是不同的多张图里——都要分别输出为独立的多条。' +
         '\n4) dateText / timeText / endTimeText 必须原样保留截图里的原始文字（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算成日期、不要猜测年份。' +
+        '\n4.1) dateText 只填「活动举办日期」；报名截止、简餐/票务预留截止、早鸟价截止、材料提交截止等日期都不是活动日期，不要填进 dateText（可放进 note）。' +
+        '\n4.2) 若某张截图没有明确写出活动日期，dateText 留空字符串，绝不要填「今天」或任何猜测的日期。' +
         '\n5) timeText 填开始时间；endTimeText 填结束时间。若截图只给一段「15:00-17:00」，则 timeText 取「15:00」、endTimeText 取「17:00」；没有结束时间就留空。' +
         '\n6) 若截图里有活动的详细议程/时间表（多个「时间+事项」，如「9:00 签到」「10:30 主题演讲」），逐项提取到 agenda 数组（每项 timeText 保留原始时间写法、title 为该议程项标题）；没有议程就输出空数组 []。' +
         '\n7) 地点/链接/备注从截图提取，没有就留空字符串。' +
@@ -758,12 +770,21 @@
       if (ev.end) { var de = new Date(ev.end); if (isFinite(de.getTime())) endLocal = toLocal(de); }
       var added = ev._added, merged = ev._merged;
       var existing = !added && !merged && ev.at ? findExistingEvent(ev.title, ev.at) : null;
+      var nearDup = !existing && !added && !merged ? findNearDuplicate(ev.title, ev.at) : null;
+      var nearText = '';
+      if (nearDup) {
+        var nd = nearDup.at ? new Date(nearDup.at) : null;
+        nearText = esc(nearDup.title) + (nd && isFinite(nd.getTime())
+          ? '（' + nd.getFullYear() + '/' + (nd.getMonth() + 1) + '/' + nd.getDate() + ' ' + (nd.getHours() < 10 ? '0' : '') + nd.getHours() + ':' + (nd.getMinutes() < 10 ? '0' : '') + nd.getMinutes() + '）'
+          : '');
+      }
       var ag = agendaPreview(ev.agenda);
       return '<div class="shot-ev' + (added || merged || existing ? ' added' : '') + '" data-i="' + i + '">' +
         '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
         '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
         '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
         '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        (nearDup ? '<div class="dup-warn">⚠ 疑似重复：日历已有「' + nearText + '」，请核对本条的日期时间。</div>' : '') +
         (ag ? '<div class="agenda-prev">' + esc(ag) + '</div>' : '') +
         '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
         (existing
@@ -937,7 +958,7 @@
         '今天是 ' + today + '。你是日程识别助手。请从下面这段文字里识别所有日程 / 活动 / 预订信息。\n\n文字：\n"""\n' + String(text || '').slice(0, 6000) + '\n"""\n\n' +
         '只输出一个 JSON 数组，不要输出任何其他文字、解释或 markdown。数组每一项是一条日程，格式严格为：' +
         '{"title":"标题","dateText":"日期原文","timeText":"开始时间原文","endTimeText":"结束时间原文","location":"地点","link":"链接","note":"备注","agenda":[{"timeText":"时间原文","title":"议程项"}]}。' +
-        '\n规则：dateText / timeText / endTimeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算、不要猜测年份；timeText 填开始时间、endTimeText 填结束时间（若文字是「15:00-17:00」则 timeText 取「15:00」、endTimeText 取「17:00」），没有的字段填空字符串；若文字里含详细议程/时间表（多个「时间+事项」）逐项提取到 agenda 数组，否则输出空数组 []；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
+        '\n规则：dateText / timeText / endTimeText 必须原样保留文字里的原始写法（如「11月29日」「下周三」「下午3点」「15:30」「Nov 29」「9am」「17:00」），绝对不要换算、不要猜测年份；dateText 只填「活动举办日期」，报名截止/预留截止/早鸟价截止等日期不是活动日期、不要填进 dateText（可放进 note），若文字里没有明确活动日期就留空、绝不要填「今天」或任何猜测的日期；timeText 填开始时间、endTimeText 填结束时间（若文字是「15:00-17:00」则 timeText 取「15:00」、endTimeText 取「17:00」），没有的字段填空字符串；若文字里含详细议程/时间表（多个「时间+事项」）逐项提取到 agenda 数组，否则输出空数组 []；可能是会议、讲座、航班、车票、酒店、报名确认、预约等。' }];
       // 引擎优先级：DeepSeek（deepseek-flash 便宜、质量高）→ 本地文本模型 → 纯本地规则兜底
       var engines = [
         { engine: 'deepseek', model: 'deepseek-flash' },
@@ -1005,6 +1026,20 @@
     return byDay;
   }
 
+  /* 疑似重复：标题语义高度相似（≥0.8，能抓住「全称 vs 简称」但不会误伤「电话预约」这类泛化词）但时间对不上
+   * （可能识别错了日期）。用于确认卡片上给用户一个「请核对日期」的提醒，不自动判重（避免误伤每周/隔周重复的例行会议）。 */
+  function findNearDuplicate(title, at) {
+    var t = String(title || '').trim();
+    if (!t) return null;
+    for (var i = 0; i < events.events.length; i++) {
+      var e = events.events[i];
+      if (titleSimilarity(t, e.title) < 0.8) continue;
+      if (at && e.at && eventsSimilar(t, at, e.title, e.at)) continue;   // 已属确定重复的，不算「疑似」
+      return e;
+    }
+    return null;
+  }
+
   /* 用新识别的信息补全已有日程的缺失字段（不重复新增、不覆盖已有内容）。返回是否发生了补全。 */
   function mergeIntoExisting(existing, incoming) {
     if (!existing || !incoming) return false;
@@ -1070,12 +1105,21 @@
       if (ev.end) { var de = new Date(ev.end); if (isFinite(de.getTime())) endLocal = toLocal(de); }
       var added = ev._added, merged = ev._merged;
       var existing = !added && !merged && ev.at ? findExistingEvent(ev.title, ev.at) : null;
+      var nearDup = !existing && !added && !merged ? findNearDuplicate(ev.title, ev.at) : null;
+      var nearText = '';
+      if (nearDup) {
+        var nd = nearDup.at ? new Date(nearDup.at) : null;
+        nearText = esc(nearDup.title) + (nd && isFinite(nd.getTime())
+          ? '（' + nd.getFullYear() + '/' + (nd.getMonth() + 1) + '/' + nd.getDate() + ' ' + (nd.getHours() < 10 ? '0' : '') + nd.getHours() + ':' + (nd.getMinutes() < 10 ? '0' : '') + nd.getMinutes() + '）'
+          : '');
+      }
       var ag = agendaPreview(ev.agenda);
       return '<div class="shot-ev' + (added || merged || existing ? ' added' : '') + '" data-i="' + i + '">' +
         '<div class="g"><span class="lbl">题</span><input class="e-title" value="' + esc(ev.title || '') + '" placeholder="标题"></div>' +
         '<div class="g"><span class="lbl">始</span><input class="e-at" type="datetime-local" value="' + esc(atLocal) + '">' +
         '<span class="lbl">终</span><input class="e-end" type="datetime-local" value="' + esc(endLocal) + '"></div>' +
         '<div class="g"><span class="lbl">地</span><input class="e-loc" value="' + esc(ev.location || '') + '" placeholder="地点"></div>' +
+        (nearDup ? '<div class="dup-warn">⚠ 疑似重复：日历已有「' + nearText + '」，请核对本条的日期时间。</div>' : '') +
         (ag ? '<div class="agenda-prev">' + esc(ag) + '</div>' : '') +
         '<div class="acts"><button class="skip" data-i="' + i + '">忽略</button>' +
         (existing
