@@ -3887,13 +3887,31 @@ function readOutlookMail() {
       '  var Outlook = Application("Microsoft Outlook");\n' +
       '  var inbox = Outlook.inbox;\n' +
       '  var msgs = inbox.messages;\n' +
-      '  var out = [];\n' +
       '  var now = Date.now();\n' +
       '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
       '  var max = 300;\n' +
       '  var n = Math.min(msgs.length, max);\n' +
+      '  var kept = [];\n' +
+      '  // 第一遍：只读接收时间（轻量），筛出最近一周的邮件索引；不依赖收件箱排序\n' +
       '  for (var i = 0; i < n; i++) {\n' +
-      '    var m = msgs[i];\n' +
+      '    var tm = null;\n' +
+      '    try {\n' +
+      '      var d = msgs[i].timeReceived();\n' +
+      '      if (d) {\n' +
+      '        var p = d.getTime ? d.getTime() : new Date(d).getTime();\n' +
+      '        if (!isNaN(p)) tm = p;\n' +
+      '      }\n' +
+      '    } catch (e) {}\n' +
+      '    if (tm === null || tm >= weekAgo) kept.push(i);\n' +
+      '  }\n' +
+      '  // 时间字段全部异常（读不到有效时间）→ 兜底读前 30 封，避免空手而归\n' +
+      '  if (kept.length === 0 && n > 0) {\n' +
+      '    for (var j = 0; j < Math.min(n, 30); j++) kept.push(j);\n' +
+      '  }\n' +
+      '  // 第二遍：只对一周内（或兜底前 30 封）的邮件读完整字段，省去旧邮件读正文的开销\n' +
+      '  var out = [];\n' +
+      '  for (var k = 0; k < kept.length; k++) {\n' +
+      '    var m = msgs[kept[k]];\n' +
       '    var subject = "", sender = "", body = "", time = "";\n' +
       '    try { subject = String(m.subject() || ""); } catch (e) {}\n' +
       '    try {\n' +
@@ -3904,15 +3922,12 @@ function readOutlookMail() {
       '        if (!sender) { try { sender = String(s.address() || ""); } catch (e3) {} }\n' +
       '      }\n' +
       '    } catch (e) {}\n' +
-      '    // 先读接收时间：早于一周前即停止（收件箱按接收时间倒序），省去读正文的开销\n' +
-      '    var tm = null;\n' +
-      '    try { var d = m.timeReceived(); if (d) { tm = (d instanceof Date) ? d.getTime() : new Date(d).getTime(); time = String(d); } } catch (e) {}\n' +
-      '    if (tm !== null && !isNaN(tm) && tm < weekAgo) { break; }\n' +
+      '    try { var d2 = m.timeReceived(); if (d2) { time = String(d2); } } catch (e) {}\n' +
       '    try { body = String(m.plainTextContent() || ""); } catch (e) { body = ""; }\n' +
       '    if (!body) { try { body = String(m.content() || ""); } catch (e) {} }\n' +
       '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
       '  }\n' +
-      '  return JSON.stringify(out);\n' +
+      '  return JSON.stringify({ total: n, inWindow: kept.length, mails: out });\n' +
       '}';
     execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
@@ -3927,8 +3942,9 @@ function readOutlookMail() {
         return;
       }
       try {
-        const arr = JSON.parse(String(stdout || '').trim());
-        if (!Array.isArray(arr)) { resolve({ ok: false, error: '解析 Outlook 数据失败' }); return; }
+        const obj = JSON.parse(String(stdout || '').trim());
+        const arr = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.mails) ? obj.mails : null);
+        if (!arr) { resolve({ ok: false, error: '解析 Outlook 数据失败' }); return; }
         const mails = arr
           .map((m) => ({
             subject: String((m && m.subject) || '').trim(),
@@ -3937,7 +3953,11 @@ function readOutlookMail() {
             at: (m && m.time) || '',
           }))
           .filter((m) => m.subject || m.body);
-        resolve({ ok: true, mails: mails, count: mails.length });
+        resolve({
+          ok: true, mails: mails, count: mails.length,
+          total: (obj && obj.total) || 0,
+          inWindow: (obj && obj.inWindow) || 0,
+        });
       } catch (e) {
         resolve({ ok: false, error: '解析 Outlook 数据失败：' + String((e && e.message) || e) });
       }

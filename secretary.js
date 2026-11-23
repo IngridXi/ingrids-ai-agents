@@ -503,7 +503,13 @@
         return;
       }
       var mails = r.mails || [];
-      if (!mails.length) { out.textContent = '最近一周未读到 Outlook 邮件（可能未登录或收件箱为空）。'; return; }
+      if (!mails.length) {
+        var total = r.total || 0;
+        if (total === 0) { out.textContent = 'Outlook 收件箱为空（可能未登录剑桥账号，或邮件尚未同步到本机 Outlook）。'; }
+        else { out.textContent = '收件箱共 ' + total + ' 封，但最近一周没有新邮件。'; }
+        addChat('a', '读完 Outlook 邮件，未发现活动确认信息。');
+        return;
+      }
       var candidates = mails.filter(isConfirmationEmail);
       if (!candidates.length) { out.textContent = '读完最近一周 ' + mails.length + ' 封邮件，未发现活动确认信息。'; addChat('a', '读完 Outlook 邮件，未发现活动确认信息。'); return; }
       out.textContent = '最近一周共 ' + mails.length + ' 封邮件，筛选出 ' + candidates.length + ' 封确认类，正在识别…';
