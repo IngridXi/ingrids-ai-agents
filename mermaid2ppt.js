@@ -10,13 +10,13 @@
 
   var EXAMPLE = [
     'flowchart LR',
-    '    Customer([顾客下单]) --> Order[生成订单]',
-    '    Order --> Check{库存充足?}',
-    '    Check -->|是| Pick[拣货打包]',
-    '    Check -->|否| Backorder[补货采购]',
-    '    Backorder --> Pick',
-    '    Pick --> Ship[物流发货]',
-    '    Ship --> Deliver([顾客收货])',
+    '    顾客([顾客下单]) --> 订单[生成订单]',
+    '    订单 --> 检查{库存充足?}',
+    '    检查 -->|是| 拣货[拣货打包]',
+    '    检查 -->|否| 补货[补货采购]',
+    '    补货 --> 拣货',
+    '    拣货 --> 物流[物流发货]',
+    '    物流 --> 收货([顾客收货])',
   ].join('\n');
 
   var STYLE = [
@@ -153,11 +153,13 @@
       if (r && r.canceled) { statusEl.textContent = '已取消导出'; return; }
       if (r && r.ok) {
         var d = r.diagnostics || 0;
-        statusEl.textContent = '已导出：' + (r.path || '') + (d ? '（含 ' + d + ' 条提示）' : '');
+        var renamed = r.renamed || 0;
+        var note = renamed ? '（已自动转换 ' + renamed + ' 个中文节点 ID）' : '';
+        statusEl.textContent = '已导出：' + (r.path || '') + note + (d ? '（含 ' + d + ' 条提示）' : '');
       } else {
         var errMsg = (r && r.error) || '未知错误';
         if (/cannot model|native backend/i.test(errMsg)) {
-          errMsg += '\n\n常见原因：节点 ID 用了中文（如「顾客[顾客下单]」）。请把 ID 改成英文、中文放在标签里，例如「Customer[顾客下单]」。';
+          errMsg += '\n\n提示：中文节点 ID 已自动转换，此报错通常来自其他不支持的语法（如 classDef/style/click 引用，或非法边写法）。';
         }
         statusEl.textContent = '导出失败';
         window.alert('导出失败：\n' + errMsg);
