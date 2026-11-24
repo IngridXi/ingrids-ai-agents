@@ -2825,12 +2825,17 @@ function execPy(args, timeoutMs) {
   });
 }
 // Mermaid→PPT 导出专用 python：diagram-pptx 要求 Python >= 3.10，系统 python3（3.9）装不上，
-// 固定走桌面的 venv_mermaid（Python 3.15）。优先环境变量 MERMAID2PPT_PY 覆盖，其次探测已知路径。
+// 固定走工作台项目内的 venv_mermaid（Python 3.15，由 homebrew python 创建）。
+// 注意：打包成 .app 后 __dirname 指向 Contents/Resources/app，拿不到项目目录里的 venv，
+// 故用 os.homedir() 拼绝对路径（项目固定在 ~/Dev/Ingrids-AI-Agents）。优先环境变量 MERMAID2PPT_PY 覆盖。
 function mermaidPyBin() {
+  const home = os.homedir();
   const cands = [
     process.env.MERMAID2PPT_PY,
-    path.join(os.homedir(), 'Desktop', 'venv_mermaid', 'bin', 'python'),
-    path.join(os.homedir(), 'Desktop', 'venv_mermaid', 'bin', 'python3'),
+    path.join(home, 'Dev', 'Ingrids-AI-Agents', 'venv_mermaid', 'bin', 'python'),
+    path.join(home, 'Dev', 'Ingrids-AI-Agents', 'venv_mermaid', 'bin', 'python3'),
+    path.join(home, 'Desktop', 'venv_mermaid', 'bin', 'python'),
+    path.join(home, 'Desktop', 'venv_mermaid', 'bin', 'python3'),
   ];
   for (const c of cands) {
     if (c && fs.existsSync(c)) return c;
@@ -3369,7 +3374,7 @@ ipcMain.handle('doc:generate', async (_e, payload) => {
 /* ---------------- IPC：Mermaid -> PPT 流程图导出（diagram-pptx） ---------------- */
 ipcMain.handle('mermaid2ppt:export', async (_e, p) => {
   const py = mermaidPyBin();
-  if (!py) return { ok: false, error: '未找到 diagram-pptx 环境（venv_mermaid）。请确认桌面存在 venv_mermaid 并已安装 diagram-pptx，或设置环境变量 MERMAID2PPT_PY 指向含 diagram-pptx 的 python' };
+  if (!py) return { ok: false, error: '未找到 diagram-pptx 环境（venv_mermaid）。请确认 ~/Dev/Ingrids-AI-Agents/venv_mermaid 存在并已安装 diagram-pptx，或设置环境变量 MERMAID2PPT_PY 指向含 diagram-pptx 的 python' };
   const script = path.join(__dirname, 'scripts', 'mermaid2ppt_export.py');
   if (!fs.existsSync(script)) return { ok: false, error: '缺少导出脚本 scripts/mermaid2ppt_export.py' };
   const source = String((p && p.source) || '').trim();

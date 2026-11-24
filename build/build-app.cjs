@@ -109,6 +109,9 @@ async function main() {
       /(^|\/)__pycache__(\/|$)/,
       /(^|\/)\.workbuddy(\/|$)/,
       /(^|\/)\.gitignore$/,
+      // 本地 Python 虚拟环境（93MB）与独立仓库，不打包进 .app；导出时按固定路径读取
+      /(^|\/)venv_mermaid(\/|$)/,
+      /(^|\/)mermaid转ppt(\/|$)/,
     ],
     prune: true,
   });
@@ -123,11 +126,10 @@ async function main() {
   execFileSync('codesign', ['--verify', '--deep', '--strict', built], { stdio: 'pipe' });
   console.log('签名验证通过 ✓');
 
-  // 复制到 ~/Applications 与 ~/Desktop（覆盖旧的 shell 壳 app）
+  // 只复制到 ~/Applications（~/Desktop 会被 Finder 加 resource fork 导致签名失效，故不复制）
   const home = os.homedir();
   const targets = [
     path.join(home, 'Applications', appName + '.app'),
-    path.join(home, 'Desktop', appName + '.app'),
   ];
   for (const t of targets) {
     fs.rmSync(t, { recursive: true, force: true });

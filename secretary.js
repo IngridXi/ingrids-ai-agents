@@ -157,9 +157,7 @@
         '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
         '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook</button></div>' +
         '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secReadOutlook" style="flex:1">' + iconSvg('mail') + ' 读取本周 Outlook 邮件 · 识别活动</button></div>' +
         '<div class="sec-bout" id="secMailOut" hidden></div>' +
-        '<div class="sec-bout" id="secOutlookOut" hidden></div>' +
         '<div class="sec-row"><button class="sec-btn" id="secReadAppleMail" style="flex:1">' + iconSvg('mail') + ' 读取 Apple Mail 邮件 · 识别活动</button></div>' +
         '<div class="sec-bout" id="secAppleMailOut" hidden></div></div>' +
       '<div class="sec-sec"><label>短信 · 确认信息</label>' +
@@ -540,14 +538,6 @@
     });
   }
 
-  document.getElementById('secReadOutlook').addEventListener('click', function () {
-    readMailAndScan({
-      apiKey: 'outlookMailRead', btnId: 'secReadOutlook', outId: 'secOutlookOut',
-      label: 'Outlook', btnText: '读取本周 Outlook 邮件 · 识别活动',
-      emptyMsg: '读不到剑桥邮件。请先在 Outlook 里点选剑桥收件箱（Inbox），再点一次本按钮重试。',
-      authHint: '首次使用需在 macOS 弹窗里点「允许」控制 Microsoft Outlook；若之前拒绝过，到 系统设置 → 隐私与安全性 → 自动化 里勾选本应用。',
-    });
-  });
   document.getElementById('secReadAppleMail').addEventListener('click', function () {
     readMailAndScan({
       apiKey: 'appleMailRead', btnId: 'secReadAppleMail', outId: 'secAppleMailOut',

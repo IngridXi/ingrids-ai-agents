@@ -1,5 +1,7 @@
 node_modules/
 dist/
+venv_mermaid/
+mermaid转ppt/
 .DS_Store
 
 # 会议纪要官后端：本地运行产物 / 依赖 / 用户数据，不入库
