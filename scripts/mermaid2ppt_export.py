@@ -18,6 +18,13 @@ from pptx.enum.shapes import MSO_CONNECTOR
 from pptx.util import Inches
 from diagram_pptx import render_mermaid
 
+try:
+    from seq_render import render_sequence
+except ImportError:  # 脚本路径不在 sys.path 时手动补齐
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from seq_render import render_sequence
+
 # ---------------------------------------------------------------------------
 # Mermaid 节点 ID 规范化：diagram-pptx 的 native 后端要求节点 ID 为 ASCII，
 # 但允许中文标签。因此把「中文 ID」自动映射为英文 ID（n1/n2/...），
@@ -362,12 +369,27 @@ def main():
         print(json.dumps({"ok": False, "error": "缺少输出路径"}))
         return
 
-    source, id_map = normalize_mermaid_ids(source)
-
     prs = Presentation()
     prs.slide_width = Inches(13.333)   # 16:9
     prs.slide_height = Inches(7.5)
     slide = prs.slides.add_slide(prs.slide_layouts[6])  # 空白版式
+
+    # 时序图走专用渲染器（原生可编辑形状，版面与预览一致），
+    # 其余图（flowchart/graph）仍走 diagram-pptx。
+    if re.search(r"^\s*sequenceDiagram\b", source, re.M):
+        info = render_sequence(source, slide)
+        prs.save(out_path)
+        print(json.dumps({
+            "ok": True,
+            "path": out_path,
+            "renamed": 0,
+            "diagnostics": 0,
+            "seq": True,
+            "participants": info.get("participants", 0),
+        }))
+        return
+
+    source, id_map = normalize_mermaid_ids(source)
     result = render_editable(source, slide, style)
     prs.save(out_path)
     diags = getattr(result, "diagnostics", None) or []

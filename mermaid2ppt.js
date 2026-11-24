@@ -69,7 +69,7 @@
     mask.innerHTML =
       '<div class="m2-panel">' +
       '  <div class="m2-head">' +
-      '    <div><h2>流程图</h2><div class="m2-sub">预览用 mermaid.js；flowchart 导出可编辑形状，时序图等导出高清图片</div></div>' +
+      '    <div><h2>流程图</h2><div class="m2-sub">预览用 mermaid.js；流程图 / 时序图导出可编辑形状，其余图导出高清图片</div></div>' +
       '    <div class="m2-actions">' +
       '      <select id="m2-style" title="导出样式"><option value="native">native 样式</option><option value="official">official 样式</option></select>' +
       '      <select id="m2-mode" title="导出方式"><option value="auto">智能导出</option><option value="shapes">可编辑形状</option><option value="image">高清图片</option></select>' +
@@ -224,15 +224,16 @@
 
     var mode = (modeSel && modeSel.value) || 'auto';
     var kind = diagramKind(src);
-    // 智能导出：flowchart 用可编辑形状（diagram-pptx 布局好）；其余图用图片（保证与预览一致）
-    var useImage = mode === 'image' || (mode === 'auto' && kind !== 'flowchart');
+    // 智能导出：flowchart / sequence 用可编辑形状（专用渲染器，版面与预览一致）；
+    // 其余图（class/state/ER/pie 等）diagram-pptx 布局质量差，走高清图片。
+    var useImage = mode === 'image' || (mode === 'auto' && kind !== 'flowchart' && kind !== 'sequence');
     if (useImage) exportImage(src, kind);
-    else exportShapes(src);
+    else exportShapes(src, kind);
   }
 
-  function exportShapes(src) {
+  function exportShapes(src, kind) {
     exportBtn.disabled = true;
-    statusEl.textContent = '正在导出（可编辑形状）…';
+    statusEl.textContent = kind === 'sequence' ? '正在导出（可编辑时序图）…' : '正在导出（可编辑形状）…';
     window.ingrid.mermaid2pptExport({ source: src, style: styleSel.value }).then(function (r) {
       exportBtn.disabled = false;
       if (r && r.canceled) { statusEl.textContent = '已取消导出'; return; }
