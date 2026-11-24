@@ -5568,6 +5568,64 @@ ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
 ipcMain.handle('tool:db:obsidian:promote', (_e, p) => toolDbObsidianPromote(p));
 ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
 ipcMain.handle('ethics:sync', (_e, p) => ethicsSync(p));
+
+/* ---------------- Agent 架构图：实时状态 ----------------
+ * 供「Agent 架构图」页轮询，返回各功能/后台 agent 的真实协作状态：
+ *   - Ollama 是否在线 + 当前加载到显存的模型（谁在用哪个模型）
+ *   - 伦理归档流水线进度（run-progress.json 已完成 / 场景总数）
+ *   - 法务知识库法条数 + 场景库文件数
+ */
+async function archStatus() {
+  const out = { now: Date.now(), ollamaOnline: false, activeModels: [], ethics: { done: 0, total: 0, running: false }, legal: { laws: 0 }, sceneFiles: 0 };
+
+  // 1) Ollama 在线状态 + 活跃模型（/api/ps 返回当前加载到显存的模型）
+  out.ollamaOnline = await isPortOpen(11434);
+  if (out.ollamaOnline) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2000);
+      const r = await fetch('http://127.0.0.1:11434/api/ps', { signal: ctrl.signal });
+      clearTimeout(t);
+      if (r.ok) {
+        const j = await r.json();
+        out.activeModels = (j.models || []).map(function (m) {
+          return { name: String(m.name || m.model || ''), size: Number(m.size || 0), vram: Number(m.size_vram || 0), expiresAt: m.expires_at || null };
+        });
+      }
+    } catch (e) { out.activeModels = []; }
+  }
+
+  // 2) 伦理归档进度
+  try {
+    const pj = path.join(__dirname, 'agents', 'ethics-chat', 'run-progress.json');
+    const sj = path.join(__dirname, 'agents', 'ethics-chat', 'scenes.json');
+    if (fs.existsSync(sj)) out.ethics.total = JSON.parse(fs.readFileSync(sj, 'utf8')).length;
+    if (fs.existsSync(pj)) out.ethics.done = Object.keys(JSON.parse(fs.readFileSync(pj, 'utf8'))).length;
+    out.ethics.running = out.activeModels.some(function (m) { return /uncensored|bge-m3/i.test(m.name); });
+  } catch (e) {}
+
+  // 3) 法务知识库法条数 + 伦理场景库文件数（Obsidian 主库）
+  try {
+    const vp = vaultPath();
+    if (vp) {
+      const legalDir = path.join(vp, '法务知识库');
+      if (fs.existsSync(legalDir)) {
+        let n = 0;
+        for (const c of fs.readdirSync(legalDir)) {
+          const d = path.join(legalDir, c);
+          if (fs.statSync(d).isDirectory()) n += fs.readdirSync(d).filter(function (f) { return f.endsWith('.md'); }).length;
+        }
+        out.legal.laws = n;
+      }
+      const sceneDir = path.join(vp, '伦理场景库');
+      if (fs.existsSync(sceneDir)) out.sceneFiles = fs.readdirSync(sceneDir).filter(function (f) { return f.endsWith('.md'); }).length;
+    }
+  } catch (e) {}
+
+  return out;
+}
+ipcMain.handle('arch:status', () => archStatus());
+
 ipcMain.handle('workspace:list', () => toolDbWorkspaceList());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));

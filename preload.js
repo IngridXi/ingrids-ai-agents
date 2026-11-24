@@ -185,6 +185,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   computerStop: () => ipcRenderer.invoke('computer:stop'),
   onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // Agent 架构图：实时协作状态（Ollama 活跃模型 + 归档进度 + 知识库规模）
+  archStatus: () => ipcRenderer.invoke('arch:status'),
+
   // 授权门（有副作用操作前显式授权 + 审计：电脑操作 / 可执行 Skill / 文件写入）
   permissionList: () => ipcRenderer.invoke('permission:list'),
   permissionGrant: (action, opts) => ipcRenderer.invoke('permission:grant', action, opts),

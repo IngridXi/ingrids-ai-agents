@@ -621,6 +621,27 @@ const SEED_AGENTS = [
       route: [],
     },
   },
+  {
+    name: 'Agent 架构图', emoji: '🗺️',
+    tag: '归属关系 · 实时协作状态',
+    status: 'active', badge: '监控',
+    engine: 'local-llm', engineLabel: '本地 · 实时监控',
+    href: 'agents/agent-architecture/index.html',
+    tools: [],
+    soul: '你是工作台架构可视化：展示各功能 agent 与后台子 agent 的归属关系，并实时呈现协作状态（Ollama 活跃模型、归档进度）。',
+    fallbacks: [],
+    detail: {
+      sub: 'Agent Architecture · 实时协作状态',
+      desc: '把工作台所有 agent 的归属关系画成一张动态架构图：功能 agent 与其后台子 agent（流水线、后端、沉淀官）的归属一目了然，并每 3 秒读取真实状态（Ollama 正在跑哪个模型、伦理归档进度、知识库规模），让正在工作的 agent 呼吸高亮、数据链路流动。',
+      workflow: [
+        { t: '归属关系', s: '功能 agent → 后台子 agent 归属标注' },
+        { t: '实时协作', s: 'Ollama 活跃模型 → 点亮对应 agent' },
+        { t: '归档进度', s: '伦理归档 done / total' },
+      ],
+      capabilities: ['架构可视化', '归属关系', '实时协作状态', 'Ollama 模型监控', '归档进度'],
+      route: [],
+    },
+  },
 ];
 
 /* ---------- 存储后端：桌面走文件系统，浏览器回退 localStorage ---------- */
