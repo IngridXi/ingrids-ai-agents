@@ -5229,7 +5229,6 @@ function toolDbObsidianWrite(payload) {
 function ethicsSync(payload) {
   const vp = vaultPath();
   if (!vp) return { ok: false, error: '未检测到 Obsidian 主库（请先安装 Obsidian 并创建 vault）' };
-  const title = safeFileName(String((payload && payload.title) || '未命名对话'));
   const q = String((payload && payload.qa && payload.qa.q) || '').trim();
   const a = String((payload && payload.qa && payload.qa.a) || '').trim();
   if (!q && !a) return { ok: false, error: '缺少问答内容' };
@@ -5237,7 +5236,45 @@ function ethicsSync(payload) {
   const d = isFinite(tsn) && tsn > 0 ? new Date(tsn) : new Date();
   const p2 = (x) => String(x).padStart(2, '0');
   const stamp = d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
-  const dir = path.resolve(vp, '伦理对话');
+
+  // 1) 优先归档到「伦理场景库」对应场景的 ## 标题下（scene.fname + scene.heading）
+  const scene = payload && payload.scene;
+  if (scene && scene.fname && scene.heading) {
+    try {
+      const fname = safeFileName(String(scene.fname));
+      const full = path.resolve(vp, '伦理场景库', fname);
+      if (fs.existsSync(full)) {
+        const heading = '## ' + String(scene.heading).trim();
+        const lines = fs.readFileSync(full, 'utf8').split('\n');
+        let start = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].trim() === heading) { start = i; break; }
+        }
+        if (start >= 0) {
+          // 场景块结束于下一个 ## 或 ---
+          let end = lines.length;
+          for (let i = start + 1; i < lines.length; i++) {
+            if (/^##\s/.test(lines[i]) || /^---\s*$/.test(lines[i])) { end = i; break; }
+          }
+          const sec = [
+            '### 🤖 伦理 agent 实答 · ' + stamp,
+            '',
+            '**问**：' + q,
+            '',
+            '**答**：' + a,
+            ''
+          ];
+          lines.splice(end, 0, ...sec);
+          fs.writeFileSync(full, lines.join('\n'), 'utf8');
+          return { ok: true, path: full, scene: true };
+        }
+      }
+    } catch (e) { /* 落入兜底 */ }
+  }
+
+  // 2) 兜底：匹配不到场景 → 「伦理对话·待归档」目录（一段对话一个笔记）
+  const title = safeFileName(String((payload && payload.title) || '未命名对话'));
+  const dir = path.resolve(vp, '伦理对话·待归档');
   try {
     fs.mkdirSync(dir, { recursive: true });
     const full = path.join(dir, title + '.md');
@@ -5245,10 +5282,10 @@ function ethicsSync(payload) {
     if (fs.existsSync(full)) {
       fs.appendFileSync(full, '\n---\n\n' + section, 'utf8');
     } else {
-      const head = '---\ntags:\n  - 伦理对话\n  - 伦理agent\n  - AI生成\n  - 未规范\n---\n\n# ' + title + '\n\n> 来源：伦理 agent「未规范模式」对话记录（自动同步）\n\n' + section;
+      const head = '---\ntags:\n  - 伦理对话\n  - 伦理agent\n  - AI生成\n  - 未规范\n  - 待归档\n---\n\n# ' + title + '\n\n> 来源：伦理 agent「未规范模式」对话记录（未匹配到现有场景，暂存待人工归档）\n\n' + section;
       fs.writeFileSync(full, head, 'utf8');
     }
-    return { ok: true, path: full, append: true };
+    return { ok: true, path: full, scene: false };
   } catch (e) { return { ok: false, error: '同步失败：' + String(e && e.message || e) }; }
 }
 function toolDbObsidianTag(payload) {

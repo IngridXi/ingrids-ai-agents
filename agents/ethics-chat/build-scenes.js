@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// 从 scenes.json + practices/ 分片生成带「未规范做法 / 已规范做法」双栏对比的 Obsidian 场景库
+// 从 scenes.json + practices/ 分片生成 Obsidian 场景库 md：
+//   - 灰场景：问题 → 🟡未规范做法 → ✅已规范做法
+//   - 违法场景：问题 → 🔴未规范做法 → 🟡灰色地带做法 → ✅已规范做法
 // 用法：node build-scenes.js [输出目录]
 const fs = require('fs');
 const path = require('path');
@@ -9,22 +11,26 @@ const OUT = process.argv[2] || '/Users/ingridxi/Documents/Obsidian Vault/伦理�
 
 const scenes = JSON.parse(fs.readFileSync(path.join(DIR, 'scenes.json'), 'utf8'));
 
-// 合并 practices 分片（practices/*.json，key = 场景 id "1-1"）
+// 合并 practices 分片（01~09.json：key=场景id，value 含 u、a；gray-*.json：value 含 g）
 const practices = {};
+const gray = {};
 const pdir = path.join(DIR, 'practices');
 if (fs.existsSync(pdir)) {
   for (const f of fs.readdirSync(pdir)) {
-    if (f.endsWith('.json')) {
-      Object.assign(practices, JSON.parse(fs.readFileSync(path.join(pdir, f), 'utf8')));
-    }
+    if (!f.endsWith('.json')) continue;
+    const obj = JSON.parse(fs.readFileSync(path.join(pdir, f), 'utf8'));
+    if (f.startsWith('gray-')) Object.assign(gray, obj);
+    else Object.assign(practices, obj);
   }
+}
+for (const id of Object.keys(gray)) {
+  (practices[id] = practices[id] || {}).g = gray[id].g;
 }
 
 const STAGE = { all: '贯穿全阶段', seed: '种子期', growth: '成长期', exit: '退出期' };
 const TAG_EMOJI = { '灰': '🟡', '违法': '🔴' };
 const TAG_LABEL = { '灰': '灰色地带', '违法': '明确违法' };
 
-// 按分类分组
 const byCat = {};
 for (const s of scenes) { (byCat[s.catNo] = byCat[s.catNo] || []).push(s); }
 const cats = Object.keys(byCat).map(Number).sort((a, b) => a - b).map(no => ({
@@ -34,11 +40,12 @@ const cats = Object.keys(byCat).map(Number).sort((a, b) => a - b).map(no => ({
 function titleOf(name) { return name.replace(/^[^\u4e00-\u9fa5a-zA-Z]+/, '').trim(); }
 function sanitize(name) { return name.replace(/[\/\\:*?"<>|]/g, '-'); }
 
-// 校验：每条都必须有 u 和 a
+// 校验：每条都必须有 u、a；违法场景还必须有 g
 const missing = scenes.filter(s => !practices[s.id] || !(practices[s.id].u || '').trim() || !(practices[s.id].a || '').trim());
-if (missing.length) {
-  console.error('缺失做法的场景 (' + missing.length + '):');
-  console.error(missing.map(m => m.id + ' ' + m.t).join('\n'));
+const missingGray = scenes.filter(s => s.tag === '违法' && !(practices[s.id] && (practices[s.id].g || '').trim()));
+if (missing.length || missingGray.length) {
+  if (missing.length) { console.error('缺失做法的场景 (' + missing.length + '):'); console.error(missing.map(m => m.id + ' ' + m.t).join('\n')); }
+  if (missingGray.length) { console.error('缺失灰色地带做法的违法场景 (' + missingGray.length + '):'); console.error(missingGray.map(m => m.id + ' ' + m.t).join('\n')); }
   process.exit(1);
 }
 
@@ -84,6 +91,12 @@ cats.forEach((c) => {
     L.push('');
     L.push(p.u);
     L.push('');
+    if (it.tag === '违法') {
+      L.push('### 🟡 灰色地带做法（中间路线 · 踩线）');
+      L.push('');
+      L.push(p.g);
+      L.push('');
+    }
     L.push('### ✅ 已规范做法（对齐 AI · 正面教材）');
     L.push('');
     L.push(p.a);
@@ -106,7 +119,7 @@ idx.push('');
 idx.push('> 来源：Ingrid\'s AI Agents 工作台「伦理 agent」场景库');
 idx.push(`> 共 ${cats.length} 大类、${total.n} 条场景 ｜ 🟡 灰色地带 ${total.grey} 条 ｜ 🔴 明确违法 ${total.illegal} 条`);
 idx.push('>');
-idx.push('> **每条结构**：问题 → 🔴/🟡 未规范做法（去道德化 AI 的反面支招 + 性质/法条后果）→ ✅ 已规范做法（对齐 AI 的定性 + 合规替代）');
+idx.push('> **每条结构**：问题 → 🔴/🟡 未规范做法（去道德化 AI 的反面支招 + 性质/法条后果）→ 🟡 灰色地带做法（仅违法场景，中间路线踩线警示）→ ✅ 已规范做法（对齐 AI 的定性 + 合规替代）');
 idx.push('> **图例**：🟡 = 灰色地带（不违法但踩伦理/合规红线）　🔴 = 明确违法');
 idx.push('> **阶段**：种子期（创业早期）／成长期／退出期／贯穿全阶段');
 idx.push('');
@@ -118,12 +131,12 @@ meta.forEach(m => idx.push(`| ${m.no} | [[${m.fname.replace(/\.md$/, '')}]] | ${
 idx.push('');
 idx.push('## 使用说明');
 idx.push('');
-idx.push('- 点击上表分类名可跳转到对应分类文件；每类文件内按「问题 + 双栏做法」逐条展开');
-idx.push('- 未规范做法为「反面教材」，仅用于 AI 伦理教学对照，切勿照做；已规范做法给出可执行的合规路径');
+idx.push('- 点击上表分类名可跳转到对应分类文件；每类文件内按「问题 + 做法」逐条展开');
+idx.push('- 未规范做法为「反面教材」，仅用于 AI 伦理教学对照，切勿照做；灰色地带做法标注踩线风险；已规范做法给出可执行合规路径');
 idx.push('- 用标签 `#伦理场景库` 可聚合所有场景；打印可用 Obsidian「导出 PDF」或逐类打印');
 idx.push('');
 
 fs.writeFileSync(path.join(OUT, '00-总索引.md'), idx.join('\n'));
 
 console.log('完成：' + (cats.length + 1) + ' 个文件 → ' + OUT);
-console.log(`场景 ${total.n} 条（🟡 ${total.grey} / 🔴 ${total.illegal}），做法库 ${Object.keys(practices).length} 条，全部匹配`);
+console.log(`场景 ${total.n} 条（🟡 ${total.grey} / 🔴 ${total.illegal}），做法库 ${Object.keys(practices).length} 条（含灰色地带 ${Object.keys(gray).length} 条），全部匹配`);
