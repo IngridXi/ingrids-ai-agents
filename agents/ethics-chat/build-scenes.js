@@ -20,12 +20,40 @@ if (fs.existsSync(pdir)) {
     if (!f.endsWith('.json')) continue;
     const obj = JSON.parse(fs.readFileSync(path.join(pdir, f), 'utf8'));
     if (f.startsWith('gray-')) Object.assign(gray, obj);
+    else if (f.startsWith('bound-')) { for (const id of Object.keys(obj)) (practices[id] = practices[id] || {}).bound = obj[id].bound; }
     else Object.assign(practices, obj);
   }
 }
 for (const id of Object.keys(gray)) {
   (practices[id] = practices[id] || {}).g = gray[id].g;
 }
+
+// 提取现有 md 中已归档的「### 🤖 伦理 agent 实答」块，重建时保留（不丢失历史实答）
+function extractExistingAnswers() {
+  const map = {};
+  if (!fs.existsSync(OUT)) return map;
+  for (const f of fs.readdirSync(OUT)) {
+    if (!f.endsWith('.md') || f.startsWith('00-')) continue;
+    const lines = fs.readFileSync(path.join(OUT, f), 'utf8').split('\n');
+    let curHeading = null, curAnswers = [], buf = null;
+    for (const ln of lines) {
+      if (/^##\s/.test(ln)) {
+        if (curHeading && curAnswers.length) map[curHeading] = curAnswers;
+        curHeading = ln.trim(); curAnswers = []; buf = null;
+      } else if (/^### 🤖 伦理 agent 实答/.test(ln)) {
+        buf = [ln];
+      } else if (buf) {
+        if (/^###\s/.test(ln) || /^##\s/.test(ln) || /^---\s*$/.test(ln)) {
+          curAnswers.push(buf.join('\n')); buf = null;
+        } else buf.push(ln);
+      }
+    }
+    if (buf) curAnswers.push(buf.join('\n'));
+    if (curHeading && curAnswers.length) map[curHeading] = curAnswers;
+  }
+  return map;
+}
+const existingAnswers = extractExistingAnswers();
 
 const STAGE = { all: '贯穿全阶段', seed: '种子期', growth: '成长期', exit: '退出期' };
 const TAG_EMOJI = { '灰': '🟡', '违法': '🔴' };
@@ -50,6 +78,12 @@ if (missing.length || missingGray.length) {
 }
 
 fs.mkdirSync(OUT, { recursive: true });
+
+// 生成「灰/违界限判定标准」总纲（从源模板复制，保证与场景库同步维护）
+const JUDGE_SRC = path.join(DIR, 'judgement-standard.md');
+if (fs.existsSync(JUDGE_SRC)) {
+  fs.copyFileSync(JUDGE_SRC, path.join(OUT, '00-判定标准.md'));
+}
 
 const meta = [];
 const total = { n: scenes.length, grey: scenes.filter(s => s.tag === '灰').length, illegal: scenes.filter(s => s.tag === '违法').length };
@@ -97,10 +131,22 @@ cats.forEach((c) => {
       L.push(p.g);
       L.push('');
     }
+    if (p.bound && String(p.bound).trim()) {
+      L.push('### 🔍 灰/违界限');
+      L.push('');
+      L.push(p.bound);
+      L.push('');
+    }
     L.push('### ✅ 已规范做法（对齐 AI · 正面教材）');
     L.push('');
     L.push(p.a);
     L.push('');
+    // 保留历史「🤖 伦理 agent 实答」（若存在）
+    const heading = `## ${TAG_EMOJI[it.tag]} ${it.t}`;
+    const ans = existingAnswers[heading];
+    if (ans && ans.length) {
+      for (const a of ans) { L.push(a); L.push(''); }
+    }
   });
 
   fs.writeFileSync(path.join(OUT, fname), L.join('\n'));
@@ -121,6 +167,7 @@ idx.push(`> 共 ${cats.length} 大类、${total.n} 条场景 ｜ 🟡 灰色地�
 idx.push('>');
 idx.push('> **每条结构**：问题 → 🔴/🟡 未规范做法（去道德化 AI 的反面支招 + 性质/法条后果）→ 🟡 灰色地带做法（仅违法场景，中间路线踩线警示）→ ✅ 已规范做法（对齐 AI 的定性 + 合规替代）');
 idx.push('> **图例**：🟡 = 灰色地带（不违法但踩伦理/合规红线）　🔴 = 明确违法');
+idx.push('> **判据**：先读 [[00-判定标准]]，掌握「灰 vs 违」的统一界限（一句话界限 / 五个判定维度 / 同领域对照表 / 判定流程）');
 idx.push('> **阶段**：种子期（创业早期）／成长期／退出期／贯穿全阶段');
 idx.push('');
 idx.push('## 目录');
