@@ -128,6 +128,33 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 .pref-edit select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px 10px;font:13px/1.6 inherit}
 .pref-edit input[type=range]{accent-color:var(--accent)}
 .pref-edit .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+/* 页内 Tab：总控 / 架构图 */
+.tabbar{display:flex;gap:8px;margin-top:16px}
+.tabbar button{font-size:13px;font-weight:600;padding:8px 18px}
+.tabbar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* Agent 架构图（深色主题） */
+.arch-statbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}
+.arch-stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.arch-stat .k{font-size:11px;color:var(--dim)}
+.arch-stat .v{font-size:17px;font-weight:650;margin-top:4px;font-family:var(--mono)}
+.arch-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.arch-dot.on{background:var(--ok)}.arch-dot.off{background:var(--err)}
+.arch-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+.arch-chip{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+.arch-chip.live{background:var(--warn);color:#0d1117;border-color:var(--warn);font-weight:600}
+.arch-svg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;overflow-x:auto;margin-top:12px}
+.arch-svg svg{display:block}
+.arch-legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--dim);margin-top:12px}
+.arch-legend span{display:flex;align-items:center;gap:6px}
+.edge-data{fill:none;stroke:var(--accent);stroke-width:1.2;stroke-dasharray:6 6}
+.edge-own{fill:none;stroke:var(--purple);stroke-width:1.2;stroke-dasharray:2 4}
+.arch-flow{animation:dashflow 1.1s linear infinite}
+.arch-flow-fast{animation:dashflow .45s linear infinite}
+@keyframes dashflow{to{stroke-dashoffset:-12}}
+.arch-node-active{animation:archpulse 1.4s ease-in-out infinite}
+.arch-node-active rect{stroke:var(--warn);stroke-width:2}
+@keyframes archpulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.arch-flow,.arch-flow-fast,.arch-node-active{animation:none}}
 </style>
 </head>
 <body>
@@ -140,6 +167,12 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 </header>
 
 <main>
+  <div class="tabbar">
+    <button id="tabConsole" class="on">知识沉淀 + 治理</button>
+    <button id="tabArch">Agent 架构图</button>
+  </div>
+
+  <div id="viewConsole">
   <!-- 概览 -->
   <section class="panel">
     <h2>后台 Agent 概览 <span class="tag">知识沉淀官 + Agent 治理官</span></h2>
@@ -235,6 +268,104 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
     </div>
     <div class="hit" id="suggestResult"></div>
   </section>
+  </div><!-- /viewConsole -->
+
+  <!-- Agent 架构图：功能 agent 与后台子 agent 的归属关系 + 实时协作状态 -->
+  <div id="viewArch" hidden>
+    <section class="panel">
+      <h2>Agent 架构图 · 实时协作状态 <span class="tag" id="archLastRefresh">—</span></h2>
+      <p class="hint">功能 agent 与其后台子 agent（流水线、后端、沉淀官）的归属关系一目了然；每 3 秒读真实状态（Ollama 正在跑哪个模型、伦理归档进度、知识库规模），正在工作的 agent 会琥珀描边 + 呼吸高亮、数据链路加速流动。</p>
+      <div class="arch-statbar">
+        <div class="arch-stat"><div class="k">Ollama 服务</div><div class="v"><span class="arch-dot off" id="archOllamaDot"></span><span id="archOllamaState">检测中…</span></div></div>
+        <div class="arch-stat"><div class="k">伦理归档进度</div><div class="v" id="archEthicsProg">—</div></div>
+        <div class="arch-stat"><div class="k">法务知识库</div><div class="v" id="archLegalCount">—</div></div>
+        <div class="arch-stat"><div class="k">伦理场景库</div><div class="v" id="archSceneCount">—</div></div>
+      </div>
+      <div class="arch-chips" id="archModelChips"></div>
+      <div class="arch-svg">
+        <svg viewBox="0 0 760 1040" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+          <title>Agent 架构图</title>
+          <desc>工作台各功能 agent 与后台子 agent 的归属关系及实时协作状态</desc>
+
+          <rect x="30" y="28" width="700" height="70" rx="8" fill="none" stroke="#30363d"/>
+          <text x="44" y="50" font-size="12" font-weight="600" fill="#8b949e">调度中枢 · 后台总控</text>
+          <rect x="30" y="116" width="700" height="200" rx="8" fill="none" stroke="#30363d"/>
+          <text x="44" y="138" font-size="12" font-weight="600" fill="#8b949e">功能 agent（前台）</text>
+          <rect x="30" y="332" width="700" height="212" rx="8" fill="none" stroke="#30363d"/>
+          <text x="44" y="354" font-size="12" font-weight="600" fill="#8b949e">后台子 agent · 流水线（归属标注于节点内）</text>
+          <rect x="30" y="560" width="700" height="150" rx="8" fill="none" stroke="#30363d"/>
+          <text x="44" y="582" font-size="12" font-weight="600" fill="#8b949e">模型引擎</text>
+          <rect x="30" y="726" width="700" height="130" rx="8" fill="none" stroke="#30363d"/>
+          <text x="44" y="748" font-size="12" font-weight="600" fill="#8b949e">知识库 · 存储</text>
+          <rect x="30" y="872" width="700" height="128" rx="8" fill="none" stroke="#30363d"/>
+          <text x="44" y="894" font-size="12" font-weight="600" fill="#8b949e">定时自动化</text>
+
+          <g id="n-console"><rect x="230" y="52" width="300" height="40" rx="8" fill="#241a3d" stroke="#a371f7"/><text x="380" y="70" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">Agent 工作台 · 后台总控</text><text x="380" y="85" text-anchor="middle" font-size="10.5" fill="#8b949e">调度 · 治理巡检 · 经验沉淀</text></g>
+
+          <g id="n-assistant"><rect x="44" y="152" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="122" y="174" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">通用助手</text><text x="122" y="191" text-anchor="middle" font-size="10.5" fill="#8b949e">问答 · 联网搜索</text><text x="122" y="206" text-anchor="middle" font-size="10" fill="#6e7681">qwen3.8:27b</text></g>
+          <g id="n-dev"><rect x="212" y="152" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="290" y="174" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">软件工程</text><text x="290" y="191" text-anchor="middle" font-size="10.5" fill="#8b949e">写码 · 审查</text><text x="290" y="206" text-anchor="middle" font-size="10" fill="#6e7681">qwen3.8 + r1:32b</text></g>
+          <g id="n-research"><rect x="380" y="152" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="458" y="174" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">研究助手</text><text x="458" y="191" text-anchor="middle" font-size="10.5" fill="#8b949e">文献 · 综述</text><text x="458" y="206" text-anchor="middle" font-size="10" fill="#6e7681">qwen3.8 / DeepSeek</text></g>
+          <g id="n-ethics"><rect x="548" y="152" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="626" y="172" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">伦理 agent</text><text x="626" y="189" text-anchor="middle" font-size="10.5" fill="#8b949e">灰/违场景教学</text><text x="626" y="203" text-anchor="middle" font-size="10" fill="#6e7681">uncensored / 对齐</text><text x="626" y="216" text-anchor="middle" font-size="10" fill="#6e7681">双模式</text></g>
+
+          <g id="n-computer"><rect x="128" y="236" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="206" y="258" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">电脑操作员</text><text x="206" y="275" text-anchor="middle" font-size="10.5" fill="#8b949e">操控桌面</text><text x="206" y="290" text-anchor="middle" font-size="10" fill="#6e7681">qwen2.5vl:7b</text></g>
+          <g id="n-knowledge"><rect x="296" y="236" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="374" y="258" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">知识库</text><text x="374" y="275" text-anchor="middle" font-size="10.5" fill="#8b949e">术语图谱 · 检索</text><text x="374" y="290" text-anchor="middle" font-size="10" fill="#6e7681">Ollama</text></g>
+          <g id="n-meeting"><rect x="464" y="236" width="156" height="68" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="542" y="258" text-anchor="middle" font-size="12.5" font-weight="600" fill="#79b8ff">会议纪要官</text><text x="542" y="275" text-anchor="middle" font-size="10.5" fill="#8b949e">转写 · 纪要 · PPT</text><text x="542" y="290" text-anchor="middle" font-size="10" fill="#6e7681">qwen3.8:27b</text></g>
+
+          <g id="p1"><rect x="44" y="392" width="150" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="119" y="414" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">① 生成</text><text x="119" y="430" text-anchor="middle" font-size="10" fill="#8b949e">uncensored-16k</text><text x="119" y="443" text-anchor="middle" font-size="10" fill="#a371f7">← 伦理 agent</text></g>
+          <g id="p2"><rect x="206" y="392" width="150" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="281" y="414" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">② 审查</text><text x="281" y="430" text-anchor="middle" font-size="10" fill="#8b949e">qwen3.8-16k</text><text x="281" y="443" text-anchor="middle" font-size="10" fill="#a371f7">← 伦理 agent</text></g>
+          <g id="p3"><rect x="368" y="392" width="150" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="443" y="414" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">③ 去重</text><text x="443" y="430" text-anchor="middle" font-size="10" fill="#8b949e">bge-m3 语义</text><text x="443" y="443" text-anchor="middle" font-size="10" fill="#a371f7">← 伦理 agent</text></g>
+          <g id="p4"><rect x="530" y="392" width="150" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="605" y="414" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">④ 写回</text><text x="605" y="430" text-anchor="middle" font-size="10" fill="#8b949e">Obsidian</text><text x="605" y="443" text-anchor="middle" font-size="10" fill="#a371f7">← 伦理 agent</text></g>
+          <text x="44" y="386" font-size="10.5" fill="#8b949e">伦理归档流水线 ①→②→③→④</text>
+
+          <g id="n-cubackend"><rect x="44" y="470" width="124" height="58" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="106" y="490" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">电脑操作后端</text><text x="106" y="506" text-anchor="middle" font-size="10.5" fill="#8b949e">截屏 · 点击</text><text x="106" y="520" text-anchor="middle" font-size="10" fill="#a371f7">← 电脑操作员</text></g>
+          <g id="n-settler"><rect x="176" y="470" width="124" height="58" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="238" y="490" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">知识沉淀官</text><text x="238" y="506" text-anchor="middle" font-size="10.5" fill="#8b949e">经验 · 偏好</text><text x="238" y="520" text-anchor="middle" font-size="10" fill="#a371f7">← 总控台</text></g>
+          <g id="n-govern"><rect x="308" y="470" width="124" height="58" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="370" y="490" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">治理巡检</text><text x="370" y="506" text-anchor="middle" font-size="10.5" fill="#8b949e">职责盘点</text><text x="370" y="520" text-anchor="middle" font-size="10" fill="#a371f7">← 总控台</text></g>
+          <g id="n-mtbackend"><rect x="440" y="470" width="124" height="58" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="502" y="490" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">会议纪要后端</text><text x="502" y="506" text-anchor="middle" font-size="10.5" fill="#8b949e">总结 · PPT</text><text x="502" y="520" text-anchor="middle" font-size="10" fill="#a371f7">← 会议纪要官</text></g>
+          <g id="n-legal"><rect x="572" y="470" width="124" height="58" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="634" y="490" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c9b3ff">法务 agent</text><text x="634" y="506" text-anchor="middle" font-size="10.5" fill="#8b949e">法条 · 判例</text><text x="634" y="520" text-anchor="middle" font-size="10" fill="#a371f7">← 伦理 agent</text></g>
+
+          <rect x="44" y="596" width="380" height="98" rx="8" fill="#1c2129" stroke="#30363d"/>
+          <text x="234" y="618" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">Ollama 本地模型</text>
+          <text x="58" y="638" font-size="10" fill="#8b949e">qwen3.8:27b · qwen3:32b · qwen3:32b-uncensored</text>
+          <text x="58" y="654" font-size="10" fill="#8b949e">qwen2.5vl:7b · deepseek-r1:32b · bge-m3</text>
+          <text x="58" y="670" font-size="10" fill="#8b949e">qwen3:8b（16k 小上下文副本：-16k 后缀）</text>
+          <rect x="444" y="596" width="266" height="98" rx="8" fill="#1c2129" stroke="#30363d"/>
+          <text x="577" y="618" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">云端 API</text>
+          <text x="458" y="638" font-size="10" fill="#8b949e">DeepSeek Flash / V4-Pro</text>
+          <text x="458" y="654" font-size="10" fill="#8b949e">Qwen Plus · GPT</text>
+          <text x="458" y="670" font-size="10" fill="#8b949e">通义万相（文生图）</text>
+
+          <g id="n-scene"><rect x="44" y="766" width="210" height="64" rx="8" fill="#1c2129" stroke="#30363d"/><text x="149" y="790" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">伦理场景库</text><text x="149" y="808" text-anchor="middle" font-size="10" fill="#8b949e">Obsidian · 304 场景</text></g>
+          <g id="n-legallib"><rect x="272" y="766" width="210" height="64" rx="8" fill="#1c2129" stroke="#30363d"/><text x="377" y="790" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">法务知识库</text><text x="377" y="808" text-anchor="middle" font-size="10" fill="#8b949e">Obsidian · 66 法条</text></g>
+          <g id="n-zotero"><rect x="500" y="766" width="210" height="64" rx="8" fill="#1c2129" stroke="#30363d"/><text x="605" y="790" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">Zotero · Notion</text><text x="605" y="808" text-anchor="middle" font-size="10" fill="#8b949e">文献 · 外部知识</text></g>
+
+          <g id="a-legal"><rect x="44" y="908" width="150" height="66" rx="8" fill="#1c2129" stroke="#30363d"/><text x="119" y="930" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">法务周更</text><text x="119" y="947" text-anchor="middle" font-size="10" fill="#8b949e">周一 09:00</text><text x="119" y="962" text-anchor="middle" font-size="10" fill="#a371f7">→ 法务 agent</text></g>
+          <g id="a-lit"><rect x="206" y="908" width="150" height="66" rx="8" fill="#1c2129" stroke="#30363d"/><text x="281" y="930" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">文献综述</text><text x="281" y="947" text-anchor="middle" font-size="10" fill="#8b949e">周一 09:30</text><text x="281" y="962" text-anchor="middle" font-size="10" fill="#a371f7">→ 研究助手</text></g>
+          <g id="a-index"><rect x="368" y="908" width="150" height="66" rx="8" fill="#1c2129" stroke="#30363d"/><text x="443" y="930" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">每日增量索引</text><text x="443" y="947" text-anchor="middle" font-size="10" fill="#8b949e">每日 09:00</text><text x="443" y="962" text-anchor="middle" font-size="10" fill="#a371f7">→ 研究助手</text></g>
+          <g id="a-city"><rect x="530" y="908" width="150" height="66" rx="8" fill="#1c2129" stroke="#30363d"/><text x="605" y="930" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">CityVerse 情报</text><text x="605" y="947" text-anchor="middle" font-size="10" fill="#8b949e">每日 07:30</text><text x="605" y="962" text-anchor="middle" font-size="10" fill="#a371f7">→ 通用助手</text></g>
+
+          <path class="edge-own" d="M542 304 L502 470 M206 304 L106 470 M350 92 L238 470 M410 92 L370 470 M626 220 L634 470"/>
+          <path class="edge-data" id="wf-ethics" d="M626 220 L626 320 L119 392"/>
+          <path class="edge-data" id="wf-p1" d="M194 420 L206 420"/>
+          <path class="edge-data" id="wf-p2" d="M356 420 L368 420"/>
+          <path class="edge-data" id="wf-p3" d="M518 420 L530 420"/>
+          <path class="edge-data" id="wf-write" d="M605 448 L605 520 L149 766"/>
+          <path class="edge-data" id="wf-legallib" d="M634 528 L634 700 L377 766"/>
+          <path class="edge-data" id="wf-lit" d="M458 220 L458 320 L605 766"/>
+
+          <circle r="4" fill="#d29922"><animateMotion dur="1.6s" repeatCount="indefinite" path="M194 420 L206 420"/></circle>
+          <circle r="4" fill="#d29922"><animateMotion dur="1.6s" repeatCount="indefinite" path="M356 420 L368 420"/></circle>
+          <circle r="4" fill="#d29922"><animateMotion dur="1.6s" repeatCount="indefinite" path="M518 420 L530 420"/></circle>
+        </svg>
+      </div>
+      <div class="arch-legend">
+        <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="6 6"/></svg>数据流（流动虚线）</span>
+        <span><svg width="34" height="8"><circle cx="17" cy="4" r="3.5" fill="#d29922"/></svg>行进数据包</span>
+        <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#a371f7" stroke-width="1.2" stroke-dasharray="2 4"/></svg>归属关系</span>
+        <span><svg width="34" height="8"><rect x="0" y="0" width="34" height="8" rx="4" fill="#14243c" stroke="#d29922" stroke-width="1.5"/></svg>琥珀描边 + 呼吸 = 正在工作</span>
+      </div>
+      <div class="hint" id="archFoot">正在连接工作台…</div>
+    </section>
+  </div>
 </main>
 
 <script>
@@ -589,6 +720,89 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     if (lbl) lbl.textContent = el.value;
   }
 });
+
+/* ---------------- Agent 架构图（页内 Tab，实时协作状态） ---------------- */
+(function () {
+  function switchView(v) {
+    var isConsole = v === 'console';
+    $('#viewConsole').hidden = !isConsole;
+    $('#viewArch').hidden = isConsole;
+    $('#tabConsole').className = isConsole ? 'on' : '';
+    $('#tabArch').className = isConsole ? '' : 'on';
+  }
+  $('#tabConsole').onclick = function () { switchView('console'); };
+  $('#tabArch').onclick = function () { switchView('arch'); };
+
+  var IS_ARCH = !!(window.ingrid && window.ingrid.archStatus);
+  var MODEL_AGENT_MAP = [
+    { re: /uncensored/i,  nodes: ['n-ethics', 'p1'] },
+    { re: /bge-m3/i,      nodes: ['p3'] },
+    { re: /qwen2\.5vl/i,  nodes: ['n-computer', 'n-cubackend'] },
+    { re: /deepseek-r1/i, nodes: ['n-dev', 'p2'] },
+    { re: /qwen3\.8/i,    nodes: ['n-assistant', 'n-meeting', 'n-mtbackend'] },
+    { re: /qwen3:32b/i,   nodes: ['n-assistant'] }
+  ];
+  function aid(id) { return document.getElementById(id); }
+  function fmtClock(ts) {
+    var d = new Date(ts), p = function (x) { return String(x).padStart(2, '0'); };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function clearArchActive() {
+    document.querySelectorAll('.arch-node-active').forEach(function (n) { n.classList.remove('arch-node-active'); });
+    document.querySelectorAll('.arch-flow-fast').forEach(function (n) { n.classList.remove('arch-flow-fast'); });
+  }
+  function setArchActive(id) { var n = aid(id); if (n) n.classList.add('arch-node-active'); }
+
+  function renderArch(s) {
+    if (!s) { aid('archFoot').textContent = '无法获取状态（非桌面环境，请在工作台内打开）'; return; }
+    aid('archLastRefresh').textContent = '更新于 ' + fmtClock(s.now);
+    var dot = aid('archOllamaDot');
+    if (s.ollamaOnline) { dot.className = 'arch-dot on'; aid('archOllamaState').textContent = '在线'; }
+    else { dot.className = 'arch-dot off'; aid('archOllamaState').textContent = '离线'; }
+    aid('archEthicsProg').textContent = s.ethics.total ? (s.ethics.done + ' / ' + s.ethics.total + (s.ethics.running ? ' · 运行中' : '')) : '—';
+    aid('archLegalCount').textContent = s.legal.laws ? (s.legal.laws + ' 条') : '—';
+    aid('archSceneCount').textContent = s.sceneFiles ? (s.sceneFiles + ' 个') : '—';
+
+    var chips = aid('archModelChips'); chips.innerHTML = '';
+    if (s.ollamaOnline && s.activeModels.length) {
+      s.activeModels.forEach(function (m) {
+        var c = document.createElement('span'); c.className = 'arch-chip live'; c.textContent = 'GPU 活跃 · ' + m.name; chips.appendChild(c);
+      });
+    } else if (s.ollamaOnline) {
+      var c = document.createElement('span'); c.className = 'arch-chip'; c.textContent = '无模型加载（空闲）'; chips.appendChild(c);
+    } else {
+      var c2 = document.createElement('span'); c2.className = 'arch-chip'; c2.textContent = 'Ollama 离线'; chips.appendChild(c2);
+    }
+
+    clearArchActive();
+    if (s.ollamaOnline) {
+      var hit = {};
+      s.activeModels.forEach(function (m) {
+        MODEL_AGENT_MAP.forEach(function (rule) { if (rule.re.test(m.name)) rule.nodes.forEach(function (id) { hit[id] = true; }); });
+      });
+      Object.keys(hit).forEach(function (id) { setArchActive(id); });
+      if (Object.keys(hit).length) {
+        ['wf-ethics', 'wf-p1', 'wf-p2', 'wf-p3', 'wf-write'].forEach(function (id) { var e = aid(id); if (e) e.classList.add('arch-flow-fast'); });
+      }
+    }
+    var activeCount = document.querySelectorAll('.arch-node-active').length;
+    aid('archFoot').textContent = s.ollamaOnline
+      ? (activeCount ? ('检测到 ' + activeCount + ' 个 agent 正在工作（模型活跃）') : 'Ollama 在线 · 所有 agent 待机')
+      : 'Ollama 离线 · 本地模型 agent 待机';
+  }
+
+  function pollArch() {
+    if (!IS_ARCH) return;
+    window.ingrid.archStatus().then(renderArch).catch(function (e) { aid('archFoot').textContent = '状态获取失败：' + (e && e.message || e); });
+  }
+
+  if (IS_ARCH) {
+    document.querySelectorAll('#viewArch .edge-data').forEach(function (e) { e.classList.add('arch-flow'); });
+    pollArch(); setInterval(pollArch, 3000);
+  } else {
+    renderArch(null);
+  }
+})();
 
 /* ---------------- 启动 ---------------- */
 (async function boot() {
