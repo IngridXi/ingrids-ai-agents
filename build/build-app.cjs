@@ -32,17 +32,24 @@ const appName = "Ingrid's AI Agents";
 const appBundleId = 'com.ingridxi.agents';
 const outDir = path.join(projectRoot, 'dist');
 
+// 自签名代码签名证书（Common Name）。为什么不用 adhoc（--sign -）：
+//   adhoc 的 designated requirement 基于 cdhash（app 内容哈希），每次重新打包内容变了
+//   cdhash 就变 → 系统钥匙串（safeStorage 存 API key）与 TCC（自动化授权）都失效 → 反复弹密码。
+//   证书签名的 DR 基于 certificate root（证书不变则稳定）→ 一次授权永久生效。
+//   该证书已在 login 钥匙串里（security find-identity -p codesigning 可见）。
+const SIGN_ID = 'Ingrids AI Agents Signing';
+
 function cs(app) {
-  execFileSync('codesign', ['--force', '--sign', '-', app], { stdio: 'pipe' });
+  execFileSync('codesign', ['--force', '--sign', SIGN_ID, app], { stdio: 'pipe' });
 }
 function csDeep(app) {
-  execFileSync('codesign', ['--force', '--deep', '--sign', '-', app], { stdio: 'pipe' });
+  execFileSync('codesign', ['--force', '--deep', '--sign', SIGN_ID, app], { stdio: 'pipe' });
 }
 function setBundleId(plist, id) {
   execFileSync('plutil', ['-replace', 'CFBundleIdentifier', '-string', id, plist], { stdio: 'pipe' });
 }
 
-/** 统一 bundle ID 命名空间 + 从内到外 adhoc 重签，消除 "different Team IDs" 崩溃 */
+/** 统一 bundle ID 命名空间 + 从内到外用自签名证书重签，消除 "different Team IDs" 崩溃 */
 function signElectronApp(app) {
   const fw = path.join(app, 'Contents', 'Frameworks');
 
@@ -120,7 +127,7 @@ async function main() {
   console.log('打包完成:', built);
 
   signElectronApp(built);
-  console.log('已 adhoc 签名并统一 bundle ID:', built);
+  console.log('已用自签名证书签名并统一 bundle ID:', built);
 
   // 验证签名，失败则报错不继续
   execFileSync('codesign', ['--verify', '--deep', '--strict', built], { stdio: 'pipe' });
