@@ -3407,6 +3407,42 @@ ipcMain.handle('mermaid2ppt:export', async (_e, p) => {
   });
 });
 
+// 保真图片导出：前端把 mermaid.js 渲染的 SVG 转成 PNG（base64），主进程嵌入 16:9 空白 PPT。
+// 用于 diagram-pptx 布局质量差的图（sequence/class/state/ER 等），保证与预览一致。
+ipcMain.handle('mermaid2ppt:image', async (_e, p) => {
+  const py = mermaidPyBin();
+  if (!py) return { ok: false, error: '未找到 python 环境（venv_mermaid）。请确认 ~/Dev/Ingrids-AI-Agents/venv_mermaid 存在' };
+  const script = path.join(__dirname, 'scripts', 'mermaid2ppt_image.py');
+  if (!fs.existsSync(script)) return { ok: false, error: '缺少导出脚本 scripts/mermaid2ppt_image.py' };
+  const png = String((p && p.png) || '').trim();
+  if (!png) return { ok: false, error: '缺少图片数据' };
+
+  const save = await dialog.showSaveDialog({
+    title: '导出 PPT（高清图片）',
+    defaultPath: path.join(exportDir(), safeFilename('流程图') + '.pptx'),
+    filters: [{ name: 'PowerPoint 演示文稿', extensions: ['pptx'] }],
+  });
+  if (save.canceled || !save.filePath) return { ok: false, canceled: true };
+
+  const payload = JSON.stringify({ png, out_path: save.filePath });
+  return new Promise((resolve) => {
+    const child = spawn(py, [script], { env: pyEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', (d) => { out += String(d); });
+    child.stderr.on('data', (d) => { err += String(d); });
+    child.on('error', (e) => resolve({ ok: false, error: String((e && e.message) || e) }));
+    child.on('close', () => {
+      try {
+        resolve(JSON.parse(out.trim()));
+      } catch (e) {
+        resolve({ ok: false, error: '导出脚本无有效输出：' + String((err || out || '').slice(0, 400)) });
+      }
+    });
+    child.stdin.write(payload);
+    child.stdin.end();
+  });
+});
+
 /* ---------------- IPC：打开 / 在文件夹中显示 本地文件 ---------------- */
 ipcMain.handle('fs:open', async (_e, p) => {
   const f = String((p && p.path) || p || '').trim();

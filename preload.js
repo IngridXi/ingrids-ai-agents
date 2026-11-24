@@ -171,6 +171,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   docGenerate: (payload) => ipcRenderer.invoke('doc:generate', payload),
   // Mermaid -> PPT 流程图导出（调本机 diagram-pptx，生成原生可编辑形状）
   mermaid2pptExport: (payload) => ipcRenderer.invoke('mermaid2ppt:export', payload),
+  // Mermaid -> PPT 保真图片导出（前端渲染 SVG 转 PNG，嵌入空白 PPT）
+  mermaid2pptImage: (payload) => ipcRenderer.invoke('mermaid2ppt:image', payload),
   openPath: (p) => ipcRenderer.invoke('fs:open', p),
   revealPath: (p) => ipcRenderer.invoke('fs:reveal', p),
 

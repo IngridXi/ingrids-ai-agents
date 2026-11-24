@@ -14,3 +14,5 @@ extensions/meeting_audio/__pycache__/
 
 # 定时自动化任务的运行日志（机器自动写的流水账，不入库）
 .workbuddy/memory/automations/
+
+__pycache__/
