@@ -5225,6 +5225,32 @@ function toolDbObsidianWrite(payload) {
     return { ok: true, path: full, title: title, tags: tags, chars: body.length };
   } catch (e) { return { ok: false, error: '写入失败：' + String(e && e.message || e) }; }
 }
+/* 伦理 agent 对话自动同步到 Obsidian（未规范模式问答，按会话聚合：一个会话一个 .md，边聊边追加） */
+function ethicsSync(payload) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 主库（请先安装 Obsidian 并创建 vault）' };
+  const title = safeFileName(String((payload && payload.title) || '未命名对话'));
+  const q = String((payload && payload.qa && payload.qa.q) || '').trim();
+  const a = String((payload && payload.qa && payload.qa.a) || '').trim();
+  if (!q && !a) return { ok: false, error: '缺少问答内容' };
+  const tsn = (payload && payload.qa && payload.qa.ts) ? Number(payload.qa.ts) : Date.now();
+  const d = isFinite(tsn) && tsn > 0 ? new Date(tsn) : new Date();
+  const p2 = (x) => String(x).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  const dir = path.resolve(vp, '伦理对话');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const full = path.join(dir, title + '.md');
+    const section = '## 未规范 · ' + stamp + '\n\n**问**：' + q + '\n\n**答**：' + a + '\n';
+    if (fs.existsSync(full)) {
+      fs.appendFileSync(full, '\n---\n\n' + section, 'utf8');
+    } else {
+      const head = '---\ntags:\n  - 伦理对话\n  - 伦理agent\n  - AI生成\n  - 未规范\n---\n\n# ' + title + '\n\n> 来源：伦理 agent「未规范模式」对话记录（自动同步）\n\n' + section;
+      fs.writeFileSync(full, head, 'utf8');
+    }
+    return { ok: true, path: full, append: true };
+  } catch (e) { return { ok: false, error: '同步失败：' + String(e && e.message || e) }; }
+}
 function toolDbObsidianTag(payload) {
   const vp = workspaceVaultPath() || vaultPath();
   if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
@@ -5504,6 +5530,7 @@ ipcMain.handle('tool:db:obsidian:tag', (_e, p) => toolDbObsidianTag(p));
 ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
 ipcMain.handle('tool:db:obsidian:promote', (_e, p) => toolDbObsidianPromote(p));
 ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
+ipcMain.handle('ethics:sync', (_e, p) => ethicsSync(p));
 ipcMain.handle('workspace:list', () => toolDbWorkspaceList());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));

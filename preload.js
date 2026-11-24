@@ -220,6 +220,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbObsidianMove: (payload) => ipcRenderer.invoke('tool:db:obsidian:move', payload),
   toolDbObsidianPromote: (payload) => ipcRenderer.invoke('tool:db:obsidian:promote', payload),
   toolDbObsidianReport: () => ipcRenderer.invoke('tool:db:obsidian:report'),
+  // 伦理 agent 对话自动同步到 Obsidian（未规范模式问答，按会话聚合）
+  ethicsSync: (payload) => ipcRenderer.invoke('ethics:sync', payload),
   workspaceList: () => ipcRenderer.invoke('workspace:list'),
   toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
   toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),

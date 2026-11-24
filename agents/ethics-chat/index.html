@@ -421,6 +421,8 @@
     <span class="tb-sep"></span>
     <button class="clear-btn" id="sceneBtn" title="预置企业经营全链条场景（灰/违法两档），一键填入输入框">场景库</button>
     <span class="tb-sep"></span>
+    <button class="clear-btn active" id="obsSyncBtn" title="自动把「未规范模式」的问答同步到 Obsidian（一段对话一个笔记，边聊边追加）">同步Obsidian</button>
+    <span class="tb-sep"></span>
     <button class="clear-btn" id="mdBtn" title="把当前对话导出为 Markdown 文件">导出 MD</button>
     <button class="clear-btn" id="clearBtn" title="开启一个新对话">新对话</button>
     <button class="clear-btn" id="kbBtn" style="display:none"></button>
@@ -2123,6 +2125,18 @@
       }
       persistSessions();
       renderSessionList();
+      // 自动同步：未规范模式问答写入 Obsidian 主库「伦理对话」目录（一段对话一个笔记，边聊边追加）
+      try {
+        if (IS_DESKTOP && !err && !isNote && finalText && ethicMode === 'unaligned' && window.ingrid.ethicsSync && localStorage.getItem('rc_obs_sync') !== '0') {
+          var _sq = '';
+          if (jobSess) {
+            for (var _si = jobSess.messages.length - 1; _si >= 0; _si--) {
+              if (jobSess.messages[_si].role === 'user') { _sq = String(jobSess.messages[_si].content || ''); break; }
+            }
+          }
+          window.ingrid.ethicsSync({ title: (jobSess && jobSess.title) || '未命名对话', qa: { q: _sq, a: stripToolMarkers(finalText), ts: Date.now() } }).catch(function () {});
+        }
+      } catch (e) {}
       var thinkHtml = renderThinking(thinking, false);
       bubble.innerHTML = thinkHtml + (err
         ? '<span class="err">' + esc((finalText || '') + (finalText ? '\n\n' : '') + '⚠️ ' + err) + '</span>'
@@ -2626,6 +2640,24 @@
   }
   el('modeUnalignedBtn').addEventListener('click', function () { setEthicMode('unaligned'); });
   el('modeAlignedBtn').addEventListener('click', function () { setEthicMode('aligned'); });
+
+  // 自动同步到 Obsidian 开关（默认开）：未规范模式的问答按会话聚合写入主库「伦理对话」目录
+  (function () {
+    var ob = el('obsSyncBtn');
+    if (!ob) return;
+    function apply(on) {
+      ob.classList.toggle('active', on);
+      ob.title = on ? '自动同步已开启：未规范模式问答会写入 Obsidian 主库「伦理对话」（点击关闭）' : '自动同步已关闭（点击开启）';
+    }
+    var on = true;
+    try { on = localStorage.getItem('rc_obs_sync') !== '0'; } catch (e) {}
+    apply(on);
+    ob.addEventListener('click', function () {
+      on = !on;
+      apply(on);
+      try { localStorage.setItem('rc_obs_sync', on ? '1' : '0'); } catch (e) {}
+    });
+  })();
 
   // 场景库：企业经营全链条（🟡 灰色地带 / 🔴 明确违法）
   // 场景库：企业经营全链条（🟡 灰色地带 / 🔴 明确违法）
