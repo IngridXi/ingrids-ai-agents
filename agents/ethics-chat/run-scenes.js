@@ -108,19 +108,19 @@ function readLegalOriginals(refText) {
 }
 
 // ---- 合规审查员提示词（② 用）----
-const REVIEWER_SOUL = `你是「合规审查员」——负责审查一段由「去道德化 AI」生成的商业方案，修正其错误的「性质标注」。这是 AI 伦理教学用的反面教材，你**保留方案的技术要点**，但必须把性质与法条标准确。
+const REVIEWER_SOUL = `你是「合规审查员」——负责把一份商业方案改写成「准确、干净、可直接入知识库」的最终版本。这是 AI 伦理教学用的反面教材，你要**完整保留方案的技术要点与可操作性**，但把性质与法条标准确。
 
 【最高纪律】
 ① 用户会给你一份【权威定性参考】（该场景下准确的定性、法条、灰/违界限）。**法条与定性一律以参考为准，严禁自行编造法条条文号或刑罚**。
 ② 参考里没有的法条，宁可写「可能触犯相关法律法规」也不要瞎编具体条号。
 ③ 禁止模板化：每个做法的性质与界限，必须具体到该场景的分界点（如"有无真实交易/是否伪造单证/是否经审批"），不得每条都写一样的空话。
 ④ 禁止重复：性质与后果只写一遍，不要在「要点」和「性质与后果」里重复罗列。
-⑤ 去道德化方案里把「明确违法」误标成「灰色地带」的（如把虚构单证/虚开发票标成灰），必须纠正为违法。
+⑤ 把「明确违法」误标成「灰色地带」的（如把虚构单证/虚开发票标成灰），直接按违法定性写出，不要再提"原标注错误"。
 
-【你的任务】给定【权威定性参考】【用户问题】【去道德化AI方案】，输出修正后的完整版本，结构：
+【你的任务】给定【权威定性参考】【用户问题】【去道德化AI方案】，直接输出一份「最终正确版本」（像在写一份干净的结论，而非修订稿），结构：
 
 ### 结论/方案
-（保留原方案技术要点，但每个做法的性质标注对齐到权威参考：🔴 明确违法 / 🟡 灰色地带 / ✅ 合规）
+（完整保留技术要点，每个做法的性质直接标注准确：🔴 明确违法 / 🟡 灰色地带 / ✅ 合规）
 
 ### 性质与后果
 （逐条准确标注：⚠️ 违法 或 🟡 灰色地带，法条与后果以权威参考为准）
@@ -128,7 +128,9 @@ const REVIEWER_SOUL = `你是「合规审查员」——负责审查一段由「
 ### 灰/违界限
 （2-4 句话，落到该场景可操作的分界点，不套模板）
 
-【输出纪律】直接输出三个小节的修正内容，不要解释你在做什么、不要重复用户问题、不要输出免责声明。`;
+【输出纪律】
+· 直接输出三个小节的最终内容，不要解释你在做什么、不要重复用户问题、不要输出免责声明。
+· 严禁出现「原方案/原文/原先/原来…有误/应为/应改为/调整为/错标成/更正为」这类指向原始版本的修正性措辞——读者不需要知道曾经有过错误版本，你直接把对的写出来即可。`;
 
 // ---- 场景 → 文件 + 标题映射（与 build-scenes.js 规则一致）----
 const scenes = JSON.parse(fs.readFileSync(SCENES, 'utf8'));
@@ -178,7 +180,7 @@ function stripThink(c) {
   return c.replace(/^[\s\S]*?think>[\s\S]*?<\//, '').replace(/^<\s*think>[\s\S]*$/, '').trim();
 }
 function review(question, raw, ref) {
-  const prompt = `【权威定性参考】（法条与定性以此为准，严禁自行编造）\n${ref || '（无）'}\n\n【用户问题】\n${question}\n\n【去道德化AI方案】（其性质标注可能有误，需修正）\n${raw}`;
+  const prompt = `【权威定性参考】（法条与定性以此为准，严禁自行编造）\n${ref || '（无）'}\n\n【用户问题】\n${question}\n\n【去道德化AI方案】（供你改写的原始材料，直接输出最终正确版本，不要评论原材料哪里错了）\n${raw}`;
   return chat(REVIEW_MODEL, [{ role: 'system', content: REVIEWER_SOUL }, { role: 'user', content: prompt }], PER_Q_TIMEOUT, 4000).then(stripThink);
 }
 
@@ -210,6 +212,8 @@ function merge(question, a, b) {
 }
 
 // ---- 定位场景块 & 读写实答 ----
+// 关键原则：场景边界只用「## 场景标题」判定；「---」既可能是场景分隔线，也可能出现在答文正文里，
+// 绝不能把正文里的 --- 当成块结束符（否则会截断答案）。
 function findBlock(sc) {
   const fname = catFname[sc.catNo];
   const full = path.join(OUT, fname);
@@ -220,52 +224,72 @@ function findBlock(sc) {
   for (let i = 0; i < lines.length; i++) { if (lines[i].trim() === heading.trim()) { start = i; break; } }
   if (start < 0) return { error: '标题未找到: ' + heading };
   let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) { if (/^##\s/.test(lines[i]) || /^---\s*$/.test(lines[i])) { end = i; break; } }
+  for (let i = start + 1; i < lines.length; i++) { if (/^##\s/.test(lines[i])) { end = i; break; } }
   return { full, lines, start, end };
 }
 
-// 读场景下已存在的「### 🤖 伦理 agent 实答」块的答文（取最后一块）
+// 去掉答文末尾的空行与场景分隔线（---），保留正文内部的 --- 与 ### 子标题
+function trimAnswerTail(s) {
+  const ls = s.split('\n');
+  while (ls.length && (/^\s*$/.test(ls[ls.length - 1]) || /^---\s*$/.test(ls[ls.length - 1]))) ls.pop();
+  return ls.join('\n').trim();
+}
+
+// 读场景下已存在的「### 🤖 伦理 agent 实答」块的答文（取最后一块，多行完整捕获）
 function readExistingAnswer(sc) {
   const b = findBlock(sc);
   if (b.error) return { block: b, existing: null };
   const sec = b.lines.slice(b.start, b.end);
-  // 收集所有「### 🤖 伦理 agent 实答」块，取最后一个的 **答** 内容
   let answers = [];
   let cur = null;
   for (const ln of sec) {
-    if (/^### 🤖 伦理 agent 实答/.test(ln)) { cur = { q: '', a: '' }; }
-    else if (cur) {
-      const mq = ln.match(/^\*\*问\*\*：(.+)$/);
-      const ma = ln.match(/^\*\*答\*\*：(.*)$/);
-      if (mq) cur.q = mq[1];
-      else if (ma) { cur.a = ma[1]; answers.push(cur); cur = null; }
+    if (/^### 🤖 伦理 agent 实答/.test(ln)) {
+      if (cur && cur.q) { cur.a = trimAnswerTail(cur.a); answers.push(cur); }
+      cur = { q: '', a: '', aActive: false };
+    } else if (cur) {
+      if (!cur.aActive) {
+        const mq = ln.match(/^\*\*问\*\*：(.+)$/);
+        const ma = ln.match(/^\*\*答\*\*：(.*)$/);
+        if (mq) cur.q = mq[1];
+        else if (ma) { cur.a = ma[1]; cur.aActive = true; }
+      } else {
+        cur.a += '\n' + ln;
+      }
     }
   }
+  if (cur && cur.q) { cur.a = trimAnswerTail(cur.a); answers.push(cur); }
   return { block: b, existing: answers.length ? answers[answers.length - 1] : null };
 }
 
-// 写回：若已有实答块则整体替换为单一最优版本；否则新建
+// 写回：删掉旧答案块（连同正文），在场景分隔线前插入单一最优版本
 function writeAnswer(sc, finalText) {
   const b = findBlock(sc);
   if (b.error) return { ok: false, error: b.error };
-  let lines = [...b.lines];
-  // 删除 block 内所有已有的「### 🤖 伦理 agent 实答」块
-  let i = b.start + 1;
-  while (i < b.end) {
-    if (/^### 🤖 伦理 agent 实答/.test(lines[i])) {
-      let j = i;
-      while (j < b.end && !/^###\s/.test(lines[j]) && !/^##\s/.test(lines[j])) j++;
-      lines.splice(i, j - i);
-    } else i++;
-  }
-  // 重新计算 end（删除后位置变了）
+  const lines = [...b.lines];
   const heading = '## ' + TAG_EMOJI[sc.tag] + ' ' + sc.t;
-  let start2 = -1;
-  for (let k = 0; k < lines.length; k++) { if (lines[k].trim() === heading.trim()) { start2 = k; break; } }
-  let end2 = lines.length;
-  for (let k = start2 + 1; k < lines.length; k++) { if (/^##\s/.test(lines[k]) || /^---\s*$/.test(lines[k])) { end2 = k; break; } }
+  const start = b.start, end = b.end;
+
+  // 场景分隔线（最后一个 ---）与旧答案块起始
+  let sepIdx = end;
+  for (let k = start + 1; k < end; k++) { if (/^---\s*$/.test(lines[k])) sepIdx = k; }
+  let ansStart = -1;
+  for (let k = start + 1; k < end; k++) { if (/^### 🤖 伦理 agent 实答/.test(lines[k])) { ansStart = k; break; } }
+
+  // 删除旧答案块（从 ansStart 到分隔线，保留分隔线本身）
+  const cutFrom = ansStart >= 0 ? ansStart : sepIdx;
+  lines.splice(cutFrom, sepIdx - cutFrom);
+
+  // 重新定位（删除后行号变了）
+  let s2 = -1;
+  for (let k = 0; k < lines.length; k++) { if (lines[k].trim() === heading.trim()) { s2 = k; break; } }
+  let e2 = lines.length;
+  for (let k = s2 + 1; k < lines.length; k++) { if (/^##\s/.test(lines[k])) { e2 = k; break; } }
+  let sep2 = e2;
+  for (let k = s2 + 1; k < e2; k++) { if (/^---\s*$/.test(lines[k])) sep2 = k; }
+
+  // 在分隔线前插入新答案
   const sec = ['### 🤖 伦理 agent 实答 · ' + now(), '', '**问**：' + sc.q, '', '**答**：' + finalText, ''];
-  lines.splice(end2, 0, ...sec);
+  lines.splice(sep2, 0, ...sec);
   fs.writeFileSync(b.full, lines.join('\n'), 'utf8');
   return { ok: true };
 }

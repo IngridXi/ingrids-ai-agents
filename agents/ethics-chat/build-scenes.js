@@ -28,28 +28,33 @@ for (const id of Object.keys(gray)) {
   (practices[id] = practices[id] || {}).g = gray[id].g;
 }
 
-// 提取现有 md 中已归档的「### 🤖 伦理 agent 实答」块，重建时保留（不丢失历史实答）
+// 提取现有 md 中已归档的「### 🤖 伦理 agent 实答」块，重建时保留（不丢失历史实答）。
+// 关键：答文正文里可能含有「### 结论/方案」「### 性质与后果」子标题，甚至「---」分隔线，
+// 它们都是答案的一部分。真正的块边界只有一个：下一个场景标题（## ）。
 function extractExistingAnswers() {
   const map = {};
   if (!fs.existsSync(OUT)) return map;
   for (const f of fs.readdirSync(OUT)) {
     if (!f.endsWith('.md') || f.startsWith('00-')) continue;
     const lines = fs.readFileSync(path.join(OUT, f), 'utf8').split('\n');
-    let curHeading = null, curAnswers = [], buf = null;
-    for (const ln of lines) {
-      if (/^##\s/.test(ln)) {
-        if (curHeading && curAnswers.length) map[curHeading] = curAnswers;
-        curHeading = ln.trim(); curAnswers = []; buf = null;
-      } else if (/^### 🤖 伦理 agent 实答/.test(ln)) {
-        buf = [ln];
-      } else if (buf) {
-        if (/^###\s/.test(ln) || /^##\s/.test(ln) || /^---\s*$/.test(ln)) {
-          curAnswers.push(buf.join('\n')); buf = null;
-        } else buf.push(ln);
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^##\s/.test(lines[i])) continue;
+      const heading = lines[i].trim();
+      // 在当前场景块内（直到下一个 ## 场景标题）找「### 🤖 伦理 agent 实答」
+      let j = i + 1;
+      while (j < lines.length && !/^##\s/.test(lines[j])) {
+        if (/^### 🤖 伦理 agent 实答/.test(lines[j])) {
+          const ans = [];
+          let k = j;
+          while (k < lines.length && !/^##\s/.test(lines[k])) { ans.push(lines[k]); k++; }
+          // 去掉末尾的空行与场景分隔线（---），保留正文内部的 --- 与 ### 子标题
+          while (ans.length && (/^\s*$/.test(ans[ans.length - 1]) || /^---\s*$/.test(ans[ans.length - 1]))) ans.pop();
+          if (ans.length) (map[heading] = map[heading] || []).push(ans.join('\n'));
+          break; // 每个场景只有一个实答块
+        }
+        j++;
       }
     }
-    if (buf) curAnswers.push(buf.join('\n'));
-    if (curHeading && curAnswers.length) map[curHeading] = curAnswers;
   }
   return map;
 }
