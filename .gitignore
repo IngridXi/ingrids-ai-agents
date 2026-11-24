@@ -16,3 +16,6 @@ extensions/meeting_audio/__pycache__/
 .workbuddy/memory/automations/
 
 __pycache__/
+
+# 伦理agent批量跑场景的运行时进度（断点续跑状态，不入库）
+agents/ethics-chat/run-progress.json
