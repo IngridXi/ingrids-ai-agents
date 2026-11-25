@@ -4503,7 +4503,17 @@ function toolPdfRead(target, st) {
     return { ok: false, error: 'PDF 提取失败：' + String(e && e.message || e) };
   }
 }
-// PPTX 原文提取：解包 ppt/slides/slideN.xml（macOS 自带 /usr/bin/unzip），cheerio 提取 <a:t> 文本，逐页组织。
+// 解码 XML 实体（PPT/XLSX 的 XML 里 &amp; &lt; 等需还原成原文）
+function decodeXmlEntities(s) {
+  return String(s || '')
+    .replace(/&#x([0-9a-fA-F]+);/g, function (_m, h) { return String.fromCodePoint(parseInt(h, 16)); })
+    .replace(/&#(\d+);/g, function (_m, d) { return String.fromCodePoint(parseInt(d, 10)); })
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+}
+
+// PPTX 原文提取：解包 ppt/slides/slideN.xml（macOS 自带 /usr/bin/unzip），正则提取 <a:t> 文本，逐页组织。
+// 不依赖 cheerio（打包副本里 cheerio 的 dist 被 electron-builder 精简掉，require 会失败）。
 function toolPptxRead(target, st) {
   try {
     const list = execFileSync('/usr/bin/unzip', ['-Z1', target], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
@@ -4515,14 +4525,14 @@ function toolPptxRead(target, st) {
         return na - nb;
       });
     if (!slides.length) return { ok: false, error: '未在演示文稿中找到幻灯片内容（可能是空文件或格式异常）' };
-    const cheerio = require('cheerio');
     const parts = [];
     slides.forEach(function (s) {
       const xml = execFileSync('/usr/bin/unzip', ['-p', target, s], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
-      const $ = cheerio.load(xml, { xmlMode: true });
-      var texts = [];
-      $('a\\:t').each(function (_i, el) { texts.push($(el).text()); });
-      if (!texts.length) $('*').each(function (_i, el) { if (el.tagName === 'a:t') texts.push($(el).text()); });
+      // 提取所有 <a:t>…</a:t>（PPTX 正文都在此标签内；空自闭合 <a:t/> 不产生文本，正好忽略）
+      const texts = [];
+      const re = /<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g;
+      let m;
+      while ((m = re.exec(xml)) !== null) { const t = decodeXmlEntities(m[1]).trim(); if (t) texts.push(t); }
       var n = parseInt((s.match(/slide(\d+)/) || ['', '0'])[1], 10);
       parts.push('【第 ' + n + ' 页】' + texts.join(' '));
     });
@@ -4532,6 +4542,88 @@ function toolPptxRead(target, st) {
   } catch (e) {
     if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
     return { ok: false, error: 'PPTX 提取失败：' + String(e && e.message || e) };
+  }
+}
+
+// XLSX 原文提取：解包 xl/sharedStrings.xml + xl/worksheets/sheetN.xml，正则还原二维表格。
+// 同样不依赖第三方库（exceljs 异步、且打包副本完整性不可靠），纯 unzip + 正则。
+function toolXlsxRead(target, st) {
+  try {
+    const list = execFileSync('/usr/bin/unzip', ['-Z1', target], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+    const files = list.split('\n').map(function (l) { return l.trim(); });
+
+    // 1) 共享字符串表（多数文本存在这里）
+    const ssFile = files.find(function (f) { return /^xl\/sharedStrings\.xml$/i.test(f); });
+    const shared = [];
+    if (ssFile) {
+      const xml = execFileSync('/usr/bin/unzip', ['-p', target, ssFile], { encoding: 'utf8', maxBuffer: 40 * 1024 * 1024 });
+      const siRe = /<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g;
+      let m;
+      while ((m = siRe.exec(xml)) !== null) {
+        const tRe = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;
+        const ts = []; let tm;
+        while ((tm = tRe.exec(m[1])) !== null) ts.push(decodeXmlEntities(tm[1]));
+        shared.push(ts.join(''));
+      }
+    }
+
+    // 2) 工作表名称（xl/workbook.xml 的 <sheet name="…">）
+    const wbFile = files.find(function (f) { return /^xl\/workbook\.xml$/i.test(f); });
+    const sheetNames = [];
+    if (wbFile) {
+      const xml = execFileSync('/usr/bin/unzip', ['-p', target, wbFile], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      const sRe = /<sheet[^>]*\bname="([^"]*)"[^>]*>/g;
+      let m;
+      while ((m = sRe.exec(xml)) !== null) sheetNames.push(decodeXmlEntities(m[1]));
+    }
+
+    // 3) 逐 sheet 解析单元格
+    const sheetFiles = files.filter(function (f) { return /^xl\/worksheets\/sheet\d+\.xml$/i.test(f); })
+      .sort(function (a, b) { return parseInt((a.match(/sheet(\d+)/) || ['', '0'])[1], 10) - parseInt((b.match(/sheet(\d+)/) || ['', '0'])[1], 10); });
+    if (!sheetFiles.length) return { ok: false, error: '未在表格中找到工作表（可能为空文件或格式异常）' };
+
+    const out = [];
+    sheetFiles.forEach(function (sf, idx) {
+      const xml = execFileSync('/usr/bin/unzip', ['-p', target, sf], { encoding: 'utf8', maxBuffer: 40 * 1024 * 1024 });
+      const name = sheetNames[idx] || ('Sheet' + (idx + 1));
+      out.push('【表 ' + (idx + 1) + ' · ' + name + '】');
+      // 行：<row r="N" …>…</row>
+      const rowRe = /<row[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
+      let rm; let rowCount = 0;
+      while ((rm = rowRe.exec(xml)) !== null) {
+        const rowNum = rm[1]; const rowXml = rm[2];
+        // 单元格：<c r="A1" [t="s|str|inlineStr|b"]…>…</c>（也可能自闭合 <c …/>）
+        const cRe = /<c[^>]*\br="([A-Z]+\d+)"[^>]*?(?:\bt="([^"]*)")?[^>]*>([\s\S]*?)<\/c>|<c[^>]*\/>/g;
+        const cells = []; let cm;
+        while ((cm = cRe.exec(rowXml)) !== null) {
+          if (!cm[1]) continue; // 自闭合空单元格，跳过
+          const ref = cm[1]; const t = cm[2]; const inner = cm[3] || '';
+          let val = '';
+          if (t === 'inlineStr') {
+            const tm = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/.exec(inner);
+            val = tm ? decodeXmlEntities(tm[1]) : '';
+          } else if (t === 's') {
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            if (vm) { const si = parseInt(vm[1], 10); val = shared[si] != null ? shared[si] : ''; }
+          } else if (t === 'b') {
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            val = vm ? (vm[1] === '1' ? 'TRUE' : 'FALSE') : '';
+          } else {
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            val = vm ? decodeXmlEntities(vm[1]) : '';
+          }
+          cells.push(val);
+        }
+        if (cells.length) { out.push('  R' + rowNum + ': ' + cells.join(' | ')); rowCount++; }
+      }
+      if (!rowCount) out.push('  （本表无数据）');
+    });
+    const content = out.join('\n');
+    if (!content.trim()) return { ok: false, error: 'XLSX 中未提取到文本' };
+    return { ok: true, path: target, size: st.size, format: 'xlsx', sheets: sheetFiles.length, content: content };
+  } catch (e) {
+    if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
+    return { ok: false, error: 'XLSX 提取失败：' + String(e && e.message || e) };
   }
 }
 
@@ -4573,6 +4665,19 @@ function toolFsReadRaw(payload) {
   // PPTX：解包提取幻灯片文本（见 toolPptxRead）；旧版 .ppt 二进制不支持，提示转换
   if (ext === '.pptx') return toolPptxRead(target, st);
   if (ext === '.ppt') return { ok: false, error: '.ppt 是旧版二进制格式，暂不支持直接读。请用 PowerPoint 另存为 .pptx 后再读。' };
+  // 表格：xlsx 解包还原二维表格（见 toolXlsxRead）；旧版 .xls 二进制不支持
+  if (ext === '.xlsx') return toolXlsxRead(target, st);
+  if (ext === '.xls') return { ok: false, error: '.xls 是旧版二进制格式，暂不支持直接读。请用 Excel 另存为 .xlsx 后再读。' };
+  // CSV/TSV 纯文本，研究数据常见，放宽体积上限
+  if (ext === '.csv' || ext === '.tsv') {
+    if (st.size > 10 * 1024 * 1024) return { ok: false, error: 'CSV/TSV 文件过大（>10MB），请先拆分或转成 xlsx 后再读' };
+    try {
+      return { ok: true, path: target, size: st.size, format: ext.slice(1), content: fs.readFileSync(target, 'utf8') };
+    } catch (e) {
+      if (e && e.code === 'EPERM') return { ok: false, eperm: true, error: '无权限读取该文件（macOS 隐私保护）。请在「系统设置 → 隐私与安全性 → 完全磁盘访问」中把本应用加入并勾选后重启。' };
+      return { ok: false, error: '读取失败：' + String(e && e.message || e) };
+    }
+  }
   if (st.size > 200 * 1024) return { ok: false, error: '文件过大（>200KB），暂不支持读取' };
   try {
     const buf = fs.readFileSync(target);

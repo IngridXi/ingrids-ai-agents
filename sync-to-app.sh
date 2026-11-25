@@ -31,6 +31,24 @@ rsync -av \
   --exclude '.DS_Store' \
   "$SRC" "$DST"
 
+# 补齐 node_modules 运行时依赖。
+# 根因：electron-builder 打包时会把各包（cheerio/docx/exceljs/pptxgenjs/tsdav 等）的
+# dist/lib 编译产物精简掉，导致 require() 报 "Cannot find module .../dist/..."，
+# 表现为「读 PPT/生成文档」时报「缺 XX 模块」。这里从 Dev 的完整 node_modules 补齐。
+echo ""
+echo "🔧 补齐 node_modules 运行时依赖（补缺失的 dist/lib）..."
+NM_SRC="$SRC/node_modules/"
+NM_DST="$DST/node_modules/"
+if [ -d "$NM_SRC" ] && [ -d "$NM_DST" ]; then
+  rsync -a \
+    --exclude 'electron/' \
+    --exclude '@electron/' \
+    "$NM_SRC" "$NM_DST"
+  echo "✅ node_modules 运行时依赖已补齐。"
+else
+  echo "⚠️ 跳过 node_modules 补齐（目录缺失，请先 npm install）。"
+fi
+
 echo ""
 echo "✅ 已同步到打包副本。"
 echo "   ⚠️ 请完全退出「Ingrid's AI Agents」应用（Cmd+Q）后重新打开，以加载最新代码。"
