@@ -62,18 +62,32 @@ const SOUL = `你是「法务知识库编纂员」。任务：为一条法律规
 
 【输出纪律】只输出上述结构，不要前言、不要免责声明、不要重复标题外的解释。`;
 
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function chat(messages) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
-  try {
-    const resp = await fetch(ENDPOINT, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
-      body: JSON.stringify({ model: MODEL, messages, stream: false, think: false, options: { temperature: 0.2, num_predict: 3000, num_ctx: NUM_CTX } }),
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const j = await resp.json();
-    return (j.message && j.message.content) || '';
-  } finally { clearTimeout(timer); }
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+    try {
+      const resp = await fetch(ENDPOINT, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
+        body: JSON.stringify({ model: MODEL, messages, stream: false, think: false, keep_alive: '20m', options: { temperature: 0.2, num_predict: 3000, num_ctx: NUM_CTX } }),
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const j = await resp.json();
+      const content = (j.message && j.message.content) || '';
+      if (content) return content;
+      throw new Error('空响应');
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) {
+        const wait = attempt * 30 * 1000;
+        console.log(`  ⚠️ ${MODEL} 第${attempt}次失败(${e.message})，${wait / 1000}s 后重试...`);
+        await sleep(wait);
+      }
+    } finally { clearTimeout(timer); }
+  }
+  throw lastErr;
 }
 
 function buildMd(item, cat, body) {
