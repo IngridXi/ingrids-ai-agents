@@ -1561,8 +1561,16 @@ function openAgentInMainView(href) {
       if (/^https?:\/\//.test(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
-    view.webContents.loadFile(path.join(__dirname, href));
     agentViews.set(href, view);
+  }
+  // 检测页面文件是否更新：若磁盘上的 mtime 比上次加载更新，则重新 loadFile 拿到最新界面；
+  // 否则复用缓存（保住流式/后台任务的现场）。解决「改了 agent 页面，切回时还是旧版」的问题。
+  const filePath = path.join(__dirname, href);
+  let mtime = 0;
+  try { mtime = fs.statSync(filePath).mtimeMs; } catch (e) { /* 文件可能不存在，保持原逻辑 */ }
+  if (!view.__loadedMtime || mtime > view.__loadedMtime) {
+    view.webContents.loadFile(filePath);
+    view.__loadedMtime = mtime;
   }
   activeAgentHref = href;
   mainWindow.setBrowserView(view);
