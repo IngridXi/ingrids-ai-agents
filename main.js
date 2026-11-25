@@ -2433,6 +2433,18 @@ function ensureCityverseIntel() {
   }
 }
 
+// 每次启动：把工作台已配置的 DeepSeek API Key 同步到 CityVerse（建设流水线走 DeepSeek 官方 API，摆脱本地 Ollama 内存争抢导致的执行卡死）。
+function syncCityverseDeepseekKey() {
+  try {
+    const key = decryptSettings(readSettingsRaw()).deepseek || '';
+    const dir = path.join(os.homedir(), 'Dev', 'cityverse-ar', 'intel');
+    if (!key || !fs.existsSync(dir)) return;
+    const envPath = path.join(dir, '.deepseek.env');
+    const content = '# 由 Ingrid AI Agents 工作台启动时自动同步，请勿手改\nCITYVERSE_DEEPSEEK_KEY=' + key + '\nCITYVERSE_DEEPSEEK_MODEL=deepseek-flash\n';
+    fs.writeFileSync(envPath, content, { mode: 0o600 });
+  } catch (e) { /* 静默失败，不影响启动 */ }
+}
+
 /* ---------------- 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想） ---------------- */
 let taskSchedulerTimer = null;
 
@@ -6127,6 +6139,8 @@ if (gotSingleInstanceLock) {
     ensureEcoRadar();
     // CityVerse 情报：确保每日 07:30 综合情报定时任务存在
     ensureCityverseIntel();
+    // CityVerse 建设流水线：同步 DeepSeek Key（走云端，摆脱本地 Ollama 内存争抢）
+    syncCityverseDeepseekKey();
     // API 余额监控：启动延时检查一次 + 每 60 分钟自动刷新余额并低余额提醒（DeepSeek 可自动查，其余手动填）
     setTimeout(() => { refreshBalanceAndAlert().catch(() => {}); }, 3000);
     setInterval(() => { refreshBalanceAndAlert().catch(() => {}); }, 60 * 60 * 1000);
