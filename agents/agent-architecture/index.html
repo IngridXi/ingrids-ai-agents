@@ -158,12 +158,13 @@
   var IS_DESKTOP = !!(window.ingrid && window.ingrid.archStatus);
 
   var MODEL_AGENT_MAP = [
-    { re: /uncensored/i,  nodes: ['n-ethics','p1'] },
-    { re: /bge-m3/i,      nodes: ['p3'] },
-    { re: /qwen2\.5vl/i,  nodes: ['n-computer','n-cubackend'] },
-    { re: /deepseek-r1/i, nodes: ['n-dev','p2'] },
-    { re: /qwen3\.8/i,    nodes: ['n-assistant','n-meeting','n-mtbackend'] },
-    { re: /qwen3:32b/i,   nodes: ['n-assistant'] }
+    { re: /uncensored/i,     nodes: ['n-ethics','p1'] },
+    { re: /bge-m3/i,         nodes: ['p3'] },
+    { re: /qwen2\.5vl/i,     nodes: ['n-computer','n-cubackend'] },
+    { re: /deepseek-r1/i,    nodes: ['n-dev'] },
+    { re: /qwen3\.8-16k/i,   nodes: ['p2'] },
+    { re: /qwen3\.8:27b/i,   nodes: ['n-assistant','n-meeting','n-mtbackend'] },
+    { re: /qwen3:32b(?!-)/i, nodes: ['n-knowledge'] }
   ];
 
   function el(id){ return document.getElementById(id); }

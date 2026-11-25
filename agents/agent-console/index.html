@@ -735,12 +735,13 @@ $('#sentimentBox').addEventListener('input', (ev) => {
 
   var IS_ARCH = !!(window.ingrid && window.ingrid.archStatus);
   var MODEL_AGENT_MAP = [
-    { re: /uncensored/i,  nodes: ['n-ethics', 'p1'] },
-    { re: /bge-m3/i,      nodes: ['p3'] },
-    { re: /qwen2\.5vl/i,  nodes: ['n-computer', 'n-cubackend'] },
-    { re: /deepseek-r1/i, nodes: ['n-dev', 'p2'] },
-    { re: /qwen3\.8/i,    nodes: ['n-assistant', 'n-meeting', 'n-mtbackend'] },
-    { re: /qwen3:32b/i,   nodes: ['n-assistant'] }
+    { re: /uncensored/i,     nodes: ['n-ethics', 'p1'] },                                   // 伦理生成 qwen3-uncensored-16k / qwen3:32b-uncensored
+    { re: /bge-m3/i,         nodes: ['p3'] },                                               // 伦理去重
+    { re: /qwen2\.5vl/i,     nodes: ['n-computer', 'n-cubackend'] },                        // 电脑操作员
+    { re: /deepseek-r1/i,    nodes: ['n-dev'] },                                            // 软件工程审稿
+    { re: /qwen3\.8-16k/i,   nodes: ['p2'] },                                               // 伦理审查（注意与 27b 区分）
+    { re: /qwen3\.8:27b/i,   nodes: ['n-assistant', 'n-meeting', 'n-mtbackend'] },          // 通用助手/会议纪要官
+    { re: /qwen3:32b(?!-)/i, nodes: ['n-knowledge'] }                                       // 知识库 digest（排除 -uncensored）
   ];
   function aid(id) { return document.getElementById(id); }
   function fmtClock(ts) {
