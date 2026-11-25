@@ -1093,7 +1093,7 @@ function upcomingDeadlines(days) {
       var c = categoryOf(e.category);
       return { id: e.id, title: e.title, at: e.at, category: c.id, categoryLabel: c.label, emoji: c.emoji, location: e.location, done: !!e.done };
     })
-    .filter(function (e) { var t = new Date(e.at).getTime(); return isFinite(t) && t <= horizon; })
+    .filter(function (e) { var t = new Date(e.at).getTime(); return isFinite(t) && t >= Date.now() && t <= horizon; })
     .sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
 }
 

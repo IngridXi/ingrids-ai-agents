@@ -1883,7 +1883,9 @@
     var d = new Date(e.at);
     if (!isFinite(d.getTime())) return '';
     var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+    var md = (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    if (d.getFullYear() !== new Date().getFullYear()) md = d.getFullYear() + '年' + md;
+    return md + ' ' + hm;
   }
   function refreshDeadlines() {
     if (!IS_DESKTOP || !window.ingrid.calendarUpcoming) { upcomingDeadlinesCache = []; return; }
