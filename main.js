@@ -2003,27 +2003,65 @@ async function executeBgTool(name, argsStr) {
   }
 }
 
+/* ---- 轻量 HTML 处理（替代 cheerio，避免打包副本依赖被精简导致 require 失败） ---- */
+function htmlToText(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x([0-9a-fA-F]+);/g, function (_m, h) { try { return String.fromCodePoint(parseInt(h, 16)); } catch (e) { return ' '; } })
+    .replace(/&#(\d+);/g, function (_m, d) { try { return String.fromCodePoint(parseInt(d, 10)); } catch (e) { return ' '; } })
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/[ \t\r]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n\n')
+    .trim();
+}
+
+// 解析 DuckDuckGo html 端点的搜索结果（零第三方依赖）
+function parseDuckDuckGo(html, n) {
+  const out = [];
+  const aTagRe = /<a\b[^>]*class="[^"]*result__a[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+  let am;
+  while ((am = aTagRe.exec(html)) !== null && out.length < n) {
+    const hrefM = /href="([^"]*)"/i.exec(am[0]);
+    let link = hrefM ? hrefM[1] : '';
+    const uddg = link.match(/uddg=([^&]+)/);
+    if (uddg) { try { link = decodeURIComponent(uddg[1]); } catch (e) {} }
+    const title = htmlToText(am[1]);
+    if (title && link) out.push({ title: title, link: link, snippet: '' });
+  }
+  const sRe = /<a\b[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+  let sm; let i = 0;
+  while ((sm = sRe.exec(html)) !== null && i < out.length) { out[i].snippet = htmlToText(sm[1]); i++; }
+  return out;
+}
+
+// 提取网页正文（去除脚本/样式/导航等噪声）
+function htmlBodyText(html) {
+  const cleaned = String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+    .replace(/<header[\s\S]*?<\/header>/gi, ' ')
+    .replace(/<aside[\s\S]*?<\/aside>/gi, ' ')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, ' ');
+  return htmlToText(cleaned);
+}
+
+const WEB_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
 async function bgWebSearch(query) {
   if (!query) return { ok: false, error: '搜索词为空' };
   try {
-    const cheerio = require('cheerio');
-    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
     const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
-      headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' }, redirect: 'follow', signal: AbortSignal.timeout(15000),
+      headers: { 'User-Agent': WEB_UA, 'Accept-Language': 'zh-CN,zh;q=0.9' }, redirect: 'follow', signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return { ok: false, error: '搜索失败：HTTP ' + res.status };
-    const $ = cheerio.load(await res.text());
-    const results = [];
-    $('.result').each(function () {
-      if (results.length >= 6) return;
-      const a = $(this).find('.result__a').first();
-      const title = a.text().trim();
-      let link = a.attr('href') || '';
-      const m = link.match(/uddg=([^&]+)/);
-      if (m) link = decodeURIComponent(m[1]);
-      const snippet = $(this).find('.result__snippet').first().text().trim();
-      if (title && link) results.push({ title: title, link: link, snippet: snippet });
-    });
+    const results = parseDuckDuckGo(await res.text(), 6);
     if (!results.length) return { ok: false, error: '未取到搜索结果（可能被限流）' };
     return { ok: true, query: query, results: results };
   } catch (err) { return { ok: false, error: '搜索失败：' + String((err && err.message) || err) }; }
@@ -2032,13 +2070,9 @@ async function bgWebSearch(query) {
 async function bgWebFetch(url) {
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https 链接' };
   try {
-    const cheerio = require('cheerio');
-    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    const res = await fetch(url, { headers: { 'User-Agent': WEB_UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
     if (!res.ok) return { ok: false, error: '抓取失败：HTTP ' + res.status };
-    const $ = cheerio.load(await res.text());
-    $('script,style,nav,footer,header,aside,iframe,noscript').remove();
-    let text = $('body').text().replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+    let text = htmlBodyText(await res.text());
     if (text.length > 16000) text = text.slice(0, 16000) + '\n…（内容过长已截断）';
     if (!text) return { ok: false, error: '未能提取到正文' };
     return { ok: true, url: url, content: text };
@@ -3470,15 +3504,12 @@ ipcMain.handle('web:fetch', async (_e, payload) => {
   const url = String((payload || {}).url || '').trim();
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https 链接' };
   try {
-    const cheerio = require('cheerio');
-    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    const res = await fetch(url, { headers: { 'User-Agent': WEB_UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
     if (!res.ok) return { ok: false, error: '抓取失败：HTTP ' + res.status };
     const html = await res.text();
-    const $ = cheerio.load(html);
-    $('script,style,nav,footer,header,aside,iframe,noscript').remove();
-    const title = ($('title').first().text() || url).trim();
-    let text = $('body').text().replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+    const titleM = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    const title = titleM ? htmlToText(titleM[1]) : url;
+    let text = htmlBodyText(html);
     if (text.length > 20000) text = text.slice(0, 20000) + '\n…（内容过长已截断）';
     if (!text) return { ok: false, error: '未能提取到正文（可能是动态渲染页面）' };
     return { ok: true, url: url, title: title, content: text };
@@ -3495,26 +3526,12 @@ ipcMain.handle('web:search', async (_e, payload) => {
   const n = Math.min(Math.max(parseInt(p.n, 10) || 5, 1), 10);
   if (!query) return { ok: false, error: '搜索词为空' };
   try {
-    const cheerio = require('cheerio');
-    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
     const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
-      headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+      headers: { 'User-Agent': WEB_UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
       redirect: 'follow', signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return { ok: false, error: '搜索失败：HTTP ' + res.status };
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const results = [];
-    $('.result').each(function () {
-      if (results.length >= n) return;
-      const a = $(this).find('.result__a').first();
-      const title = a.text().trim();
-      let link = a.attr('href') || '';
-      const m = link.match(/uddg=([^&]+)/);
-      if (m) link = decodeURIComponent(m[1]);
-      const snippet = $(this).find('.result__snippet').first().text().trim();
-      if (title && link) results.push({ title: title, link: link, snippet: snippet });
-    });
+    const results = parseDuckDuckGo(await res.text(), n);
     if (!results.length) return { ok: false, error: '未取到搜索结果（可能被搜索引擎限流，稍后再试）' };
     return { ok: true, query: query, results: results };
   } catch (err) {
