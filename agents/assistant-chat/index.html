@@ -956,6 +956,7 @@
       tools.push('fs_read：读取文件内容，参数 {"path":"/绝对路径"}。txt/md 等文本直接读；docx/doc/rtf/odt 会自动提取正文（可读 Word 原文）；pdf 自动提取全文、pptx 自动提取每页幻灯片文本（可读原文）；旧版 .ppt 需先转 .pptx');
       tools.push('fs_write：写入/覆盖文件，参数 {"path":"/绝对路径","content":"完整内容"}（覆盖前自动备份原文件）');
       tools.push('fs_append：向文件末尾追加内容，参数 {"path":"/绝对路径","content":"内容"}');
+      tools.push('fs_download：下载网页/图片/zip/pdf 等二进制文件到本地磁盘，参数 {"url":"文件直链","path":"可选保存绝对路径(缺省按URL文件名存下载目录)"}。用于下载材质包、数据集、图片、PDF 等文件');
       tools.push('fs_edit：替换文件中的一段文字，参数 {"path":"/绝对路径","old":"原文","new":"新文"}（原文须唯一）');
       tools.push('fs_move：移动/重命名，参数 {"from":"/原路径","to":"/新路径"}');
       tools.push('fs_delete：删除到废纸篓（非物理删除），参数 {"path":"/绝对路径"}');
@@ -981,7 +982,7 @@
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
       '\n\n【工具调用格式铁律】开始标签必须是 <tool name="工具名">，结束标签必须是 </tool>，两者完全一致、成对出现；结束标签绝不能写成 </tool parameter> 或加任何多余文字。参数必须是合法的 JSON 对象，例如 <tool name="fs_read">{"path":"/绝对路径"}</tool>。\n' +
       '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。\n' +
-      '注意：写入/追加文件（fs_write、fs_append）会自动直接执行（覆盖前自动备份），无需确认；修改已有文件（fs_edit）、移动（fs_move）、删除（fs_delete）以及知识库写入（db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
+      '注意：写入/追加/下载文件（fs_write、fs_append、fs_download）会自动直接执行（覆盖前自动备份），无需确认；修改已有文件（fs_edit）、移动（fs_move）、删除（fs_delete）以及知识库写入（db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   // 原生工具定义（OpenAI tools 参数格式）：让模型走 API 原生 function calling，而非靠文本 <tool> 标签
   function toolsDef(caps) {
@@ -995,6 +996,7 @@
       fn('fs_read', '读取文件内容（txt/md 直读；docx/doc/rtf/odt 自动提取正文；pdf 提取全文；pptx 提取每页文本；.ppt 需转 .pptx）。同一文件本会话只读一次，读完记住要点，不要反复重读。长文件用 offset/limit 分段读、不要一次读全文', { path: { type: 'string', description: '绝对路径' }, offset: { type: 'integer', description: '可选，起始字符位置（从0起），续读长文件用' }, limit: { type: 'integer', description: '可选，最多读取字符数' } });
       fn('fs_write', '写入/覆盖文件（覆盖前自动备份原文件）', { path: { type: 'string' }, content: { type: 'string' } });
       fn('fs_append', '向文件末尾追加内容', { path: { type: 'string' }, content: { type: 'string' } });
+      fn('fs_download', '下载网页/图片/zip/pdf 等二进制文件到本地磁盘（path 缺省时按 URL 文件名存到下载目录）', { url: { type: 'string', description: '文件直链 http/https' }, path: { type: 'string', description: '可选，保存的绝对路径' } });
       fn('fs_edit', '替换文件中的一段文字（原文须唯一）', { path: { type: 'string' }, old: { type: 'string' }, new: { type: 'string' } });
       fn('fs_move', '移动/重命名', { from: { type: 'string' }, to: { type: 'string' } });
       fn('fs_delete', '删除到废纸篓（非物理删除）', { path: { type: 'string' } });
@@ -1039,11 +1041,12 @@
     if (n === 'pptx_fill_template') return window.ingrid.toolPptxFill(call.args);
     if (n === 'image_process') return window.ingrid.toolImageProcess(call.args);
     if (n === 'image_generate') return window.ingrid.toolImageGenerate(call.args);
-    // 写类操作：写入新文件（fs_write/fs_append）默认自动执行（覆盖前自动备份）；修改/移动/删除已有文件仍需审批
-    if (caps.fs && (n === 'fs_write' || n === 'fs_append')) {
+    // 写类操作：写入新文件（fs_write/fs_append/fs_download）默认自动执行（覆盖前自动备份）；修改/移动/删除已有文件仍需审批
+    if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_download')) {
       autoLog(n, call.args);
       if (n === 'fs_write') return window.ingrid.toolFsWrite(call.args);
-      return window.ingrid.toolFsAppend(call.args);
+      if (n === 'fs_append') return window.ingrid.toolFsAppend(call.args);
+      return window.ingrid.toolFsDownload(call.args);
     }
     if (caps.fs && (n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
       return requestWriteApproval(n, call.args).then(function (ok) {
@@ -1075,6 +1078,7 @@
     var p = String((args && args.path) || '');
     if (kind === 'fs_write') return { icon: '🖊️', title: '写入文件（覆盖）', body: p, extra: String((args && args.content) || '').slice(0, 300) };
     if (kind === 'fs_append') return { icon: '➕', title: '追加内容到文件', body: p, extra: String((args && args.content) || '').slice(0, 300) };
+    if (kind === 'fs_download') return { icon: '⬇️', title: '下载文件', body: String((args && args.url) || ''), extra: '保存到：' + String((args && args.path) || '下载目录') };
     if (kind === 'fs_edit') return { icon: '🔧', title: '修改文件内容', body: p, extra: '「' + String((args && args.old) || '').slice(0, 100) + '」→「' + String((args && args.new) || '').slice(0, 100) + '」' };
     if (kind === 'fs_move') return { icon: '📦', title: '移动 / 重命名', body: String((args && args.from) || '') + '  →  ' + String((args && args.to) || ''), extra: '' };
     if (kind === 'fs_delete') return { icon: '🗑️', title: '删除到废纸篓', body: p, extra: '' };

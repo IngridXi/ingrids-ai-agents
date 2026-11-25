@@ -204,6 +204,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolFsRead: (payload) => ipcRenderer.invoke('tool:fs:read', payload),
   toolFsWrite: (payload) => ipcRenderer.invoke('tool:fs:write', payload),
   toolFsAppend: (payload) => ipcRenderer.invoke('tool:fs:append', payload),
+  toolFsDownload: (payload) => ipcRenderer.invoke('tool:fs:download', payload),
   toolFsEdit: (payload) => ipcRenderer.invoke('tool:fs:edit', payload),
   toolFsMove: (payload) => ipcRenderer.invoke('tool:fs:move', payload),
   toolFsDelete: (payload) => ipcRenderer.invoke('tool:fs:delete', payload),

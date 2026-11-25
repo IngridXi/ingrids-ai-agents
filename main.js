@@ -2054,6 +2054,7 @@ const BG_TOOLS = [
   { type: 'function', function: { name: 'fs_edit', description: '替换文件中的一段文字（原文须唯一）。Word .docx/.doc 也能直接改（自动用 python-docx 精确替换并备份）', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件绝对路径' }, old: { type: 'string', description: '要替换的原文' }, new: { type: 'string', description: '替换成的新文' } }, required: ['path', 'old', 'new'] } } },
   { type: 'function', function: { name: 'web_search', description: '联网搜索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'web_fetch', description: '抓取网页正文', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'fs_download', description: '下载网页/图片/zip/pdf 等二进制文件到本地磁盘（目标路径缺省时存到下载目录，仅允许主目录内）', parameters: { type: 'object', properties: { url: { type: 'string', description: '文件直链（http/https）' }, path: { type: 'string', description: '可选，保存的绝对路径；缺省用 URL 文件名存到下载目录' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'kb_search', description: '在本地知识库（Obsidian/Notion 索引）里检索', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
 ];
 
@@ -2103,6 +2104,7 @@ async function executeBgTool(name, argsStr) {
       case 'fs_search': return await toolFsSearch(args);
       case 'fs_write': return toolFsWrite(args);
       case 'fs_edit': return toolFsEdit(args);
+      case 'fs_download': return await toolFsDownload(args);
       case 'kb_search': return kbEngine.search(String(args.query || ''), 5);
       case 'web_search': return await bgWebSearch(String(args.query || ''));
       case 'web_fetch': return await bgWebFetch(String(args.url || ''));
@@ -4843,6 +4845,32 @@ function toolFsWrite(payload) {
     return { ok: true, path: target, wrote: content.length, backup: bak };
   } catch (e) { return { ok: false, error: '写入失败：' + String(e && e.message || e) }; }
 }
+// 下载文件（网页/图片/zip/pdf 等二进制）到本地磁盘：补上 agent「无法下载文件」的能力缺口。
+// 目标路径缺省时用 URL 的文件名存到下载目录；仅允许主目录内，写新文件不额外审批（复用 fs_write 的免审批语义）。
+async function toolFsDownload(payload) {
+  const url = String((payload && payload.url) || '').trim();
+  let target = path.resolve(String((payload && payload.path) || ''));
+  if (!url) return { ok: false, error: '缺少下载链接 url' };
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https 链接' };
+  if (!target || target === path.resolve(path.sep)) {
+    let name = '';
+    try {
+      const u = new URL(url);
+      name = path.basename(decodeURIComponent(u.pathname));
+    } catch { /* 忽略，用兜底文件名 */ }
+    if (!name || name === '/' || name === '.') name = 'download-' + Date.now();
+    target = path.join(app.getPath('downloads'), name);
+  }
+  if (!isSafeWritePath(target)) return { ok: false, error: '拒绝保存到该位置（仅允许主目录内的普通文件/目录，系统目录、Library、隐藏目录受保护）' };
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': WEB_UA }, redirect: 'follow', signal: AbortSignal.timeout(60000) });
+    if (!res.ok) return { ok: false, error: '下载失败：HTTP ' + res.status };
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, buf);
+    return { ok: true, url: url, path: target, bytes: buf.length };
+  } catch (e) { return { ok: false, error: '下载失败：' + String(e && e.message || e) }; }
+}
 function toolFsAppend(payload) {
   const target = path.resolve(String((payload && payload.path) || ''));
   const content = String((payload && payload.content) == null ? '' : payload.content);
@@ -5312,6 +5340,7 @@ ipcMain.handle('tool:fs:search', (_e, p) => toolFsSearch(p));
 ipcMain.handle('tool:fs:read', (_e, p) => toolFsRead(p));
 ipcMain.handle('tool:fs:write', (_e, p) => toolFsWrite(p));
 ipcMain.handle('tool:fs:append', (_e, p) => toolFsAppend(p));
+ipcMain.handle('tool:fs:download', (_e, p) => toolFsDownload(p));
 ipcMain.handle('tool:fs:edit', (_e, p) => toolFsEdit(p));
 ipcMain.handle('tool:fs:move', (_e, p) => toolFsMove(p));
 ipcMain.handle('tool:fs:delete', (_e, p) => toolFsDelete(p));
