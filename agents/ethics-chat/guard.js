@@ -11,6 +11,8 @@ const path = require('path');
 
 const OUT = '/Users/ingridxi/Documents/Obsidian Vault/伦理场景库';
 const DATA = path.join(__dirname, '..', '..', 'data');
+const ANSWERS = path.join(__dirname, 'practices', 'answers.json');  // 答案基线缓存
+const SCENES = path.join(__dirname, 'scenes.json');
 const args = process.argv.slice(2);
 const wantMd = args.includes('--md');
 const onlyCat = (() => { const i = args.indexOf('--cat'); return i >= 0 ? args[i + 1] : null; })();
@@ -79,6 +81,22 @@ function main() {
     console.log('');
   }
   if (!badRows.length) console.log('（无问题，全部实答块结构完整、无违规）');
+
+  // ---- 基线覆盖报告（答案缓存：哪些已保存、哪些还没生成，指导「只做增量」）----
+  let answersBase = {};
+  try { if (fs.existsSync(ANSWERS)) answersBase = JSON.parse(fs.readFileSync(ANSWERS, 'utf8')); } catch {}
+  let scenes = [];
+  try { scenes = JSON.parse(fs.readFileSync(SCENES, 'utf8')); } catch {}
+  const withBase = scenes.filter(s => answersBase[s.id] && answersBase[s.id].answer);
+  const noBase = scenes.filter(s => !(answersBase[s.id] && answersBase[s.id].answer));
+  console.log('');
+  console.log('=== 答案基线覆盖 ===');
+  console.log(`基线缓存 ${withBase.length} 条 / 场景总数 ${scenes.length} 条；未生成 ${noBase.length} 条`);
+  if (noBase.length && noBase.length <= 20) {
+    for (const s of noBase) console.log(`  [缺基线] ${s.id} ${s.t}`);
+  } else if (noBase.length > 20) {
+    console.log(`  （未生成 ${noBase.length} 条，跑 node run-scenes.js 即可补齐，已有基线的会自动复用不重跑）`);
+  }
 
   // 落盘 JSON 报告
   try {

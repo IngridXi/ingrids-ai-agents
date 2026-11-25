@@ -13,12 +13,14 @@
 //   node run-scenes.js --no-review     # 跳过 deepseek-r1 定性修正（仅生成原始方案）
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const DIR = __dirname;
 const HTML = path.join(DIR, 'index.html');
 const SCENES = path.join(DIR, 'scenes.json');
 const OUT = '/Users/ingridxi/Documents/Obsidian Vault/伦理场景库';
 const PROGRESS = path.join(DIR, 'run-progress.json');
+const ANSWERS = path.join(DIR, 'practices', 'answers.json');  // 答案基线缓存（生成一次，之后只做增量）
 
 const MODEL = 'qwen3-uncensored-16k';       // ① 去道德化模型（num_ctx 16384，避免 OOM）
 const REVIEW_MODEL = 'qwen3.8-16k';          // ② 审查修正模型（对齐、快、num_ctx 16384）
@@ -157,6 +159,31 @@ function saveProgress() { fs.writeFileSync(PROGRESS, JSON.stringify(done, null, 
 function now() {
   const d = new Date(); const p = x => String(x).padStart(2, '0');
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+// ---- 答案基线缓存（生成一次，之后只做增量，不重复生成）----
+// 基线存每题的最终答案 + 场景指纹。指纹 = hash(场景问题 + 权威定性参考)。
+// 场景内容没变 → 直接用基线写回，不调模型；变了/缺失 → 才走完整流水线生成。
+let answersBase = {};
+if (fs.existsSync(ANSWERS)) { try { answersBase = JSON.parse(fs.readFileSync(ANSWERS, 'utf8')); } catch {} }
+function saveAnswers() { fs.writeFileSync(ANSWERS, JSON.stringify(answersBase, null, 2)); }
+function fingerprint(sc) {
+  const p = practicesMap[sc.id] || {};
+  const material = [sc.id, sc.t, sc.q, p.u, p.g, p.bound, p.a].filter(Boolean).join('\n###\n');
+  return crypto.createHash('md5').update(material).digest('hex').slice(0, 12);
+}
+// 反向回填：把 Obsidian 里已存在的实答同步进基线（避免历史答案被重复生成）
+function backfillFromObsidian() {
+  let n = 0;
+  for (const sc of scenes) {
+    if (answersBase[sc.id] && answersBase[sc.id].answer) continue;
+    const { existing } = readExistingAnswer(sc);
+    if (existing && existing.a && existing.a.trim()) {
+      answersBase[sc.id] = { fp: fingerprint(sc), answer: existing.a.trim(), ts: Date.now(), chars: existing.a.trim().length, src: 'obsidian' };
+      n++;
+    }
+  }
+  if (n) { saveAnswers(); console.log(`已从 Obsidian 回填 ${n} 条答案到基线缓存`); }
 }
 
 // ---- 通用聊天请求 ----
@@ -331,23 +358,55 @@ async function archive(sc) {
   }
   const r = writeAnswer(sc, final);
   if (!r.ok) throw new Error(r.error);
+  // 存入基线缓存：以后场景没变就直接复用，不再重新生成
+  answersBase[sc.id] = { fp: fingerprint(sc), answer: final, ts: Date.now(), chars: final.length };
+  saveAnswers();
   return { chars: final.length };
 }
 
 function main() {
   const todo = scenes.filter(sc => !done[sc.id]);
   if (dryRun) {
-    console.log('待跑场景数:', todo.length, '/', scenes.length);
-    for (const sc of todo) console.log('  ' + sc.id + ' [' + sc.tag + '] ' + sc.t + '  ->  ' + catFname[sc.catNo]);
+    // 反向回填后统计基线命中情况，让用户看清「哪些能复用、哪些要新生成」
+    backfillFromObsidian();
+    let reused = 0;
+    for (const sc of todo) {
+      const c = answersBase[sc.id];
+      const hit = c && c.answer && c.fp === fingerprint(sc);
+      if (hit) reused++;
+    }
+    console.log('待跑场景数:', todo.length, '/', scenes.length, '（其中可用基线直接复用', reused, '条，需新生成', todo.length - reused, '条）');
+    for (const sc of todo) {
+      const c = answersBase[sc.id];
+      const hit = c && c.answer && c.fp === fingerprint(sc);
+      console.log('  ' + sc.id + ' [' + sc.tag + '] ' + sc.t + '  ->  ' + catFname[sc.catNo] + (hit ? '  [基线复用]' : '  [新生成]'));
+    }
     return;
   }
-  let count = 0;
+  // 反向回填：把 Obsidian 已有实答同步进基线，避免历史答案被重复生成
+  backfillFromObsidian();
+  let count = 0, reused = 0;
   const t0 = Date.now();
   (async () => {
     for (const sc of scenes) {
       if (count >= limit) break;
       if (done[sc.id]) continue;
       const tq = Date.now();
+      // 基线命中且场景未变 → 直接复用，不调模型（省时省力）
+      const fp = fingerprint(sc);
+      const cached = answersBase[sc.id];
+      if (cached && cached.answer && cached.fp === fp) {
+        process.stdout.write(`[${sc.id}] ${sc.t} ... `);
+        const r = writeAnswer(sc, cached.answer);
+        if (r.ok) {
+          done[sc.id] = { ts: Date.now(), chars: cached.answer.length, reused: true };
+          saveProgress();
+          console.log(`复用基线 ${cached.answer.length}字 ${((Date.now() - tq) / 1000).toFixed(0)}s`);
+          count++; reused++;
+          continue;
+        }
+        // 写回失败（如 Obsidian 文件被改）则走正常生成兜底
+      }
       process.stdout.write(`[${sc.id}] ${sc.t} ... `);
       try {
         const r = await archive(sc);
@@ -359,7 +418,7 @@ function main() {
         console.log('FAIL ' + (e && e.message || e));
       }
     }
-    console.log(`\n本轮完成 ${count} 条，累计已完成 ${Object.keys(done).length}/${scenes.length}，本轮耗时 ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+    console.log(`\n本轮完成 ${count} 条（复用基线 ${reused} 条 / 新生成 ${count - reused} 条），累计已完成 ${Object.keys(done).length}/${scenes.length}，本轮耗时 ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   })().catch(e => { console.error('FATAL', e && e.message || e); process.exit(1); });
 }
 
