@@ -187,20 +187,38 @@ function backfillFromObsidian() {
   if (n) { saveAnswers(); console.log(`已从 Obsidian 回填 ${n} 条答案到基线缓存`); }
 }
 
-// ---- 通用聊天请求 ----
+// ---- 通用聊天请求（带重试 + keep_alive，抗内存不足导致的模型驱逐/冷加载超时）----
 const NUM_CTX = 16384;  // 限制上下文窗口，避免超长 KV cache 导致 OOM（SOUL ~8K token，够用）
-async function chat(model, messages, timeout, maxTokens) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    const resp = await fetch(ENDPOINT, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
-      body: JSON.stringify({ model, messages, stream: false, think: false, options: { temperature: 0.2, num_predict: maxTokens || 6000, num_ctx: NUM_CTX } }),
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const j = await resp.json();
-    return (j.message && j.message.content) || '';
-  } finally { clearTimeout(timer); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function chat(model, messages, timeout, maxTokens, keepAlive) {
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const resp = await fetch(ENDPOINT, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
+        body: JSON.stringify({
+          model, messages, stream: false, think: false,
+          keep_alive: keepAlive || '20m',
+          options: { temperature: 0.2, num_predict: maxTokens || 6000, num_ctx: NUM_CTX }
+        }),
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const j = await resp.json();
+      const content = (j.message && j.message.content) || '';
+      if (content) return content;
+      throw new Error('空响应');
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) {
+        const wait = attempt * 30 * 1000;  // 30s / 60s 退避，给 Ollama 冷加载时间
+        console.log(`  ⚠️ ${model} 第${attempt}次失败(${e.message})，${wait / 1000}s 后重试...`);
+        await sleep(wait);
+      }
+    } finally { clearTimeout(timer); }
+  }
+  throw lastErr;
 }
 
 // ① 去道德化模型生成方案
@@ -220,19 +238,28 @@ function review(question, raw, ref) {
   return chat(REVIEW_MODEL, [{ role: 'system', content: REVIEWER_SOUL }, { role: 'user', content: prompt }], PER_Q_TIMEOUT, 3500).then(stripThink);
 }
 
-// ③ bge-m3 embedding（带超时，防卡死）
+// ③ bge-m3 embedding（带重试 + 放宽超时，抗冷加载）
 async function embed(text) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-  try {
-    const resp = await fetch(EMBED_ENDPOINT, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
-      body: JSON.stringify({ model: EMBED_MODEL, input: text.slice(0, 8000) }),
-    });
-    if (!resp.ok) throw new Error('embed HTTP ' + resp.status);
-    const j = await resp.json();
-    return (j.embeddings && j.embeddings[0]) || null;
-  } finally { clearTimeout(timer); }
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 180000);  // 3 分钟（含 bge-m3 冷加载）
+    try {
+      const resp = await fetch(EMBED_ENDPOINT, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
+        body: JSON.stringify({ model: EMBED_MODEL, input: text.slice(0, 8000), keep_alive: '5m' }),
+      });
+      if (!resp.ok) throw new Error('embed HTTP ' + resp.status);
+      const j = await resp.json();
+      const v = (j.embeddings && j.embeddings[0]) || null;
+      if (v) return v;
+      throw new Error('embed 空响应');
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) { await sleep(attempt * 15000); }
+    } finally { clearTimeout(timer); }
+  }
+  throw lastErr;
 }
 function cosine(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
