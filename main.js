@@ -4592,26 +4592,22 @@ function toolXlsxRead(target, st) {
       let rm; let rowCount = 0;
       while ((rm = rowRe.exec(xml)) !== null) {
         const rowNum = rm[1]; const rowXml = rm[2];
-        // 单元格：<c r="A1" [t="s|str|inlineStr|b"]…>…</c>（也可能自闭合 <c …/>）
-        const cRe = /<c[^>]*\br="([A-Z]+\d+)"[^>]*?(?:\bt="([^"]*)")?[^>]*>([\s\S]*?)<\/c>|<c[^>]*\/>/g;
+        // 单元格：先切出每个 <c> 元素（含自闭合 <c …/>），再独立提取 r/t/v/is 属性
+        const cRe = /<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/g;
         const cells = []; let cm;
         while ((cm = cRe.exec(rowXml)) !== null) {
-          if (!cm[1]) continue; // 自闭合空单元格，跳过
-          const ref = cm[1]; const t = cm[2]; const inner = cm[3] || '';
+          const el = cm[0];
+          const rM = /\br="([A-Z]+\d+)"/.exec(el);
+          if (!rM) continue; // 无单元格引用（如 <c/> 空占位）跳过
+          const tM = /\bt="([^"]*)"/.exec(el);
+          const t = tM ? tM[1] : '';
+          const vM = /<v>([\s\S]*?)<\/v>/.exec(el);
+          const isM = /<is>[\s\S]*?<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/.exec(el);
           let val = '';
-          if (t === 'inlineStr') {
-            const tm = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/.exec(inner);
-            val = tm ? decodeXmlEntities(tm[1]) : '';
-          } else if (t === 's') {
-            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
-            if (vm) { const si = parseInt(vm[1], 10); val = shared[si] != null ? shared[si] : ''; }
-          } else if (t === 'b') {
-            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
-            val = vm ? (vm[1] === '1' ? 'TRUE' : 'FALSE') : '';
-          } else {
-            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
-            val = vm ? decodeXmlEntities(vm[1]) : '';
-          }
+          if (t === 'inlineStr') { val = isM ? decodeXmlEntities(isM[1]) : ''; }
+          else if (t === 's') { if (vM) { const si = parseInt(vM[1], 10); val = shared[si] != null ? shared[si] : ''; } }
+          else if (t === 'b') { val = vM ? (vM[1] === '1' ? 'TRUE' : 'FALSE') : ''; }
+          else { val = vM ? decodeXmlEntities(vM[1]) : ''; }
           cells.push(val);
         }
         if (cells.length) { out.push('  R' + rowNum + ': ' + cells.join(' | ')); rowCount++; }
