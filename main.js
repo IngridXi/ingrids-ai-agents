@@ -2418,6 +2418,21 @@ function ensureEcoRadar() {
   }
 }
 
+// 首次启动：确保「CityVerse 情报」每日定时任务存在（幂等）——收集实景 AR/LBS 游戏的竞品/技术/素材情报，写入 CityVerse 项目 intel/
+function ensureCityverseIntel() {
+  const q = getTaskQueue();
+  const hasTask = q.list().some((t) => t.agent === 'dev-agent-001' && (t.title || '').indexOf('CityVerse 情报') >= 0 && t.schedule);
+  if (!hasTask) {
+    q.enqueue({
+      title: 'CityVerse 情报 · 每日综合简报',
+      goal: '为 CityVerse 实景 AR 游戏收集今日情报并写入项目。项目根目录 /Users/ingridxi/WorkBuddy/2026-11-25-18-56-31/cityverse-ar/。步骤：① 先 fs_list 查看 <项目>/intel/ 目录结构（若没有 intel/daily/ 子目录，先 fs_write 写一个 intel/daily/.gitkeep 占位）；② 用 web_search 各搜几个关键词收集三类情报——竞品（实景 AR 游戏 / LBS 游戏 / location-based AR game 最新动态）、技术（ARCore Geospatial / AR Foundation / Unity AR 最佳实践 / 地图街景 SDK / 程序化城市生成）、素材（CC0 3D 模型 / 低模城市资产 / 可商用 AR 素材）；③ 把结果整理成 Markdown 简报，按【竞品】【技术】【素材】三类，每条含标题+链接+一句话摘要+「对 CityVerse 的启发」，用 fs_write 写入 <项目>/intel/daily/<当天日期>.md（日期用当天真实日期，格式 YYYY-MM-DD）；④ 若有可直接用的高价值素材直链，用 fs_download 下载到 <项目>/reference/ 并记录路径。最后输出一句简报摘要。',
+      agent: 'dev-agent-001', engine: 'deepseek', model: '',
+      schedule: '07:30',
+    });
+    broadcastTasks();
+  }
+}
+
 /* ---------------- 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想） ---------------- */
 let taskSchedulerTimer = null;
 
@@ -5965,6 +5980,8 @@ if (gotSingleInstanceLock) {
     startTaskScheduler();
     // 灵感目录：确保内置调研 Agent 与每日调研计划存在
     ensureEcoRadar();
+    // CityVerse 情报：确保每日 07:30 综合情报定时任务存在
+    ensureCityverseIntel();
     // API 余额监控：启动延时检查一次 + 每 60 分钟自动刷新余额并低余额提醒（DeepSeek 可自动查，其余手动填）
     setTimeout(() => { refreshBalanceAndAlert().catch(() => {}); }, 3000);
     setInterval(() => { refreshBalanceAndAlert().catch(() => {}); }, 60 * 60 * 1000);

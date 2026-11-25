@@ -593,6 +593,18 @@
   var systemPrompt = soul;
   var liveTaskGoal = '';   // 实时监事：当前任务核心目标（本轮用户输入），防目标漂移
 
+  // CityVerse 项目上下文：软件工程助手是 CityVerse 实景 AR 游戏的主力工程师
+  var CITYVERSE_CONTEXT = [
+    '',
+    '【CityVerse 项目 · 你是该项目的主力工程师（涉及 CityVerse / 虚实城 / 实景 AR 游戏开发时务必遵守）】',
+    '- 项目根目录：/Users/ingridxi/WorkBuddy/2026-11-25-18-56-31/cityverse-ar/',
+    '- Git 仓库：https://github.com/IngridXi/cityverse-ar.git（改完用 git 提交，遵循已有 commit 风格）',
+    '- 技术栈：生产版 Unity + AR Foundation + Google ARCore Geospatial API + ARKit（真机）；prototype/ 是 MapLibre GL JS + Geolocation + DeviceOrientation 的 Web 原型（无需密钥、先跑通玩法验证）',
+    '- 关键目录：docs/（33+ 中文设计文档）、prototype/（Web 原型）、unity-ar-spike/（Unity 真机工程）、intel/（情报系统 + PROJECT_MEMORY.md 项目记忆）、ops/（游戏运营 Agent 后台）',
+    '- 铁律：开发任何 CityVerse 功能前，先用 fs_read 读 intel/PROJECT_MEMORY.md（含项目约定/踩坑手册/历史决策/当前进度），并查 docs/ 里对应主题的文档（如 docs/20-geospatial.md、docs/29-procedural-city.md），不要凭想象写代码',
+    '- 项目约定摘要（详见 PROJECT_MEMORY.md）：POI 位置字段是 lng/lat（不是 position）；scenes 是数组；前端原生 JS + 模块 IIFE 无构建、跨文件靠 window.xxx 导出；存档走 loadSave()/saveNow()',
+  ].join('\n');
+
   // 引擎元信息（与 main.js CHAT_ENDPOINTS 对齐）
   var ENGINE_META = {
     ollama:   { label: '本地 Ollama · qwen3.8:27b（免费）' },
@@ -1820,7 +1832,7 @@
         '\n当对话涉及这些事项、或用户请你做时间规划 / 排优先级 / 收尾时，主动提醒临近的截止日期，并给出轻重缓急建议。';
     }
     var caps = agentCapabilities();
-    var s = systemPrompt + extra + toolSpecText(caps);
+    var s = systemPrompt + CITYVERSE_CONTEXT + extra + toolSpecText(caps);
     if (sentimentGuidanceCache) {
       s += '\n\n【用户偏好 · 情绪/偏好 Agent 长期沉淀（务必遵守）】\n' + sentimentGuidanceCache;
     }
