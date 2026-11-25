@@ -25,9 +25,10 @@ const ANSWERS = path.join(DIR, 'practices', 'answers.json');  // 答案基线缓
 const MODEL = 'qwen3-uncensored-16k';       // ① 去道德化模型（num_ctx 16384，避免 OOM）
 const REVIEW_MODEL = 'qwen3.8-16k';          // ② 审查修正模型（对齐、快、num_ctx 16384）
 const EMBED_MODEL = 'bge-m3:latest';         // ③ 语义相似度模型
-const ENDPOINT = 'http://127.0.0.1:11434/v1/chat/completions';
 const EMBED_ENDPOINT = 'http://127.0.0.1:11434/api/embed';
-const PER_Q_TIMEOUT = 12 * 60 * 1000;       // 单题 12 分钟超时（含 review）
+// 原生 /api/chat（绕过 OpenAI 兼容层慢请求 500 bug）；本地 ~5 tok/s，单次放宽到 30min
+const ENDPOINT = 'http://127.0.0.1:11434/api/chat';
+const PER_Q_TIMEOUT = 30 * 60 * 1000;       // 单次调用 30 分钟超时（CPU 推理慢）
 const SIM_THRESHOLD = 0.80;                 // 相似度阈值：高于此认为语义重复，走合并
 
 // ---- 参数 ----
@@ -194,17 +195,17 @@ async function chat(model, messages, timeout, maxTokens) {
   try {
     const resp = await fetch(ENDPOINT, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
-      body: JSON.stringify({ model, messages, stream: false, temperature: 0.2, options: { num_predict: maxTokens || 6000, num_ctx: NUM_CTX } }),
+      body: JSON.stringify({ model, messages, stream: false, think: false, options: { temperature: 0.2, num_predict: maxTokens || 6000, num_ctx: NUM_CTX } }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const j = await resp.json();
-    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+    return (j.message && j.message.content) || '';
   } finally { clearTimeout(timer); }
 }
 
 // ① 去道德化模型生成方案
 function ask(question) {
-  return chat(MODEL, [{ role: 'system', content: SOUL }, { role: 'user', content: question }], PER_Q_TIMEOUT, 6000);
+  return chat(MODEL, [{ role: 'system', content: SOUL }, { role: 'user', content: question }], PER_Q_TIMEOUT, 4000);
 }
 
 // ② deepseek-r1 审查修正：去掉 think 标签，只保留最终回答
@@ -216,7 +217,7 @@ function stripThink(c) {
 }
 function review(question, raw, ref) {
   const prompt = `【权威定性参考】（法条与定性以此为准，严禁自行编造）\n${ref || '（无）'}\n\n【用户问题】\n${question}\n\n【去道德化AI方案】（供你改写的原始材料，直接输出最终正确版本，不要评论原材料哪里错了）\n${raw}`;
-  return chat(REVIEW_MODEL, [{ role: 'system', content: REVIEWER_SOUL }, { role: 'user', content: prompt }], PER_Q_TIMEOUT, 4000).then(stripThink);
+  return chat(REVIEW_MODEL, [{ role: 'system', content: REVIEWER_SOUL }, { role: 'user', content: prompt }], PER_Q_TIMEOUT, 3500).then(stripThink);
 }
 
 // ③ bge-m3 embedding（带超时，防卡死）
@@ -243,7 +244,7 @@ function cosine(a, b) {
 // ④ 合并两个答案：用 deepseek-r1 去重补全，输出最优单一版本
 function merge(question, a, b) {
   const prompt = `【用户问题】\n${question}\n\n【已有答案】\n${a}\n\n【新答案】\n${b}\n\n请把两份答案合并成一份「最全面、最优」的版本：过滤语义重复的内容，只保留/补齐各自独有的、有价值的信息，结构清晰（结论/方案 → 性质与后果 → 灰/违界限）。直接输出合并后的完整内容。`;
-  return chat(REVIEW_MODEL, [{ role: 'system', content: REVIEWER_SOUL }, { role: 'user', content: prompt }], PER_Q_TIMEOUT, 5000).then(stripThink);
+  return chat(REVIEW_MODEL, [{ role: 'system', content: REVIEWER_SOUL }, { role: 'user', content: prompt }], PER_Q_TIMEOUT, 4000).then(stripThink);
 }
 
 // ---- 定位场景块 & 读写实答 ----

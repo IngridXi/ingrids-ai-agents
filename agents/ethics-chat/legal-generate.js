@@ -16,9 +16,11 @@ const DIR = __dirname;
 const OUT = '/Users/ingridxi/Documents/Obsidian Vault/法务知识库';
 const INDEX = path.join(DIR, 'legal-index.json');
 const MODEL = 'qwen3.8-16k';
-const ENDPOINT = 'http://127.0.0.1:11434/v1/chat/completions';
+// 用原生 /api/chat：OpenAI 兼容层 /v1/chat/completions 在慢请求(≈5min)时返回 500（ollama bug）
+const ENDPOINT = 'http://127.0.0.1:11434/api/chat';
 const NUM_CTX = 16384;
-const TIMEOUT = 6 * 60 * 1000;
+// 本地 CPU 推理 ~5 tok/s，num_predict=4000 需 ~13min，超时放宽到 25min
+const TIMEOUT = 25 * 60 * 1000;
 
 const args = process.argv.slice(2);
 let limit = Infinity, dryRun = false, force = null;
@@ -66,11 +68,11 @@ async function chat(messages) {
   try {
     const resp = await fetch(ENDPOINT, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
-      body: JSON.stringify({ model: MODEL, messages, stream: false, temperature: 0.2, options: { num_predict: 5000, num_ctx: NUM_CTX } }),
+      body: JSON.stringify({ model: MODEL, messages, stream: false, think: false, options: { temperature: 0.2, num_predict: 3000, num_ctx: NUM_CTX } }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const j = await resp.json();
-    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+    return (j.message && j.message.content) || '';
   } finally { clearTimeout(timer); }
 }
 
