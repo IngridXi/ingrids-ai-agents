@@ -146,6 +146,13 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 .arch-svg svg{display:block}
 .arch-legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--dim);margin-top:12px}
 .arch-legend span{display:flex;align-items:center;gap:6px}
+/* 项目二级架构（可扩展 tab：加项目 = 加 tab + 一张图） */
+.proj-tabbar{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+.proj-tabbar .lbl{font-size:12px;color:var(--dim);margin-right:2px}
+.proj-tabbar button{font-size:13px;font-weight:600;padding:7px 16px}
+.proj-tabbar button.on{background:var(--purple);border-color:var(--purple);color:#fff}
+.proj-view{margin-top:12px}
+.proj-view .arch-svg{margin-top:0}
 .edge-data{fill:none;stroke:var(--accent);stroke-width:1.2;stroke-dasharray:6 6}
 .edge-own{fill:none;stroke:var(--purple);stroke-width:1.2;stroke-dasharray:2 4}
 .arch-flow{animation:dashflow 1.1s linear infinite}
@@ -364,6 +371,73 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
         <span><svg width="34" height="8"><rect x="0" y="0" width="34" height="8" rx="4" fill="#14243c" stroke="#d29922" stroke-width="1.5"/></svg>琥珀描边 + 呼吸 = 正在工作</span>
       </div>
       <div class="hint" id="archFoot">正在连接工作台…</div>
+    </section>
+
+    <!-- 项目二级架构（可扩展：加项目 = 加 tab + 一张二级架构图） -->
+    <section class="panel">
+      <h2>项目二级架构 <span class="tag">工作台 = 一级底座 · 项目 = 二级架构</span></h2>
+      <p class="hint">工作台承载多个项目/用途，每个项目有自己的二级 agent 架构。CityVerse 是第一个项目 tab；未来加新项目，只需在下方 tab 栏加一条、再挂一张架构图。</p>
+      <div class="proj-tabbar" id="projTabbar">
+        <span class="lbl">项目：</span>
+        <button class="on" data-proj="cityverse">CityVerse</button>
+        <!-- 未来新项目：<button data-proj="xxx">新项目</button> -->
+      </div>
+      <div class="proj-view">
+        <div class="arch-svg" id="projView-cityverse">
+          <svg viewBox="0 0 760 900" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+            <title>CityVerse 二级架构</title>
+            <desc>CityVerse 项目 = intel 建设流水线（开发自动化）+ ops 运营 Agent 组（运营控制面）+ 串联关系</desc>
+
+            <!-- ============ intel 建设流水线 ============ -->
+            <rect x="30" y="24" width="700" height="300" rx="8" fill="none" stroke="#30363d"/>
+            <text x="44" y="44" font-size="12" font-weight="600" fill="#8b949e">intel/ 建设流水线 · Python + PostgreSQL · 真实闭环（每日 07:30 自动 → 停在待审批）</text>
+
+            <g><rect x="44" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="88" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">采集</text><text x="88" y="110" text-anchor="middle" font-size="10" fill="#8b949e">舆情·情感</text></g>
+            <g><rect x="140" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="184" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">洞察</text><text x="184" y="110" text-anchor="middle" font-size="10" fill="#8b949e">教训/功能</text></g>
+            <g><rect x="236" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="280" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">玩法库</text><text x="280" y="110" text-anchor="middle" font-size="10" fill="#8b949e">AR 化</text></g>
+            <g><rect x="332" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="376" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">规划</text><text x="376" y="110" text-anchor="middle" font-size="10" fill="#8b949e">ITAgent</text></g>
+            <g><rect x="428" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="472" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">执行</text><text x="472" y="110" text-anchor="middle" font-size="10" fill="#8b949e">patch</text></g>
+            <g><rect x="524" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="568" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">门禁</text><text x="568" y="110" text-anchor="middle" font-size="10" fill="#8b949e">审查</text></g>
+            <g><rect x="620" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="664" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">落地</text><text x="664" y="110" text-anchor="middle" font-size="10" fill="#8b949e">apply</text></g>
+            <text x="132" y="100" font-size="11" fill="#8b949e">→</text><text x="228" y="100" font-size="11" fill="#8b949e">→</text><text x="324" y="100" font-size="11" fill="#8b949e">→</text><text x="420" y="100" font-size="11" fill="#8b949e">→</text><text x="516" y="100" font-size="11" fill="#8b949e">→</text><text x="612" y="100" font-size="11" fill="#8b949e">→</text>
+
+            <g><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
+            <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
+
+            <g><rect x="44" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="194" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">PostgreSQL cityverse 库</text><text x="194" y="282" text-anchor="middle" font-size="10" fill="#8b949e">community / insights / playbook / build 等 10 表</text></g>
+            <g><rect x="380" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="530" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">intel/daily 简报</text><text x="530" y="282" text-anchor="middle" font-size="10" fill="#8b949e">竞品/技术/素材（dev-agent 产出 → 喂规划）</text></g>
+
+            <!-- ============ ops 运营 Agent 组 ============ -->
+            <rect x="30" y="340" width="700" height="246" rx="8" fill="none" stroke="#30363d"/>
+            <text x="44" y="360" font-size="12" font-weight="600" fill="#8b949e">ops/ 运营 Agent 组 · 浏览器 JS · localStorage + 云数据库</text>
+
+            <g><rect x="44" y="384" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="88" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容策划</text></g>
+            <g><rect x="140" y="384" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="184" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">点位运营</text></g>
+            <g><rect x="236" y="384" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="280" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容执行</text></g>
+            <g><rect x="332" y="384" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="376" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">质量门禁</text></g>
+            <g><rect x="428" y="384" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="472" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">经验沉淀</text></g>
+            <text x="132" y="412" font-size="11" fill="#8b949e">→</text><text x="228" y="412" font-size="11" fill="#8b949e">→</text><text x="324" y="412" font-size="11" fill="#8b949e">→</text><text x="420" y="412" font-size="11" fill="#8b949e">→</text>
+
+            <g><rect x="44" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="88" y="488" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">商户顾问</text><text x="88" y="506" text-anchor="middle" font-size="10" fill="#8b949e">soon</text></g>
+            <g><rect x="140" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="184" y="496" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">风控巡检</text></g>
+            <g><rect x="236" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="280" y="496" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">数据治理</text></g>
+            <g><rect x="332" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="376" y="496" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">IP 保护</text></g>
+            <g><rect x="470" y="464" width="220" height="56" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="580" y="488" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">云数据库</text><text x="580" y="506" text-anchor="middle" font-size="10" fill="#8b949e">tasks/merchants/coupons → 玩家客户端</text></g>
+
+            <!-- ============ 串联关系 ============ -->
+            <rect x="30" y="602" width="700" height="270" rx="8" fill="none" stroke="#30363d"/>
+            <text x="44" y="622" font-size="12" font-weight="600" fill="#8b949e">串联关系 · 调度唯一事实源 + 数据流 + 控制台互链</text>
+
+            <g><rect x="44" y="644" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">WorkBuddy automation 07:30</text><text x="204" y="686" text-anchor="middle" font-size="10" fill="#8b949e">→ 触发采集（唯一调度源）</text></g>
+            <g><rect x="396" y="644" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">工作台 dev-agent 07:30</text><text x="556" y="686" text-anchor="middle" font-size="10" fill="#8b949e">→ 竞品/技术/素材简报 → intel/daily</text></g>
+            <g><rect x="44" y="732" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="756" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">两控制台互链</text><text x="204" y="774" text-anchor="middle" font-size="10" fill="#8b949e">ops/index.html ↔ dashboard.py</text></g>
+            <g><rect x="396" y="732" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="756" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">经验沉淀闭环</text><text x="556" y="774" text-anchor="middle" font-size="10" fill="#8b949e">运营 knowledge-settler + 开发 insights/MEMORY</text></g>
+
+            <text x="44" y="852" font-size="10.5" fill="#6e7681">权威名册：docs/37-agent-orchestration.md · 未来新项目 = 加 tab + 复用该结构</text>
+          </svg>
+        </div>
+        <div class="hint" style="margin-top:10px">ops/ 运营总控台（浏览器打开 ops/index.html）· intel/ 建设控制台（python3 intel/dashboard.py → 127.0.0.1:8756）</div>
+      </div>
     </section>
   </div>
 </main>
@@ -732,6 +806,23 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   }
   $('#tabConsole').onclick = function () { switchView('console'); };
   $('#tabArch').onclick = function () { switchView('arch'); };
+
+  // 项目二级架构 tab 切换（配置数组驱动，可扩展）
+  // 加新项目：① 往 PROJ_TABS 加 id；② 在 HTML 的 #projTabbar 加一个 <button data-proj="id">；③ 加一个 <div id="projView-id">。
+  var PROJ_TABS = ['cityverse'];
+  function switchProj(pid) {
+    PROJ_TABS.forEach(function (id) {
+      var v = document.getElementById('projView-' + id);
+      if (v) v.style.display = (id === pid) ? '' : 'none';
+    });
+  }
+  var projBar = document.getElementById('projTabbar');
+  if (projBar) projBar.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-proj]');
+    if (!btn) return;
+    projBar.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b === btn); });
+    switchProj(btn.getAttribute('data-proj'));
+  });
 
   var IS_ARCH = !!(window.ingrid && window.ingrid.archStatus);
   var MODEL_AGENT_MAP = [
