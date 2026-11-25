@@ -493,7 +493,7 @@
   <div class="input-row">
     <button class="tool-btn" id="imgBtn" title="添加图片（识图/OCR/看图提问）"></button>
     <button class="tool-btn" id="micBtn" title="语音输入"></button>
-    <textarea id="input" rows="1" placeholder="问研究相关的问题，例如：帮我把这个想法提炼成一个可检验的研究问题…（可直接粘贴/上传图片，或点麦克风说话）"></textarea>
+    <textarea id="input" rows="1" placeholder="描述你的开发 / 逆向 / 修复需求，例如：帮我定位这个 bug 的根因并修复…（可直接粘贴/上传图片，或点麦克风说话）"></textarea>
     <button id="sendBtn" title="发送"></button>
   </div>
   <div class="img-preview" id="imgPreview" hidden></div>
@@ -587,7 +587,7 @@
     }
   }
 
-  // 研究助手的 soul（若 agents.json 里没有则回退到内置值）
+  // 软件工程助手的 soul（若 agents.json 里没有则回退到内置值）
   var SOUL_FALLBACK = '你是软件工程助手（Software Dev Agent），Ingrid 的软件开发与逆向修复主力。职责：写代码、修 bug、调试、重构、跑测试、逆向分析、二进制补丁、恢复丢失源码的软件。铁律：① 只对用户拥有或明确授权的软件做逆向、反编译与补丁，绝不破解他人的授权/DRM/许可校验/付费墙，不协助绕过第三方软件的保护；② 改任何源码/二进制前先自动备份，改完在报告里给出「改了什么 + 备份位置 + 如何恢复」；③ 先读真实文件、复现问题、定位根因，再动手改，不臆造代码、报错、日志或运行结果，没实际运行就标 [待验证]；④ 改完必须用编译/运行/测试验证，不草率宣称「已修复」；⑤ 交付代码/补丁/脚本后说明它做什么、怎么用、怎么验证。先复述你对问题的理解与排查思路，再给最小可执行方案。';
   var soul = SOUL_FALLBACK;
   var systemPrompt = soul;
@@ -1849,7 +1849,7 @@
     try {
       var agents = IS_DESKTOP ? window.ingrid.loadAgentsSync() : [];
       for (var i = 0; i < agents.length; i++) {
-        if (agents[i].name === '研究助手' && agents[i].soul) {
+        if (agents[i].name === AGENT_NAME && agents[i].soul) {
           soul = agents[i].soul; systemPrompt = soul; break;
         }
       }
@@ -2067,15 +2067,15 @@
   }
   function welcome() {
     var hints = [
-      '帮我把这个想法提炼成一个可检验的研究问题',
-      '拆解这篇论文的研究问题、方法与局限',
-      '给我写一段文献综述的开头',
-      '我的研究设计有哪些替代解释没排除',
+      '帮我写一个功能的完整代码',
+      '这个 bug 帮我定位根因并修复',
+      '逆向分析这个二进制 / 依赖库',
+      '帮我重构这段代码并跑通测试',
     ];
     var html = '<div class="welcome">' +
       '<div class="big">' + window.iconSvg('grad') + '</div>' +
-      '<h2>研究助手 · 随时可问</h2>' +
-      '<p>挂 Research 板块 17 个研究 skill，覆盖从想法到论文的全程</p>' +
+      '<h2>软件工程 · 随时可问</h2>' +
+      '<p>写代码、修 bug、逆向分析、重构测试的开发主力</p>' +
       '<p class="note-hint">用 <b>/note</b> 开头可发「补充说明」：它作为附加约束/偏好注入，不打断当前任务</p>' +
       '<div class="hints">' + hints.map(function (h) { return '<span class="hint">' + h + '</span>'; }).join('') + '</div>' +
       '</div>';
@@ -2844,10 +2844,10 @@
   function exportMarkdown() {
     var s = currentSession();
     if (!s || !s.messages.length) { alert('当前对话还没有内容'); return; }
-    var title = (s.title && s.title !== '新对话') ? s.title : '研究助手对话';
+    var title = (s.title && s.title !== '新对话') ? s.title : '软件工程对话';
     var lines = ['# ' + title, ''];
     s.messages.forEach(function (m) {
-      var who = m.role === 'user' ? '我' : '研究助手';
+      var who = m.role === 'user' ? '我' : '软件工程';
       lines.push('## ' + who, '');
       lines.push((m.role === 'assistant' ? stripToolMarkers(m.content) : (m.content || '')) || '', '');
     });
