@@ -1154,7 +1154,7 @@
   function toolCacheKey(name, args) {
     var a = args || {};
     switch (name) {
-      case 'fs_read': return 'read:' + String(a.path || '');
+      case 'fs_read': return 'read:' + String(a.path || '') + '|' + (a.offset || 0) + '|' + (a.limit || '');
       case 'fs_list': return 'list:' + String(a.dir || '');
       case 'fs_search': return 'find:' + String(a.query || '') + '|' + String(a.root || '');
       case 'web_search': return 'web:' + String(a.query || '');

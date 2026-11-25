@@ -1328,7 +1328,7 @@
     return '\n\n你具备「工具能力」，可以直接操作本机文件与资料库。当需要查找 / 读取 / 修改文件、查询文献时，不要靠猜，用以下格式请求工具（一次只请求一个，放在回复末尾）：\n' +
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
       '\n\n【工具调用格式铁律】开始标签必须是 <tool name="工具名">，结束标签必须是 </tool>，两者完全一致、成对出现；结束标签绝不能写成 </tool parameter> 或加任何多余文字。参数必须是合法的 JSON 对象，例如 <tool name="fs_read">{"path":"/绝对路径"}</tool>。\n' +
-      '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
+      '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。你没有任何日历/日程/邮件数据源，绝对不要提及或编造用户的会议、日程、约会提醒（例如「今天几点有 1:1 / 与某人开会」这类说法一律禁止），除非用户自己明确告诉过你。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
       '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   // 原生工具定义（OpenAI tools 参数格式）：让模型走 API 原生 function calling，而非靠文本 <tool> 标签
@@ -1389,7 +1389,7 @@
   function toolCacheKey(name, args) {
     var a = args || {};
     switch (name) {
-      case 'fs_read': return 'read:' + String(a.path || '');
+      case 'fs_read': return 'read:' + String(a.path || '') + '|' + (a.offset || 0) + '|' + (a.limit || '');
       case 'fs_list': return 'list:' + String(a.dir || '');
       case 'fs_search': return 'find:' + String(a.query || '') + '|' + String(a.root || '');
       case 'web_search': return 'web:' + String(a.query || '');
