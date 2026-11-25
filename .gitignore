@@ -19,3 +19,6 @@ __pycache__/
 
 # 伦理agent批量跑场景的运行时进度（断点续跑状态，不入库）
 agents/ethics-chat/run-progress.json
+
+# 批处理运行日志（机器自动写的流水账，不入库）
+agents/ethics-chat/batch-run.log
