@@ -2548,6 +2548,7 @@ function startTaskScheduler() {
 /* 统一管理多个「跑固定命令」的定时任务。每个任务直跑本地脚本，不经过 LLM。
    rule: { weekdays?: number[] (0=周日..6=周六，缺省=每天), hhmm: 'HH:MM' } */
 const APP_DIR = path.join(os.homedir(), 'Dev', 'Ingrids-AI-Agents');
+const CITYVERSE_INTEL_DIR = path.join(os.homedir(), 'Dev', 'cityverse-ar', 'intel');
 const ZOTERO_INGEST_SCRIPT = path.join(
   os.homedir(),
   '.workbuddy', 'plugins', 'marketplaces', 'my-experts', 'plugins',
@@ -2578,22 +2579,53 @@ const SCHEDULED_COMMANDS = [
     bin: 'python3', args: [ZOTERO_INGEST_SCRIPT, '--report', 'weekly'], cwd: os.homedir(),
     rule: { weekdays: [1], hhmm: '09:45' }, timeoutMs: 5 * 60 * 1000,
   },
+  {
+    key: 'cityverse-intel',
+    label: 'CityVerse 社区情报采集与建设规划',
+    cwd: CITYVERSE_INTEL_DIR,
+    rule: { hhmm: '07:30' }, timeoutMs: 20 * 60 * 1000,
+    // 多步顺序执行：抓取→分析→玩法库→建设规划；各脚本自带幂等/降级，某步失败即中止后续（不擅自落地代码）。
+    steps: [
+      { bin: 'python3', args: ['community_intel.py', 'daily'] },
+      { bin: 'python3', args: ['insight_agent.py', 'analyze'] },
+      { bin: 'python3', args: ['playbook_agent.py', 'seed'] },
+      { bin: 'python3', args: ['playbook_agent.py', 'mine'] },
+      { bin: 'python3', args: ['playbook_agent.py', 'enrich'] },
+      { bin: 'python3', args: ['build_pipeline.py', 'plan'] },
+      { bin: 'python3', args: ['build_pipeline.py', 'status'] },
+    ],
+  },
 ];
 let scheduledCmdTimer = null;
 const scheduledCmdLastRun = {}; // key -> 'YYYY-MM-DD'，防同一天重复触发
 
-function runScheduledCommand(t) {
-  // 直跑本地脚本；脚本/命令自身负责幂等与降级，此处只记录结果到主进程日志。
-  const p = new Promise((resolve) => {
-    execFile(t.bin, t.args, { timeout: t.timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd: t.cwd, env: pyEnv() }, (err, stdout, stderr) => {
+function execOne(step, cwd, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(step.bin, step.args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd: cwd, env: pyEnv() }, (err, stdout, stderr) => {
       if (err) resolve({ ok: false, error: String((err && err.message) || err), output: String(stderr || '') + '\n' + String(stdout || '') });
       else resolve({ ok: true, output: String(stdout || '') });
     });
   });
+}
+
+function runScheduledCommand(t) {
+  // 直跑本地脚本；脚本/命令自身负责幂等与降级，此处只记录结果到主进程日志。
+  // 支持两种形态：单命令（bin+args）或多步顺序（steps 数组，某步失败即中止）。
+  let p;
+  if (Array.isArray(t.steps) && t.steps.length) {
+    p = t.steps.reduce((chain, step) => {
+      return chain.then((prev) => {
+        if (prev && prev.ok === false) return prev; // 前一步失败，不再继续
+        return execOne(step, t.cwd, t.timeoutMs);
+      });
+    }, Promise.resolve({ ok: true, output: '' }));
+  } else {
+    p = execOne(t, t.cwd, t.timeoutMs);
+  }
   return p.then((r) => {
     try {
       if (r && r.ok) console.log('[' + t.key + '] 完成\n' + String(r.output || ''));
-      else console.log('[' + t.key + '] ' + String((r && r.error) || '执行失败'));
+      else console.log('[' + t.key + '] ' + String((r && r.error) || '执行失败') + (r && r.output ? '\n' + String(r.output) : ''));
     } catch {}
     return r;
   });
