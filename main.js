@@ -2544,6 +2544,43 @@ function startTaskScheduler() {
   }, 60 * 1000);
 }
 
+/* ---------------- Zotero 文献自动入库：每周一 09:30 定时跑 auto_ingest.py（本地脚本直跑，不经过 LLM） ---------------- */
+const ZOTERO_INGEST_SCRIPT = path.join(
+  os.homedir(),
+  '.workbuddy', 'plugins', 'marketplaces', 'my-experts', 'plugins',
+  'literature-curator', 'skills', 'zotero-literature', 'scripts', 'auto_ingest.py'
+);
+let zoteroIngestTimer = null;
+let zoteroIngestLastRun = ''; // 'YYYY-MM-DD'，防同一天重复触发
+
+function runZoteroAutoIngest() {
+  // 脚本自身会先检测 Zotero 客户端是否运行；未运行则静默退出（预期行为，不算错误）。
+  return execPy([ZOTERO_INGEST_SCRIPT], 5 * 60 * 1000).then((r) => {
+    if (r && r.ok) {
+      try { console.log('[zotero-ingest] 完成\n' + String(r.output || '')); } catch {}
+    } else {
+      try { console.log('[zotero-ingest] ' + String((r && r.error) || '执行失败')); } catch {}
+    }
+    return r;
+  });
+}
+
+function startZoteroIngestScheduler() {
+  if (zoteroIngestTimer) return;
+  // 每 60 秒检查一次：到「周一 09:30」且当天尚未跑过，则触发一次。
+  zoteroIngestTimer = setInterval(() => {
+    try {
+      const now = new Date();
+      if (now.getDay() !== 1) return; // 周一
+      if (now.getHours() !== 9 || now.getMinutes() < 30) return; // 09:30 之后（含该分钟）
+      const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+      if (zoteroIngestLastRun === today) return;
+      zoteroIngestLastRun = today;
+      runZoteroAutoIngest().catch(() => {});
+    } catch { /* 忽略调度异常 */ }
+  }, 60 * 1000);
+}
+
 ipcMain.handle('task:list', () => {
   const q = getTaskQueue();
   return { tickets: q.list(), counts: q.counts() };
@@ -6011,6 +6048,8 @@ if (gotSingleInstanceLock) {
     startTaskWatchdog();
     // 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想）
     startTaskScheduler();
+    // Zotero 文献自动入库：每周一 09:30 自动跑 auto_ingest.py（本地脚本直跑，不依赖 WorkBuddy）
+    startZoteroIngestScheduler();
     // 灵感目录：确保内置调研 Agent 与每日调研计划存在
     ensureEcoRadar();
     // CityVerse 情报：确保每日 07:30 综合情报定时任务存在
