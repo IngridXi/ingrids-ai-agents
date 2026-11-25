@@ -28,6 +28,10 @@ for (const id of Object.keys(gray)) {
   (practices[id] = practices[id] || {}).g = gray[id].g;
 }
 
+// 场景标题归一化：去掉序号（如「## 🟡 1-1 · 激进避税结构」→「## 🟡 激进避税结构」），
+// 使新旧格式（有无序号）在提取历史实答时都能匹配到同一场景，迁移时历史实答不丢失。
+function normHead(h) { return String(h).replace(/\s\d+-\d+\s*·\s*/, ' '); }
+
 // 提取现有 md 中已归档的「### 🤖 伦理 agent 实答」块，重建时保留（不丢失历史实答）。
 // 关键：答文正文里可能含有「### 结论/方案」「### 性质与后果」子标题，甚至「---」分隔线，
 // 它们都是答案的一部分。真正的块边界只有一个：下一个场景标题（## ）。
@@ -39,7 +43,7 @@ function extractExistingAnswers() {
     const lines = fs.readFileSync(path.join(OUT, f), 'utf8').split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (!/^##\s/.test(lines[i])) continue;
-      const heading = lines[i].trim();
+      const heading = normHead(lines[i].trim());
       // 在当前场景块内（直到下一个 ## 场景标题）找「### 🤖 伦理 agent 实答」
       let j = i + 1;
       while (j < lines.length && !/^##\s/.test(lines[j])) {
@@ -118,7 +122,7 @@ cats.forEach((c) => {
     const p = practices[it.id];
     L.push('---');
     L.push('');
-    L.push(`## ${TAG_EMOJI[it.tag]} ${it.t}`);
+    L.push(`## ${TAG_EMOJI[it.tag]} ${it.id} · ${it.t}`);
     L.push('');
     L.push(`**定性**：${TAG_EMOJI[it.tag]} ${TAG_LABEL[it.tag]} ｜ **阶段**：${STAGE[it.stage]}`);
     L.push('');
@@ -147,7 +151,7 @@ cats.forEach((c) => {
     L.push(p.a);
     L.push('');
     // 保留历史「🤖 伦理 agent 实答」（若存在）
-    const heading = `## ${TAG_EMOJI[it.tag]} ${it.t}`;
+    const heading = normHead(`## ${TAG_EMOJI[it.tag]} ${it.id} · ${it.t}`);
     const ans = existingAnswers[heading];
     if (ans && ans.length) {
       for (const a of ans) { L.push(a); L.push(''); }

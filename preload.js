@@ -225,6 +225,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbObsidianReport: () => ipcRenderer.invoke('tool:db:obsidian:report'),
   // 伦理 agent 对话自动同步到 Obsidian（未规范模式问答，按会话聚合）
   ethicsSync: (payload) => ipcRenderer.invoke('ethics:sync', payload),
+  // 法务检索：在法务知识库按关键词匹配准确法条原文（供伦理 agent 法律咨询引用）
+  legalSearch: (payload) => ipcRenderer.invoke('legal:search', payload),
   workspaceList: () => ipcRenderer.invoke('workspace:list'),
   toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
   toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),

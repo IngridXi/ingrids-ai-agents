@@ -5288,6 +5288,43 @@ function ethicsSync(payload) {
     return { ok: true, path: full, scene: false };
   } catch (e) { return { ok: false, error: '同步失败：' + String(e && e.message || e) }; }
 }
+
+// 法务检索：在法务知识库中按关键词匹配法条，返回准确的法条原文片段。
+// 供伦理 agent「法律咨询」时引用真实法条，避免凭记忆编造条文号/刑罚。
+function legalSearch(payload) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 主库' };
+  const q = String((payload && payload.query) || '').trim();
+  if (!q) return { ok: false, error: '检索词为空' };
+  const legalDir = path.join(vp, '法务知识库');
+  if (!fs.existsSync(legalDir)) return { ok: false, error: '法务知识库不存在（请先生成法务知识库）' };
+  const max = Number(payload && payload.max) || 5;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[《》「」『』（）()\[\]【】\s·、，,。；;：:""''\/\\\-—_—…]+/g, '');
+  const qn = norm(q);
+  const hits = [];
+  const walk = (dir) => {
+    for (const f of fs.readdirSync(dir)) {
+      const full = path.join(dir, f);
+      if (fs.statSync(full).isDirectory()) { walk(full); continue; }
+      if (!f.endsWith('.md') || f.startsWith('00-')) continue;
+      let text; try { text = fs.readFileSync(full, 'utf8'); } catch (e) { continue; }
+      const name = f.replace(/\.md$/, '');
+      let score = 0;
+      const nn = norm(name);
+      if (nn && qn && (nn.includes(qn) || qn.includes(nn))) score += 5;
+      for (const w of qn.split(/\s+/).filter(Boolean)) {
+        if (w.length >= 2 && text.includes(w)) score += 1;
+      }
+      if (score <= 0) continue;
+      const m = text.match(/## 法条原文[\s\S]*?(?=\n##\s|\n---\n|$)/) || text.match(/## 核心条款[\s\S]*?(?=\n##\s|\n---\n|$)/);
+      const refM = text.match(/\*\*参考条文\*\*：([^\n]+)/);
+      hits.push({ name, ref: refM ? refM[1].trim() : '', snippet: m ? m[0].replace(/^## \S+\s*/, '').trim().slice(0, 500) : '', score });
+    }
+  };
+  try { walk(legalDir); } catch (e) { return { ok: false, error: '检索失败：' + String(e && e.message || e) }; }
+  hits.sort((a, b) => b.score - a.score);
+  return { ok: true, query: q, count: hits.length, hits: hits.slice(0, max) };
+}
 function toolDbObsidianTag(payload) {
   const vp = workspaceVaultPath() || vaultPath();
   if (!vp) return { ok: false, error: '未检测到 Obsidian 库' };
@@ -5568,6 +5605,7 @@ ipcMain.handle('tool:db:obsidian:move', (_e, p) => toolDbObsidianMove(p));
 ipcMain.handle('tool:db:obsidian:promote', (_e, p) => toolDbObsidianPromote(p));
 ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
 ipcMain.handle('ethics:sync', (_e, p) => ethicsSync(p));
+ipcMain.handle('legal:search', (_e, p) => legalSearch(p));
 
 /* ---------------- Agent 架构图：实时状态 ----------------
  * 供「Agent 架构图」页轮询，返回各功能/后台 agent 的真实协作状态：

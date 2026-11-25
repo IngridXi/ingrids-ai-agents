@@ -226,7 +226,7 @@ function findBlock(sc) {
   const fname = catFname[sc.catNo];
   const full = path.join(OUT, fname);
   if (!fs.existsSync(full)) return { error: '文件不存在 ' + fname };
-  const heading = '## ' + TAG_EMOJI[sc.tag] + ' ' + sc.t;
+  const heading = '## ' + TAG_EMOJI[sc.tag] + ' ' + sc.id + ' · ' + sc.t;
   const lines = fs.readFileSync(full, 'utf8').split('\n');
   let start = -1;
   for (let i = 0; i < lines.length; i++) { if (lines[i].trim() === heading.trim()) { start = i; break; } }
@@ -274,7 +274,7 @@ function writeAnswer(sc, finalText) {
   const b = findBlock(sc);
   if (b.error) return { ok: false, error: b.error };
   const lines = [...b.lines];
-  const heading = '## ' + TAG_EMOJI[sc.tag] + ' ' + sc.t;
+  const heading = '## ' + TAG_EMOJI[sc.tag] + ' ' + sc.id + ' · ' + sc.t;
   const start = b.start, end = b.end;
 
   // 场景分隔线（最后一个 ---）与旧答案块起始
@@ -309,7 +309,7 @@ async function archive(sc) {
   // ② 定性修正（喂权威参考，法条对齐）
   let final = noReview ? raw : (await review(sc.q, raw, buildRef(sc)));
   if (!final.trim()) final = raw;
-  // ③④ 语义去重 + 合并（规则化：相似则替换、互补则拼接，不调模型避免卡死）
+  // ③④ 语义去重 + 监护合并（规则化：高度相似→保留更完整版；互补→拼接补充，绝不删除正确内容）
   const { existing } = readExistingAnswer(sc);
   if (existing && existing.a && existing.a.trim()) {
     let sim = 0;
@@ -318,9 +318,14 @@ async function archive(sc) {
       sim = cosine(ve, vn);
     } catch (e) { sim = 0; }
     if (sim > SIM_THRESHOLD) {
-      // 语义高度重复：用「已修正的新答案」替换旧答案，不堆叠重复块
+      // 语义高度重复：监护原则——保留「更完整」的一版，把对方独特内容补齐，绝不无脑覆盖。
+      if (existing.a.length > final.length * 1.15) {
+        // 旧答案明显更完整（新答案可能缩水），以旧答案为主、新答案作补充，旧内容不丢。
+        final = existing.a + '\n\n---\n\n【补充 · 本次新增要点】\n' + final;
+      }
+      // 否则新答案更完整/相当，直接用新答案（旧内容已语义包含，无信息损失）。
     } else {
-      // 互补：拼接保留两者（新答案在前）
+      // 互补：拼接保留两者（新答案在前，旧答案完整保留为补充，绝不删除）。
       final = final + '\n\n---\n\n【补充 · 历史回答】\n' + existing.a;
     }
   }
