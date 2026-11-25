@@ -296,6 +296,10 @@ contextBridge.exposeInMainWorld('ingrid', {
   sentimentUpdatePreference: (id, patch) => ipcRenderer.invoke('sentiment:update-preference', id, patch),
   sentimentRemovePreference: (id, opts) => ipcRenderer.invoke('sentiment:remove-preference', id, opts),
 
+  // Agent 跨会话记忆（load 注入 system prompt / refine 自动沉淀）
+  memoryLoad: (name) => ipcRenderer.invoke('memory:load', name),
+  memoryRefine: (name, payload) => ipcRenderer.invoke('memory:refine', name, payload),
+
   // 灵感目录（生态雷达：每日调研 DSH 插件生态）
   ecoRadarRun: () => ipcRenderer.invoke('eco:radar:run'),
   ecoRadarStatus: () => ipcRenderer.invoke('eco:radar:status'),

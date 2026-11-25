@@ -303,6 +303,104 @@ async function distillActionWithLLM(buckets) {
   return null;
 }
 
+/* ---------------- Agent 跨会话记忆（memory）----------------
+ * 对齐 WorkBuddy 的 .workbuddy/memory 思路：每个 agent 一份 markdown 记忆文件，
+ * 只存「低频、长期、跨会话有用」的约定 / 决策 / 踩坑 / 进度。
+ * 闭环：会话开始 load 注入 system prompt；会话结束 refine 用 LLM 提炼关键条目追加。
+ * 记忆文件放 git 仓库 docs/agent-memory/{dir}.md（随 git 走，推 GitHub）。
+ */
+function agentDirByName(name) {
+  // 从 agents.json 反查 agent 的目录名（href 形如 agents/{dir}/index.html）
+  const agents = readJson('agents.json', []);
+  if (!Array.isArray(agents)) return null;
+  const a = agents.find((x) => x && x.name === name);
+  if (!a || !a.href) return null;
+  const m = String(a.href).match(/agents\/([^/]+)\/index\.html/);
+  return m ? m[1] : null;
+}
+
+function memoryPath(dir) {
+  return path.join(__dirname, 'docs', 'agent-memory', dir + '.md');
+}
+
+function readMemory(name) {
+  const dir = agentDirByName(name);
+  if (!dir) return { ok: false, text: '', reason: 'unknown_agent' };
+  try {
+    const p = memoryPath(dir);
+    if (!fs.existsSync(p)) return { ok: true, dir: dir, text: '' };
+    return { ok: true, dir: dir, text: fs.readFileSync(p, 'utf8').slice(0, 6000) };
+  } catch (e) {
+    return { ok: false, text: '', reason: String(e && e.message || e) };
+  }
+}
+
+function appendMemory(name, entries) {
+  const dir = agentDirByName(name);
+  if (!dir || !Array.isArray(entries) || !entries.length) return { ok: false, added: 0 };
+  const p = memoryPath(dir);
+  try {
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const lines = entries.map((e) => '- [' + stamp + '] 【' + (e.kind || '备忘') + '】' + (e.content || ''));
+    let body = '';
+    if (!fs.existsSync(p)) {
+      body = '# ' + name + ' · 跨会话记忆\n\n## 记忆条目\n\n';
+    }
+    body += lines.join('\n') + '\n';
+    fs.appendFileSync(p, body, 'utf8');
+    return { ok: true, dir: dir, added: entries.length };
+  } catch (e) {
+    return { ok: false, added: 0, reason: String(e && e.message || e) };
+  }
+}
+
+function buildMemoryRefinePrompt(name, userText, assistantText) {
+  const lines = [];
+  lines.push('你是「Agent 记忆提炼器」。下面是一轮对话：用户在「' + name + '」Agent 里说的话，和 Agent 的回复。');
+  lines.push('请判断这轮对话里有没有「值得跨会话记住」的关键信息，有则提炼、无则返回空数组。');
+  lines.push('值得记的只有四类：');
+  lines.push('①【约定】用户定的长期规矩 / 偏好 / 命名 / 路径 / 格式等约束；');
+  lines.push('②【决策】用户拍板的技术 / 方案 / 方向决定；');
+  lines.push('③【踩坑】遇到的问题和解决办法；');
+  lines.push('④【进度】项目 / 任务推进到哪一步、下一步做什么。');
+  lines.push('普通问答、寒暄、一次性请求都【不】值得记。宁缺毋滥：拿不准就不记。');
+  lines.push('');
+  lines.push('严格输出一个 JSON 数组（没有可记的则输出 []），不要其他文字、不要 markdown 代码块。每项格式：');
+  lines.push('{"kind":"约定|决策|踩坑|进度","content":"一句话，具体可执行、自包含（不依赖本轮上下文也能看懂）"}');
+  lines.push('');
+  lines.push('用户说：' + String(userText || '').replace(/\s+/g, ' ').slice(0, 800));
+  lines.push('Agent 回复：' + String(assistantText || '').replace(/\s+/g, ' ').slice(0, 1500));
+  return lines.join('\n');
+}
+
+function parseMemoryRefineResult(text) {
+  const t = String(text || '').trim();
+  if (!t) return [];
+  let arr = null;
+  try { arr = JSON.parse(t); } catch (e) { /* 继续 */ }
+  if (!Array.isArray(arr)) {
+    try { const m = t.match(/\[[\s\S]*\]/); if (m) arr = JSON.parse(m[0]); } catch (e) { /* 继续 */ }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr.filter((x) => x && x.content && String(x.content).trim()).map((x) => ({
+    kind: ['约定', '决策', '踩坑', '进度'].indexOf(x.kind) >= 0 ? x.kind : '备忘',
+    content: String(x.content).trim().slice(0, 300),
+  }));
+}
+
+async function refineMemoryWithLLM(name, userText, assistantText) {
+  const prompt = buildMemoryRefinePrompt(name, userText, assistantText);
+  const engines = ['deepseek', 'ollama'];   // 云优先，本地 Ollama 兜底
+  for (const eng of engines) {
+    try {
+      const r = await callBgChat(eng, '', [{ role: 'user', content: prompt }]);
+      if (r && r.ok && r.text) return parseMemoryRefineResult(r.text);
+    } catch (e) { /* 换下一个引擎 */ }
+  }
+  return [];
+}
+
 /* ---------------- 秘书状态串行化写入 ----------------
  * 根因：runCalendarSync / runIcsSync / runMailSync / runReminderCheck / saveSecretary 等多个
  * async 任务并发「读 secretary.json → 改 → 写」，read-modify-write 非原子，后写者用旧快照
@@ -1530,6 +1628,18 @@ ipcMain.handle('sentiment:distill', () => getSentimentAgent().distill());
 ipcMain.handle('sentiment:update-preference', (_e, id, patch) => getSentimentAgent().updatePreference(id, patch));
 // 手动删除偏好规则（默认级联删除该 key 的残留信号，避免蒸馏复活）
 ipcMain.handle('sentiment:remove-preference', (_e, id, opts) => getSentimentAgent().removePreference(id, opts));
+
+/* ---------------- IPC：Agent 跨会话记忆（load 注入 / refine 自动沉淀）---------------- */
+ipcMain.handle('memory:load', (_e, name) => readMemory(String(name || '')));
+ipcMain.handle('memory:refine', async (_e, name, payload) => {
+  const p = payload || {};
+  const userText = String(p.user || '');
+  const assistantText = String(p.assistant || '');
+  if (!userText && !assistantText) return { ok: false, added: 0, reason: 'empty' };
+  const entries = await refineMemoryWithLLM(String(name || ''), userText, assistantText);
+  if (!entries.length) return { ok: true, added: 0, reason: 'nothing_worth_remembering' };
+  return appendMemory(String(name || ''), entries);
+});
 
 /* ---------------- IPC：Agent 治理官（只读盘点 + 重叠检测 + 对账）---------------- */
 ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
