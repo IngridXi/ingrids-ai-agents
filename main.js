@@ -2544,39 +2544,80 @@ function startTaskScheduler() {
   }, 60 * 1000);
 }
 
-/* ---------------- Zotero 文献自动入库：每周一 09:30 定时跑 auto_ingest.py（本地脚本直跑，不经过 LLM） ---------------- */
+/* ---------------- 主进程定时命令：把「固定脚本型」定时任务从外部（WorkBuddy）内聚到桌面应用自身 ---------------- */
+/* 统一管理多个「跑固定命令」的定时任务。每个任务直跑本地脚本，不经过 LLM。
+   rule: { weekdays?: number[] (0=周日..6=周六，缺省=每天), hhmm: 'HH:MM' } */
+const APP_DIR = path.join(os.homedir(), 'Dev', 'Ingrids-AI-Agents');
 const ZOTERO_INGEST_SCRIPT = path.join(
   os.homedir(),
   '.workbuddy', 'plugins', 'marketplaces', 'my-experts', 'plugins',
   'literature-curator', 'skills', 'zotero-literature', 'scripts', 'auto_ingest.py'
 );
-let zoteroIngestTimer = null;
-let zoteroIngestLastRun = ''; // 'YYYY-MM-DD'，防同一天重复触发
+const SCHEDULED_COMMANDS = [
+  {
+    key: 'kb-scan',
+    label: '研究助手知识库每日增量索引',
+    bin: 'node', args: [path.join(APP_DIR, 'kb-cli.js'), 'scan'], cwd: APP_DIR,
+    rule: { hhmm: '09:00' }, timeoutMs: 30 * 60 * 1000,
+  },
+  {
+    key: 'kb-digest',
+    label: '研究助手智能整理·每周文献综述',
+    bin: 'node', args: [path.join(APP_DIR, 'kb-digest.js'), 'review', '15'], cwd: APP_DIR,
+    rule: { weekdays: [1], hhmm: '09:30' }, timeoutMs: 60 * 60 * 1000,
+  },
+  {
+    key: 'zotero-ingest',
+    label: 'Zotero 文献自动入库与整理',
+    bin: 'python3', args: [ZOTERO_INGEST_SCRIPT], cwd: os.homedir(),
+    rule: { weekdays: [1], hhmm: '09:30' }, timeoutMs: 5 * 60 * 1000,
+  },
+  {
+    key: 'zotero-weekly',
+    label: 'Zotero 文献管理周报',
+    bin: 'python3', args: [ZOTERO_INGEST_SCRIPT, '--report', 'weekly'], cwd: os.homedir(),
+    rule: { weekdays: [1], hhmm: '09:45' }, timeoutMs: 5 * 60 * 1000,
+  },
+];
+let scheduledCmdTimer = null;
+const scheduledCmdLastRun = {}; // key -> 'YYYY-MM-DD'，防同一天重复触发
 
-function runZoteroAutoIngest() {
-  // 脚本自身会先检测 Zotero 客户端是否运行；未运行则静默退出（预期行为，不算错误）。
-  return execPy([ZOTERO_INGEST_SCRIPT], 5 * 60 * 1000).then((r) => {
-    if (r && r.ok) {
-      try { console.log('[zotero-ingest] 完成\n' + String(r.output || '')); } catch {}
-    } else {
-      try { console.log('[zotero-ingest] ' + String((r && r.error) || '执行失败')); } catch {}
-    }
+function runScheduledCommand(t) {
+  // 直跑本地脚本；脚本/命令自身负责幂等与降级，此处只记录结果到主进程日志。
+  const p = new Promise((resolve) => {
+    execFile(t.bin, t.args, { timeout: t.timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd: t.cwd, env: pyEnv() }, (err, stdout, stderr) => {
+      if (err) resolve({ ok: false, error: String((err && err.message) || err), output: String(stderr || '') + '\n' + String(stdout || '') });
+      else resolve({ ok: true, output: String(stdout || '') });
+    });
+  });
+  return p.then((r) => {
+    try {
+      if (r && r.ok) console.log('[' + t.key + '] 完成\n' + String(r.output || ''));
+      else console.log('[' + t.key + '] ' + String((r && r.error) || '执行失败'));
+    } catch {}
     return r;
   });
 }
 
-function startZoteroIngestScheduler() {
-  if (zoteroIngestTimer) return;
-  // 每 60 秒检查一次：到「周一 09:30」且当天尚未跑过，则触发一次。
-  zoteroIngestTimer = setInterval(() => {
+function startScheduledCommands() {
+  if (scheduledCmdTimer) return;
+  // 每 60 秒检查一次：到点（含该分钟）且当天尚未跑过，则触发一次。
+  scheduledCmdTimer = setInterval(() => {
     try {
       const now = new Date();
-      if (now.getDay() !== 1) return; // 周一
-      if (now.getHours() !== 9 || now.getMinutes() < 30) return; // 09:30 之后（含该分钟）
+      const hh = ('0' + now.getHours()).slice(-2);
+      const mm = ('0' + now.getMinutes()).slice(-2);
+      const hhmm = hh + ':' + mm;
+      const weekday = now.getDay();
       const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
-      if (zoteroIngestLastRun === today) return;
-      zoteroIngestLastRun = today;
-      runZoteroAutoIngest().catch(() => {});
+      SCHEDULED_COMMANDS.forEach((t) => {
+        const rule = t.rule || {};
+        if (Array.isArray(rule.weekdays) && rule.weekdays.indexOf(weekday) < 0) return;
+        if (hhmm < rule.hhmm) return;
+        if (scheduledCmdLastRun[t.key] === today) return;
+        scheduledCmdLastRun[t.key] = today;
+        runScheduledCommand(t).catch(() => {});
+      });
     } catch { /* 忽略调度异常 */ }
   }, 60 * 1000);
 }
@@ -6048,8 +6089,8 @@ if (gotSingleInstanceLock) {
     startTaskWatchdog();
     // 定时任务调度器：按计划自动触发后台任务（吸收 dsh 主动找活思想）
     startTaskScheduler();
-    // Zotero 文献自动入库：每周一 09:30 自动跑 auto_ingest.py（本地脚本直跑，不依赖 WorkBuddy）
-    startZoteroIngestScheduler();
+    // 主进程定时命令：Zotero 自动入库/周报 + 知识库索引 + 每周文献综述（本地脚本直跑，不依赖 WorkBuddy）
+    startScheduledCommands();
     // 灵感目录：确保内置调研 Agent 与每日调研计划存在
     ensureEcoRadar();
     // CityVerse 情报：确保每日 07:30 综合情报定时任务存在
