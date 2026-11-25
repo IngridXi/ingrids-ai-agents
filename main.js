@@ -2425,7 +2425,7 @@ function ensureCityverseIntel() {
   if (!hasTask) {
     q.enqueue({
       title: 'CityVerse 情报 · 每日综合简报',
-      goal: '为 CityVerse 实景 AR 游戏收集今日情报并写入项目。项目根目录 /Users/ingridxi/WorkBuddy/2026-11-25-18-56-31/cityverse-ar/。步骤：① 先 fs_list 查看 <项目>/intel/ 目录结构（若没有 intel/daily/ 子目录，先 fs_write 写一个 intel/daily/.gitkeep 占位）；② 用 web_search 各搜几个关键词收集三类情报——竞品（实景 AR 游戏 / LBS 游戏 / location-based AR game 最新动态）、技术（ARCore Geospatial / AR Foundation / Unity AR 最佳实践 / 地图街景 SDK / 程序化城市生成）、素材（CC0 3D 模型 / 低模城市资产 / 可商用 AR 素材）；③ 把结果整理成 Markdown 简报，按【竞品】【技术】【素材】三类，每条含标题+链接+一句话摘要+「对 CityVerse 的启发」，用 fs_write 写入 <项目>/intel/daily/<当天日期>.md（日期用当天真实日期，格式 YYYY-MM-DD）；④ 若有可直接用的高价值素材直链，用 fs_download 下载到 <项目>/reference/ 并记录路径。最后输出一句简报摘要。',
+      goal: '为 CityVerse 实景 AR 游戏收集今日情报并写入项目。项目根目录 /Users/ingridxi/Dev/cityverse-ar/。步骤：① 先 fs_list 查看 <项目>/intel/ 目录结构（若没有 intel/daily/ 子目录，先 fs_write 写一个 intel/daily/.gitkeep 占位）；② 用 web_search 各搜几个关键词收集三类情报——竞品（实景 AR 游戏 / LBS 游戏 / location-based AR game 最新动态）、技术（ARCore Geospatial / AR Foundation / Unity AR 最佳实践 / 地图街景 SDK / 程序化城市生成）、素材（CC0 3D 模型 / 低模城市资产 / 可商用 AR 素材）；③ 把结果整理成 Markdown 简报，按【竞品】【技术】【素材】三类，每条含标题+链接+一句话摘要+「对 CityVerse 的启发」，用 fs_write 写入 <项目>/intel/daily/<当天日期>.md（日期用当天真实日期，格式 YYYY-MM-DD）；④ 若有可直接用的高价值素材直链，用 fs_download 下载到 <项目>/reference/ 并记录路径。最后输出一句简报摘要。',
       agent: 'dev-agent-001', engine: 'deepseek', model: '',
       schedule: '07:30',
     });
@@ -5943,6 +5943,39 @@ async function archStatus() {
   return out;
 }
 ipcMain.handle('arch:status', () => archStatus());
+
+// CityVerse 后台控制台（intel/dashboard.py，默认 127.0.0.1:8756）实时概览。
+// 由主进程 fetch，绕开渲染进程 file:// 的 CORS 限制；控制台未启动时返回 online:false。
+async function cityverseOverview() {
+  const out = { online: false, error: '', now: Date.now(),
+    findings: 0, insights: 0, insightsReady: 0,
+    playbook: 0, plans: 0, plansPending: 0, plansApproved: 0, runs: 0, gates: 0 };
+  if (!(await isPortOpen(8756))) {
+    out.error = '控制台未启动（python3 intel/dashboard.py）';
+    return out;
+  }
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch('http://127.0.0.1:8756/api/overview', { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) { out.error = 'HTTP ' + r.status; return out; }
+    const j = await r.json();
+    const sum = (m) => Object.values(m || {}).reduce((a, b) => a + Number(b || 0), 0);
+    out.online = true;
+    out.findings = Number(j.findings || 0);
+    out.insights = Number(j.insights || 0);
+    out.insightsReady = Number(j.insights_ready || 0);
+    out.playbook = sum(j.playbook);
+    out.plans = sum(j.plans);
+    out.plansPending = Number((j.plans || {})['pending_approval'] || 0);
+    out.plansApproved = Number((j.plans || {})['approved'] || 0);
+    out.runs = Number(j.executor_runs || 0);
+    out.gates = sum(j.gates);
+  } catch (e) { out.error = String((e && e.message) || e); }
+  return out;
+}
+ipcMain.handle('arch:cityverse-overview', () => cityverseOverview());
 
 ipcMain.handle('workspace:list', () => toolDbWorkspaceList());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());

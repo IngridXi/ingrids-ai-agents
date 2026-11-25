@@ -187,6 +187,8 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // Agent 架构图：实时协作状态（Ollama 活跃模型 + 归档进度 + 知识库规模）
   archStatus: () => ipcRenderer.invoke('arch:status'),
+  // CityVerse 后台控制台实时概览（采集/洞察/玩法库/建设规划/执行门禁）
+  cityverseOverview: () => ipcRenderer.invoke('arch:cityverse-overview'),
 
   // 授权门（有副作用操作前显式授权 + 审计：电脑操作 / 可执行 Skill / 文件写入）
   permissionList: () => ipcRenderer.invoke('permission:list'),

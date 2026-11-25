@@ -390,14 +390,14 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 
             <!-- ============ intel 建设流水线 ============ -->
             <rect x="30" y="24" width="700" height="300" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="44" font-size="12" font-weight="600" fill="#8b949e">intel/ 建设流水线 · Python + PostgreSQL · 真实闭环（每日 07:30 自动 → 停在待审批）</text>
+            <text x="44" y="44" font-size="12" font-weight="600" fill="#8b949e">intel/ 建设流水线 · Python + PostgreSQL · 真实闭环（每日 07:30 自动 → 停在待审批）</text><text id="cv-status" x="716" y="44" text-anchor="end" font-size="11" font-weight="600" fill="#8b949e">连接中…</text>
 
-            <g><rect x="44" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="88" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">采集</text><text x="88" y="110" text-anchor="middle" font-size="10" fill="#8b949e">舆情·情感</text></g>
-            <g><rect x="140" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="184" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">洞察</text><text x="184" y="110" text-anchor="middle" font-size="10" fill="#8b949e">教训/功能</text></g>
-            <g><rect x="236" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="280" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">玩法库</text><text x="280" y="110" text-anchor="middle" font-size="10" fill="#8b949e">AR 化</text></g>
-            <g><rect x="332" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="376" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">规划</text><text x="376" y="110" text-anchor="middle" font-size="10" fill="#8b949e">ITAgent</text></g>
-            <g><rect x="428" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="472" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">执行</text><text x="472" y="110" text-anchor="middle" font-size="10" fill="#8b949e">patch</text></g>
-            <g><rect x="524" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="568" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">门禁</text><text x="568" y="110" text-anchor="middle" font-size="10" fill="#8b949e">审查</text></g>
+            <g><rect x="44" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="88" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">采集</text><text id="cv-findings" x="88" y="110" text-anchor="middle" font-size="10" fill="#8b949e">舆情·情感</text></g>
+            <g><rect x="140" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="184" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">洞察</text><text id="cv-insights" x="184" y="110" text-anchor="middle" font-size="10" fill="#8b949e">教训/功能</text></g>
+            <g><rect x="236" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="280" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">玩法库</text><text id="cv-playbook" x="280" y="110" text-anchor="middle" font-size="10" fill="#8b949e">AR 化</text></g>
+            <g><rect x="332" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="376" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">规划</text><text id="cv-plans" x="376" y="110" text-anchor="middle" font-size="10" fill="#8b949e">ITAgent</text></g>
+            <g><rect x="428" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="472" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">执行</text><text id="cv-exec" x="472" y="110" text-anchor="middle" font-size="10" fill="#8b949e">patch</text></g>
+            <g><rect x="524" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="568" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">门禁</text><text id="cv-gate" x="568" y="110" text-anchor="middle" font-size="10" fill="#8b949e">审查</text></g>
             <g><rect x="620" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="664" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">落地</text><text x="664" y="110" text-anchor="middle" font-size="10" fill="#8b949e">apply</text></g>
             <text x="132" y="100" font-size="11" fill="#8b949e">→</text><text x="228" y="100" font-size="11" fill="#8b949e">→</text><text x="324" y="100" font-size="11" fill="#8b949e">→</text><text x="420" y="100" font-size="11" fill="#8b949e">→</text><text x="516" y="100" font-size="11" fill="#8b949e">→</text><text x="612" y="100" font-size="11" fill="#8b949e">→</text>
 
@@ -888,9 +888,44 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     window.ingrid.archStatus().then(renderArch).catch(function (e) { aid('archFoot').textContent = '状态获取失败：' + (e && e.message || e); });
   }
 
+  // CityVerse 二级架构实时状态：主进程探测 intel/dashboard.py /api/overview
+  var IS_CV_LIVE = !!(window.ingrid && window.ingrid.cityverseOverview);
+  function setCvTxt(id, txt) { var e = aid(id); if (e) e.textContent = txt; }
+  function renderCityverse(s) {
+    var st = aid('cv-status');
+    if (!st) return;
+    if (!s) { st.textContent = '不可用'; return; }
+    if (s.online) {
+      st.setAttribute('fill', '#3fb950');
+      st.textContent = '在线 · 更新于 ' + fmtClock(s.now);
+      setCvTxt('cv-findings', '采集 ' + s.findings + ' 条');
+      setCvTxt('cv-insights', '洞察 ' + s.insights + ' 条');
+      setCvTxt('cv-playbook', '玩法 ' + s.playbook + ' 条');
+      setCvTxt('cv-plans', '规划 ' + s.plans + ' · 待批 ' + s.plansPending);
+      setCvTxt('cv-exec', '执行 ' + s.runs + ' 次');
+      setCvTxt('cv-gate', '门禁 ' + s.gates + ' 次');
+    } else {
+      st.setAttribute('fill', '#d29922');
+      st.textContent = '控制台未启动';
+      setCvTxt('cv-findings', '舆情·情感');
+      setCvTxt('cv-insights', '教训/功能');
+      setCvTxt('cv-playbook', 'AR 化');
+      setCvTxt('cv-plans', 'ITAgent');
+      setCvTxt('cv-exec', 'patch');
+      setCvTxt('cv-gate', '审查');
+    }
+  }
+  function pollCityverse() {
+    if (!IS_CV_LIVE) return;
+    window.ingrid.cityverseOverview().then(renderCityverse).catch(function (e) {
+      renderCityverse({ online: false, error: String((e && e.message) || e), now: Date.now(), findings: 0, insights: 0, playbook: 0, plans: 0, plansPending: 0, runs: 0, gates: 0 });
+    });
+  }
+
   if (IS_ARCH) {
     document.querySelectorAll('#viewArch .edge-data').forEach(function (e) { e.classList.add('arch-flow'); });
     pollArch(); setInterval(pollArch, 3000);
+    pollCityverse(); setInterval(pollCityverse, 5000);
   } else {
     renderArch(null);
   }
