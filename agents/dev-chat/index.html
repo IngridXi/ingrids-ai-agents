@@ -1331,7 +1331,7 @@
       '<tool name="工具名">{"参数":"值"}</tool>\n\n可用工具：\n' + tools.map(function (t) { return '- ' + t; }).join('\n') +
       '\n\n【工具调用格式铁律】开始标签必须是 <tool name="工具名">，结束标签必须是 </tool>，两者完全一致、成对出现；结束标签绝不能写成 </tool parameter> 或加任何多余文字。参数必须是合法的 JSON 对象，例如 <tool name="fs_read">{"path":"/绝对路径"}</tool>。\n' +
       '收到工具返回结果后，基于真实结果继续回答；不要编造不存在的文件路径或内容。调用工具时，直接输出 <tool> 请求即可，不要复述你的计划或步骤；最终答案只写一遍，不要重复前面已经说过的话。\n' +
-      '注意：所有「写」类操作（fs_* / db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
+      '注意：写入/追加文件（fs_write、fs_append）会自动直接执行（覆盖前自动备份），无需确认；修改已有文件（fs_edit）、移动（fs_move）、删除（fs_delete）以及知识库写入（db_obsidian_* / db_zotero_tag / db_zotero_collection）会先弹给用户确认，用户批准后才真正执行；文件操作只允许用户主目录内普通文件，系统目录与隐藏目录受保护。Zotero 写入首次还会在 Zotero 里弹授权框，请点「始终允许(Always Allow)」。';
   }
   // 原生工具定义（OpenAI tools 参数格式）：让模型走 API 原生 function calling，而非靠文本 <tool> 标签
   // 这是根治「模型只说打算、不真正调用工具」的关键——推理型模型给 tools 参数后才会稳定产出 tool_calls
@@ -1415,12 +1415,15 @@
     if (n === 'skill_install') return window.ingrid.toolSkillInstall(call.args);
     if (n === 'skill_install_from_url') return window.ingrid.toolSkillInstallFromUrl(call.args);
     if (n === 'web_search' && webEnabled) return window.ingrid.webSearch({ query: String((call.args && call.args.query) || ''), n: 5 });
-    // 写类操作：先请求用户审批，批准后执行
-    if (caps.fs && (n === 'fs_write' || n === 'fs_append' || n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
+    // 写类操作：写入新文件（fs_write/fs_append）默认自动执行（覆盖前自动备份）；修改/移动/删除已有文件仍需审批
+    if (caps.fs && (n === 'fs_write' || n === 'fs_append')) {
+      autoLog(n, call.args);
+      if (n === 'fs_write') return window.ingrid.toolFsWrite(call.args);
+      return window.ingrid.toolFsAppend(call.args);
+    }
+    if (caps.fs && (n === 'fs_edit' || n === 'fs_move' || n === 'fs_delete')) {
       return requestWriteApproval(n, call.args).then(function (ok) {
         if (!ok) return { ok: false, error: '已由用户拒绝，未执行' };
-        if (n === 'fs_write') return window.ingrid.toolFsWrite(call.args);
-        if (n === 'fs_append') return window.ingrid.toolFsAppend(call.args);
         if (n === 'fs_edit') return window.ingrid.toolFsEdit(call.args);
         if (n === 'fs_move') return window.ingrid.toolFsMove(call.args);
         return window.ingrid.toolFsDelete(call.args);
