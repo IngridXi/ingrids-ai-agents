@@ -159,9 +159,11 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 .arch-flow-fast{animation:dashflow .45s linear infinite}
 @keyframes dashflow{to{stroke-dashoffset:-12}}
 .arch-node-active{animation:archpulse 1.4s ease-in-out infinite}
-.arch-node-active rect{stroke:var(--warn);stroke-width:2}
+.arch-node-active rect{stroke:var(--warn) !important;stroke-width:2.5}
 @keyframes archpulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){.arch-flow,.arch-flow-fast,.arch-node-active{animation:none}}
+.cv-arrow{fill:var(--dim)}
+.cv-arrow.flow{animation:archpulse .9s ease-in-out infinite;fill:var(--warn)}
+@media (prefers-reduced-motion:reduce){.arch-flow,.arch-flow-fast,.arch-node-active,.cv-arrow.flow{animation:none}}
 </style>
 </head>
 <body>
@@ -399,9 +401,9 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
             <g><rect x="428" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="472" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">执行</text><text id="cv-exec" x="472" y="110" text-anchor="middle" font-size="10" fill="#8b949e">patch</text></g>
             <g><rect x="524" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="568" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">门禁</text><text id="cv-gate" x="568" y="110" text-anchor="middle" font-size="10" fill="#8b949e">审查</text></g>
             <g><rect x="620" y="68" width="88" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="664" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">落地</text><text x="664" y="110" text-anchor="middle" font-size="10" fill="#8b949e">apply</text></g>
-            <text x="132" y="100" font-size="11" fill="#8b949e">→</text><text x="228" y="100" font-size="11" fill="#8b949e">→</text><text x="324" y="100" font-size="11" fill="#8b949e">→</text><text x="420" y="100" font-size="11" fill="#8b949e">→</text><text x="516" y="100" font-size="11" fill="#8b949e">→</text><text x="612" y="100" font-size="11" fill="#8b949e">→</text>
+            <text x="132" y="100" font-size="11" class="cv-arrow">→</text><text x="228" y="100" font-size="11" class="cv-arrow">→</text><text x="324" y="100" font-size="11" class="cv-arrow">→</text><text x="420" y="100" font-size="11" class="cv-arrow">→</text><text x="516" y="100" font-size="11" class="cv-arrow">→</text><text x="612" y="100" font-size="11" class="cv-arrow">→</text>
 
-            <g><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
+            <g><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text id="cv-approve" x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
             <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
 
             <g><rect x="44" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="194" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">PostgreSQL cityverse 库</text><text x="194" y="282" text-anchor="middle" font-size="10" fill="#8b949e">community / insights / playbook / build 等 10 表</text></g>
@@ -891,10 +893,20 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   // CityVerse 二级架构实时状态：主进程探测 intel/dashboard.py /api/overview
   var IS_CV_LIVE = !!(window.ingrid && window.ingrid.cityverseOverview);
   function setCvTxt(id, txt) { var e = aid(id); if (e) e.textContent = txt; }
+  function cvNode(id) { var t = aid(id); return t ? t.parentNode : null; }
+  function cvSetActive(id, on) { var g = cvNode(id); if (g) g.classList.toggle('arch-node-active', !!on); }
+  function cvClearActive() {
+    document.querySelectorAll('#projView-cityverse .arch-node-active').forEach(function (n) { n.classList.remove('arch-node-active'); });
+    document.querySelectorAll('#projView-cityverse .cv-arrow.flow').forEach(function (a) { a.classList.remove('flow'); });
+  }
+  function cvSetFlow(on) {
+    document.querySelectorAll('#projView-cityverse .cv-arrow').forEach(function (a) { a.classList.toggle('flow', !!on); });
+  }
   function renderCityverse(s) {
     var st = aid('cv-status');
     if (!st) return;
     if (!s) { st.textContent = '不可用'; return; }
+    cvClearActive();
     if (s.online) {
       st.setAttribute('fill', '#3fb950');
       st.textContent = '在线 · 更新于 ' + fmtClock(s.now);
@@ -904,6 +916,15 @@ $('#sentimentBox').addEventListener('input', (ev) => {
       setCvTxt('cv-plans', '规划 ' + s.plans + ' · 待批 ' + s.plansPending);
       setCvTxt('cv-exec', '执行 ' + s.runs + ' 次');
       setCvTxt('cv-gate', '门禁 ' + s.gates + ' 次');
+      // 「正在工作」动态高亮：执行中→执行节点琥珀呼吸；审查中→门禁；待审批→人工审批
+      var a = s.active || {};
+      var executing = (a.tasksRunning > 0) || (a.plansExecuting > 0);
+      var reviewing = a.gatesReviewing > 0;
+      var waiting = a.pendingApproval > 0;
+      cvSetActive('cv-exec', executing);
+      cvSetActive('cv-gate', reviewing);
+      cvSetActive('cv-approve', waiting);
+      cvSetFlow(executing || reviewing);
     } else {
       st.setAttribute('fill', '#d29922');
       st.textContent = '控制台未启动';

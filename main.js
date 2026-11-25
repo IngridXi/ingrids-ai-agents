@@ -6071,7 +6071,8 @@ ipcMain.handle('arch:status', () => archStatus());
 async function cityverseOverview() {
   const out = { online: false, error: '', now: Date.now(),
     findings: 0, insights: 0, insightsReady: 0,
-    playbook: 0, plans: 0, plansPending: 0, plansApproved: 0, runs: 0, gates: 0 };
+    playbook: 0, plans: 0, plansPending: 0, plansApproved: 0, runs: 0, gates: 0,
+    active: { tasksRunning: 0, plansExecuting: 0, gatesReviewing: 0, pendingApproval: 0 } };
   if (!(await isPortOpen(8756))) {
     out.error = '控制台未启动（python3 intel/dashboard.py）';
     return out;
@@ -6094,6 +6095,14 @@ async function cityverseOverview() {
     out.plansApproved = Number((j.plans || {})['approved'] || 0);
     out.runs = Number(j.executor_runs || 0);
     out.gates = sum(j.gates);
+    if (j.active) {
+      out.active = {
+        tasksRunning: Number(j.active.tasks_running || 0),
+        plansExecuting: Number(j.active.plans_executing || 0),
+        gatesReviewing: Number(j.active.gates_reviewing || 0),
+        pendingApproval: Number(j.active.pending_approval || 0),
+      };
+    }
   } catch (e) { out.error = String((e && e.message) || e); }
   return out;
 }
