@@ -5455,8 +5455,83 @@ function toolRunShell(p) {
   }
 }
 
-function toolBinPatch(p) {
-  const target = path.resolve(String((p && p.path) || ''));
+// ---------- CityVerse 总控（tools/chief.py）----------
+// 为什么不直接给通用助手 run_shell：通用助手的职责是「指挥」不是「执行」。
+// 这里只暴露总控自己的动作，脚本路径 / 工作目录 / 命令名全部写死，模型只能填参数。
+// 即使模型被诱导，最大破坏面也只是「往队列里投一条任务」——而投进去之后
+// 能干什么，仍由总控自己的权限模型兜底（kind 白名单、codex 只能在仓库内跑）。
+const CHIEF_REPO = process.env.CITYVERSE_REPO || path.join(app.getPath('home'), 'Dev', 'cityverse-ar');
+const CHIEF_KINDS = new Set(['codex', 'ingrids', 'intel', 'strategy', 'asset', 'shell']);
+const CHIEF_READONLY = new Set(['ls', 'show', 'log', 'doctor', 'board', 'tell_prompt']);
+
+function chiefRun(script, args, input) {
+  try {
+    const out = execFileSync(SYSTEM_PY3, [path.join(CHIEF_REPO, 'tools', script)].concat(args), {
+      cwd: CHIEF_REPO, encoding: 'utf8', env: pyEnv(), input: input == null ? '' : String(input),
+      timeout: 180000, maxBuffer: 8 * 1024 * 1024,
+    });
+    return { ok: true, output: String(out).slice(0, 60000) };
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: false, error: '解释器或脚本不存在：' + SYSTEM_PY3 };
+    return {
+      ok: false, error: String((e && e.message) || e),
+      stdout: e && e.stdout ? String(e.stdout).slice(0, 20000) : '',
+      stderr: e && e.stderr ? String(e.stderr).slice(0, 20000) : '',
+    };
+  }
+}
+
+function toolChief(p) {
+  const action = String((p && p.action) || '').trim();
+  const out = (r) => Object.assign({ action: action, readonly: CHIEF_READONLY.has(action) }, r);
+  if (!fs.existsSync(path.join(CHIEF_REPO, 'tools', 'chief.py'))) {
+    return out({ ok: false, error: '找不到仓库：' + CHIEF_REPO + '（可用环境变量 CITYVERSE_REPO 指定）' });
+  }
+  const id = String((p && p.id) || '').trim();
+  if (['show', 'log', 'cancel'].indexOf(action) >= 0 && !/^\d+$/.test(id)) {
+    return out({ ok: false, error: 'action=' + action + ' 需要数字 id' });
+  }
+
+  if (action === 'ls') {
+    const n = String(Math.min(Math.max(Number(p && p.limit) || 15, 1), 50));
+    return out(chiefRun('chief.py', ['ls', '-n', n]));
+  }
+  if (action === 'show') return out(chiefRun('chief.py', ['show', id]));
+  if (action === 'log') return out(chiefRun('chief.py', ['log', id]));
+  if (action === 'doctor') return out(chiefRun('chief.py', ['doctor']));
+  if (action === 'board') return out(chiefRun('ingrids.py', ['board']));
+  if (action === 'cancel') return out(chiefRun('chief.py', ['cancel', id]));
+
+  // 把「看板 + 队列 + worker 清单」一次性取出来，供模型自己翻译成任务
+  if (action === 'tell_prompt') {
+    const words = String((p && p.words) || '').slice(0, 2000);
+    if (!words.trim()) return out({ ok: false, error: 'tell_prompt 需要 words（用户原话）' });
+    return out(chiefRun('chief.py', ['tell', '--prompt', words]));
+  }
+
+  if (action === 'submit') {
+    const kind = String((p && p.kind) || '').trim();
+    if (!CHIEF_KINDS.has(kind)) return out({ ok: false, error: 'kind 必须是 ' + Array.from(CHIEF_KINDS).join(' / ') });
+    const title = String((p && p.title) || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
+    if (!title) return out({ ok: false, error: 'submit 需要 title' });
+    const spec = String((p && p.spec) || '').slice(0, 20000);
+    if (kind === 'codex' && !spec.trim()) return out({ ok: false, error: 'codex 任务必须给 spec，否则 worker 起来就空转' });
+    const argv = ['submit', '--kind', kind, '--title', title];
+    const args = String((p && p.args) || '').slice(0, 4000);
+    if (args) argv.push('--args', args);
+    const timeout = Number(p && p.timeout) || 0;
+    if (timeout > 0) argv.push('--timeout', String(Math.min(timeout, 14400)));
+    const prio = Number(p && p.priority) || 0;
+    if (prio) argv.push('--priority', String(Math.min(Math.max(prio, 1), 999)));
+    const r = chiefRun('chief.py', argv, spec);
+    if (r.ok) r.hint = '已入队。总控每 3–5 秒扫一次队列，等下再 ls 就能看到 running；不要在这里等它跑完。';
+    return out(r);
+  }
+
+  return out({ ok: false, error: '未知 action：' + (action || '(空)') + '，可用：' + Array.from(CHIEF_READONLY).concat(['submit', 'cancel']).join(' / ') });
+}
+
+function toolBinPatch(p) {  const target = path.resolve(String((p && p.path) || ''));
   if (!target || !fs.existsSync(target)) return { ok: false, error: '文件不存在' };
   if (!isSafeWritePath(target)) return { ok: false, error: '拒绝补丁该位置（仅允许主目录内的文件，可先把目标复制到主目录再补）' };
   const script = path.join(__dirname, 'scripts', 'bin_patch.py');
@@ -5484,6 +5559,7 @@ ipcMain.handle('tool:bin:disasm', (_e, p) => toolBinDisasm(p));
 ipcMain.handle('tool:bin:deps', (_e, p) => toolBinDeps(p));
 ipcMain.handle('tool:bin:hex', (_e, p) => toolBinHex(p));
 ipcMain.handle('tool:run:shell', (_e, p) => toolRunShell(p));
+ipcMain.handle('tool:chief', (_e, p) => toolChief(p));
 ipcMain.handle('tool:bin:patch', (_e, p) => toolBinPatch(p));
 ipcMain.handle('tool:py:decompile', (_e, p) => toolPyDecompile(p));
 

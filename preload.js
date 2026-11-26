@@ -246,6 +246,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolBinDeps: (payload) => ipcRenderer.invoke('tool:bin:deps', payload),
   toolBinHex: (payload) => ipcRenderer.invoke('tool:bin:hex', payload),
   toolRunShell: (payload) => ipcRenderer.invoke('tool:run:shell', payload),
+  toolChief: (payload) => ipcRenderer.invoke('tool:chief', payload),
   toolBinPatch: (payload) => ipcRenderer.invoke('tool:bin:patch', payload),
   toolPyDecompile: (payload) => ipcRenderer.invoke('tool:py:decompile', payload),
 

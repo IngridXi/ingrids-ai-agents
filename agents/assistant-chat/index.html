@@ -448,7 +448,7 @@
   var MAX_TOOL_ROUNDS = 10;
 
   function agentCapabilities() {
-    var caps = { fs: false, db: false, computer: false };
+    var caps = { fs: false, db: false, computer: false, chief: false };
     try {
       var agents = IS_DESKTOP ? window.ingrid.loadAgentsSync() : [];
       for (var i = 0; i < agents.length; i++) {
@@ -464,6 +464,10 @@
             caps.db = t.indexOf('db') >= 0;
             caps.computer = agents[i].computer === 'on' || agents[i].computer === true;
           }
+          // chief：指挥本机 CityVerse 总控（tools/chief.py）。不在 CAPABILITIES 表里，
+          // 用 tools 数组声明即可 —— 与 dev-chat 的 bin 同一套兼容写法。
+          var tl = (agents[i].tools || []);
+          caps.chief = !!(agents[i].caps && agents[i].caps.chief) || tl.indexOf('chief') >= 0;
           break;
         }
       }
@@ -973,6 +977,16 @@
       tools.push('db_zotero_collection：把文献归档到集合（文件夹），参数 {"itemKeys":["key1","key2"],"collectionName":"集合名"}（集合不存在会自动新建）');
     }
     if (caps.computer) tools.push('computer：操作电脑界面（打开 App、点按钮、填表单），参数 {"task":"要做什么"}');
+    if (caps.chief) {
+      tools.push('chief：指挥本机 CityVerse 项目的常驻总控（它在后台 24 小时跑，负责派活给 codex / 流水线 / 素材 agent）。参数 {"action":"动作", ...}，动作有：\n' +
+        '  ls（看队列，可选 limit，默认 15）｜show（需 id，看某条详情与事件流）｜log（需 id，看某条日志）\n' +
+        '  board（看任务看板：谁在做哪张卡）｜doctor（总控自检：数据库/单实例/worker 可用性）\n' +
+        '  tell_prompt（需 words=用户原话，返回「看板+队列+可用 worker」的完整事实，供你自己翻译成任务）\n' +
+        '  submit（需 kind、title、spec；可选 args、priority、timeout）—— 真正派活\n' +
+        '  cancel（需 id）—— 取消排队中的任务\n' +
+        'kind 只能取：codex（真改代码，唯一消耗 codex 额度）｜ingrids（跑仓库自带的验收/看板脚本）｜intel（建设流水线）｜strategy（战略参谋）｜asset（素材采购）｜shell（白名单命令）。\n' +
+        '派活铁律：① spec 必须自包含——要读哪张卡（agents/tasks/T0x-*.md）、只许改哪些文件、不许动什么、改完跑哪条验收命令、回报要贴哪些数字；② spec 里绝不写「提交」「push」，worker 没有 git 权限，提交权在用户手里；③ 拿不准就先 tell_prompt 或 board 看一眼，别凭空造需求；④ 投完只回报任务 id 和它要干什么，不要在这里等它跑完（一个 codex 任务通常几分钟）；⑤ 用户只是问进度就用 ls / board，不要 submit。');
+    }
     tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片 + 智能图形版式 + 剑桥学术配色）。slides 每页可含 title/subtitle/layout/bullets/charts/table/image/notes/blocks；layout 取值 title标题/section章节/content正文/twoCol双栏/blank空白/cards卡片/flow流程/pyramid金字塔/compare对比；blocks 是「板块」数组 [{title,points:[...]}]，有 blocks 时按板块数量自动匹配智能图形版式（2块左右分栏、3块三栏、4块2×2矩阵、更多则网格；配合 flow/pyramid/compare 做流程/金字塔/对比），把文字嵌进图形而非罗列；顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
     tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}。内置工具，机器已装好依赖，直接调用即可，勿用 shell 手动 pip install');
     tools.push('image_process：本地图片处理（图片不出本机）。参数 {"action":"remove_bg|resize|convert|info","input":"图片绝对路径","output":"输出路径","width":800,"height":600}。remove_bg 用 rembg 抠图去背景输出透明 PNG（首次会下载 u2net 模型）；resize 缩放；convert 转格式；info 查尺寸');
@@ -1013,6 +1027,18 @@
       fn('db_zotero_collection', '把文献归档到集合', { itemKeys: { type: 'array', items: { type: 'string' } }, collectionName: { type: 'string' } });
     }
     if (caps.computer) fn('computer', '操作电脑界面（打开 App、点按钮、填表单）', { task: { type: 'string', description: '要做什么' } });
+    if (caps.chief) fn('chief', '指挥本机 CityVerse 常驻总控（后台 24 小时跑，负责派活给 codex/流水线/素材 agent）。ls 看队列、board 看任务看板、doctor 自检、tell_prompt 取上下文、submit 派活、cancel 取消、show/log 看详情。spec 必须自包含且不要写提交/push。', {
+      action: { type: 'string', description: 'ls / show / log / board / doctor / tell_prompt / submit / cancel' },
+      id: { type: 'string', description: 'show/log/cancel 用：任务 id（数字）' },
+      limit: { type: 'integer', description: 'ls 用：返回条数（默认 15）' },
+      words: { type: 'string', description: 'tell_prompt 用：用户原话' },
+      kind: { type: 'string', description: 'submit 用：codex / ingrids / intel / strategy / asset / shell' },
+      title: { type: 'string', description: 'submit 用：一句话标题' },
+      spec: { type: 'string', description: 'submit 用：给 worker 的完整指令（codex 必填）' },
+      args: { type: 'string', description: 'submit 用：命令行参数（ingrids/intel/asset 用，如 "verify --only Env,Align"）' },
+      priority: { type: 'integer', description: 'submit 用：1-999，小的先跑，默认 100' },
+      timeout: { type: 'integer', description: 'submit 用：超时秒数（可选）' },
+    });
     fn('doc_generate', '生成文档到「导出」目录：type=pptx 产出学术级幻灯片（原生可编辑图表/表格/图片 + 智能图形版式 + 剑桥学术配色）。slides 每页 {title, subtitle, layout, bullets, blocks, charts, table, image, notes}；layout 取 title/section/content/twoCol/blank/cards/flow/pyramid/compare；blocks 为板块数组 [{title, points:[...]}]，有 blocks 时按数量自动匹配智能图形版式（左右分栏/三栏/2×2矩阵/网格/流程/金字塔/对比），文字嵌进图形而非罗列。type=docx/md 用 content；type=xlsx 用 sheets。', { type: { type: 'string', description: 'pptx / docx / xlsx / md' }, title: { type: 'string', description: '文档标题（同时作文件名）' }, theme: { type: 'string', description: '配色主题：academic（默认，剑桥学术风）/ minimal / corporate' }, content: { type: 'string', description: '正文 Markdown（docx/md 用）' }, slides: { type: 'array', description: '幻灯片数组（pptx 用）。每项 { title, subtitle, layout(title/section/content/twoCol/blank/cards/flow/pyramid/compare), bullets:[字符串或{text,sub:[...]}], blocks:[{title,points:[...]}]（板块数组，按数量自动匹配智能图形版式）, charts:[{type:bar/line/pie/doughnut/area/radar, title, labels:[...], values:[...]} 或多系列 {type,title,labels,series:[{name,values}]}], table:{headers:[...],rows:[[...]]}, image:图片绝对路径, notes:演讲者备注 }' }, sheets: { type: 'array', description: '工作表数组（xlsx 用），每项 {name, rows:[[...]]}' } });
     fn('pptx_fill_template', '把内容套进已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 查看模板每页形状名与占位符，再 action=fill 填空', { action: { type: 'string', description: 'inspect（查看模板结构）或 fill（填空，默认）' }, template: { type: 'string', description: '模板 .pptx 绝对路径' }, output: { type: 'string', description: '输出 .pptx 路径（可选，默认另存为 *_filled_*.pptx）' }, replacements: { type: 'object', description: '全局文本替换 {"{{占位符}}":"新文字"}' }, byName: { type: 'array', description: '按形状名填空 [{name,text}]' } });
     fn('image_process', '本地图片处理（rembg 抠图去背景 / 缩放 / 格式转换 / 信息查询，图片不出本机）', { action: { type: 'string', description: 'remove_bg / resize / convert / info' }, input: { type: 'string', description: '输入图片绝对路径' }, output: { type: 'string', description: '输出路径（可选）' }, width: { type: 'integer', description: 'resize 目标宽（可选）' }, height: { type: 'integer', description: 'resize 目标高（可选）' } });
@@ -1037,6 +1063,17 @@
     if (n === 'db_obsidian_report' && caps.db) return window.ingrid.toolDbObsidianReport();
     if (n === 'db_zotero_report' && caps.db) return window.ingrid.toolDbZoteroReport();
     if (n === 'computer' && caps.computer) return runComputerTask(call.args && call.args.task).then(function (s) { return { ok: true, summary: s }; });
+    // chief：只读动作直接跑；submit / cancel 会改变队列，先弹确认
+    if (n === 'chief' && caps.chief) {
+      var ca = call.args || {};
+      var cact = String(ca.action || '').trim();
+      var isRead = ['ls', 'show', 'log', 'board', 'doctor', 'tell_prompt'].indexOf(cact) >= 0;
+      if (isRead) return window.ingrid.toolChief(ca);
+      return requestWriteApproval('chief_' + cact, ca).then(function (ok) {
+        if (!ok) return { ok: false, error: '已由用户拒绝，未执行' };
+        return window.ingrid.toolChief(ca);
+      });
+    }
     if (n === 'doc_generate') return window.ingrid.docGenerate(call.args);
     if (n === 'pptx_fill_template') return window.ingrid.toolPptxFill(call.args);
     if (n === 'image_process') return window.ingrid.toolImageProcess(call.args);
@@ -1088,6 +1125,11 @@
     if (kind === 'db_obsidian_promote') return { icon: '⬆️', title: '晋升到主库（你已确认值得留）', body: String((args && args.path) || ''), extra: '目标：' + String((args && args.folder) || '主库根目录') };
     if (kind === 'db_zotero_tag') return { icon: '🏷️', title: '给 Zotero 文献打标签', body: String((args && args.itemKey) || ''), extra: '标签：' + ((args && args.tags) || []).join('、') + '\n\n首次执行会弹 Zotero 授权框，请点「始终允许」' };
     if (kind === 'db_zotero_collection') return { icon: '📁', title: '归档到 Zotero 集合', body: ((args && args.itemKeys) || []).length + ' 篇 → 「' + String((args && args.collectionName) || (args && args.collectionKey) || '') + '」', extra: '首次执行会弹 Zotero 授权框，请点「始终允许」' };
+    if (kind === 'chief_submit') return {
+      icon: '🧭', title: '派活给总控', body: '[' + String((args && args.kind) || '') + '] ' + String((args && args.title) || ''),
+      extra: String((args && args.spec) || String((args && args.args) || '')).slice(0, 400) + '\n\n投进队列后总控会自己派给 worker；提交权仍在用户手里，worker 不会 push。',
+    };
+    if (kind === 'chief_cancel') return { icon: '⛔', title: '取消总控任务', body: '#' + String((args && args.id) || ''), extra: '排队中的任务会被标记 cancelled；已经在跑的可能来不及停。' };
     return { icon: '❓', title: kind, body: '', extra: '' };
   }
   function autoLog(kind, args) {
@@ -1256,8 +1298,24 @@
   function buildSystemPrompt() {
     var caps = agentCapabilities();
     var s = systemPrompt + toolSpecText(caps);
-    if (caps.fs || caps.db || caps.computer) {
+    if (caps.fs || caps.db || caps.computer || caps.chief) {
       s += '\n\n【自主工作准则 · 必须遵守】你是能长时间自主完成复杂任务的智能体，不是一问一答的聊天机器人：① 工具失败 / 报错 / 路径不存在时，先读错误信息、找原因，再换一种办法重试（先 fs_list 列目录看真实名称、用 fs_search 搜索、检查路径里的空格与全角字符、确认 iCloud 文件是否已下载），绝不要停在「我失败了」或直接放弃；② 复杂任务自己拆成多步、一步步推进，一步没成不要就停下；③ 完成前先核对结果是否真的满足用户要求（文件是否找到、内容是否对得上、任务是否做完），没做完就继续，不草率宣称「已完成」；④ 同一招失败两次就换思路；⑤ 全程持续自主推进、少打扰多交付：不要每做一步就停下来问用户，只有在三种情况下才主动停下向用户汇报——(a) 任务已全部完成、给出最终结果时；(b) 确实需要用户做决定、提供信息或授权才能继续时；(c) 反复尝试后确实无法继续、必须求助时；除此之外，把能查、能算、能写、能核对的步骤都自己做完，一次给到位；⑥ 只读类工具（fs_read / fs_list / fs_search / web_search / db_query）对同一文件、同一目录、同一关键词，本会话只调用一次，拿到结果就记住要点，后续直接引用已获得的内容，绝不反复重读同一文件、反复列同一目录、反复搜同一关键词——重复读取既浪费 token 又拖慢进度；⑦ 每次调用只读类工具之前，先在思考里说清「这次要填补什么空白」，读不到新信息就不要再调工具；⑧ 信息够了就停：每拿到一批工具结果后，先判断是否已经足够完成任务——够了就直接写正文交付，绝不要为了「更全面」再读更多文件、再搜更多次；同一任务累计只读工具调用尽量控制在 6 次以内。';
+    }
+    if (caps.chief) {
+      s += '\n\n【总控指挥 · CityVerse 项目 · 你的第二重身份】用户本机有一个 24 小时常驻的「总控」进程（launchd 跑的 tools/chief.py），' +
+        '它持有任务队列（PostgreSQL agent_jobs），按队列把活派给 codex（真改代码）、建设流水线 intel、战略参谋 strategy、素材采购 asset、仓库脚本 ingrids。' +
+        '你是它的**对话入口**：用户不去终端敲命令，只跟你说话，你用 chief 工具把话翻译成任务投进去。' +
+        '\n三条边界，任何时候都不能越：' +
+        '\n① **你是指挥，不是执行者**。不要用 fs_write 去改项目代码、不要试图自己完成 codex 的活 —— 那是 worker 的事，你只负责派得准、看得清。' +
+        '\n② **提交权在用户手里**。你派出去的 worker 没有 git 权限，spec 里永远不要出现「提交」「push」「git commit」。改完的东西停在工作区，用户自己验收后提交。' +
+        '\n③ **不替用户拍板**。涉及「改采集物真值 / 新增第三方依赖或付费素材 / 改验收标准 / 需要真机才能验」的，先说明为什么必须由用户决定，不要直接投。' +
+        '\n\n用户说「推进某张卡 / 接着干 / 把剩下的做完」时的标准动作：' +
+        '\n1. `board` 看看板（哪张 TODO / CLAIMED / DONE / BLOCKED）+ `ls` 看队列有没有在跑的 —— 这两步是必须的，不许凭记忆答。' +
+        '\n2. 对要派的那张卡，用 `fs_read` 读 `agents/tasks/T0x-*.md`（每张卡自带现状行号、禁区、验收命令、回报格式）。' +
+        '\n3. 用 `submit` 投：kind=codex，title 用卡片标题，spec 必须自包含 —— 要读哪张卡、只许改哪些文件、不许动什么、改完跑哪条验收命令、回报要贴哪些数字。' +
+        '\n4. 投完只回报「任务 #id，要干什么，预计几分钟」，不要在这里干等。用户再问进度时，用 `ls` / `show id` 拿真实状态回答。' +
+        '\n\n用户说「帮我看看进度 / 现在到哪了」时：只调 `ls` 和 `board`，用真实数据答，绝不编造完成度。' +
+        '\n用户说「这个任务不对 / 停下来」时：先用 `ls` 找到 id，再 `cancel id`（排队中的能停，正在跑的可能来不及）。';
     }
     if (writeAuthMode === 'session' && (caps.fs || caps.db)) {
       s += '\n\n【批量授权模式】用户已开启批量授权：你可以在一次回复里连续输出多个写操作工具（一次多个 <tool>），系统会全部自动执行，无需等待逐个确认。';

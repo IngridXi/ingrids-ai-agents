@@ -693,6 +693,16 @@ SEED_AGENTS.forEach(function (seed) {
   var a = registry.list().find(function (x) { return x.name === nm; });
   if (a) registry.remove(a.id);
 });
+// v10 迁移：给通用助手开启 chief 能力 —— 让它能直接指挥本机 CityVerse 常驻总控
+// （tools/chief.py）。只增不改：不动已有 fs/db，computer 仍默认关。
+// 为什么不用 run_shell：通用助手是「指挥」不是「执行」，给它一个只能调总控的
+// 窄工具，破坏面远小于一把任意命令的钥匙。
+['通用助手'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (!a || !a.href) return;
+  var tools = Array.isArray(a.tools) ? a.tools.slice() : [];
+  if (tools.indexOf('chief') < 0) { tools.push('chief'); registry.update(a.id, { tools: tools }); }
+});
 window.__reg = registry;
 
 /* ---------- 渲染 ---------- */
