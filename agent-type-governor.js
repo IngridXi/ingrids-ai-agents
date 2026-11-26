@@ -97,6 +97,8 @@ const SEED_TYPES = {
   '监事': 'pipeline', '监督者': 'pipeline', '知识沉淀官': 'pipeline',
   // 治理官自己：主动型（每天定时巡检）
   '智能路由ra': 'active', '调度中枢': 'active',
+  // 运营治理官（CFO / 模型调控 / Agent 总管）：主动型（启动 + 定时巡检）
+  'cfo成本官': 'active', 'cfo': 'active', '模型调控官': 'active', 'agent总管': 'active', '总管': 'active',
 };
 
 /* ---------- 3a. 前端目录里「不是 agent」的页面（排除，不参与类型治理） ---------- */

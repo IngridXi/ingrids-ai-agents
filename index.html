@@ -323,6 +323,7 @@
         <button class="side-item" id="navMermaid"><span class="ic" data-icon="flow"></span><span>流程图</span></button>
         <button class="side-item" id="navApiUsage"><span class="ic" data-icon="money"></span><span>API 用量</span><span class="bdot" id="apiDot" hidden></span></button>
         <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>类型治理</span><span class="scnt" id="skillsCount">0</span></button>
+        <button class="side-item" id="navOps"><span class="ic" data-icon="sliders"></span><span>运营治理</span></button>
         <button class="side-item" id="navSessions"><span class="ic" data-icon="clock"></span><span>会话回放</span></button>
         <button class="side-item" id="navSettings"><span class="ic" data-icon="settings"></span><span>引擎设置</span></button>
       </nav>
@@ -471,6 +472,75 @@ const SEED_AGENTS = [
         { kind: '治理引擎', label: 'agent-type-governor.js' },
         { kind: '委派', label: 'AgentOrchestrator（agents-core.js）' },
         { kind: '账本', label: 'UsageLedger · data/usage/*.jsonl' },
+      ],
+    },
+  },
+  {
+    name: 'CFO 成本官', emoji: '💰',
+    tag: '实时用量/费用 · 预算监控 · 模型选型分析',
+    status: 'active', badge: '运营治理', role: 'orchestrator', canControl: true,
+    engine: 'deepseek', engineLabel: '治理引擎 · 本地规则判定',
+    soul: '你是 CFO 成本官（运营治理）。实时监控工作台 API 用量与费用：按 agent、按引擎、按天聚合成本与 token，追踪月度预算（超标告警），并分析「每个 agent 该用什么模型」——按任务类型（编码/推理/研究/写作/翻译/视觉/音频）加成本加权推荐：简单任务本地零成本优先，深度任务上云端旗舰，能省则省。',
+    fallbacks: ['gpt', 'qwen'],
+    detail: {
+      sub: 'CFO · 成本控制与模型选型',
+      desc: '把原调度中枢里散落的 API 成本能力拆出，独立成一个 CFO 成本官。实时聚合用量/费用（借鉴 LiteLLM 成本账单 + Route42 成本加权），按任务类型给每个 agent 推荐最划算的模型（借鉴 Louter 内容分类路由）。',
+      workflow: [
+        { t: '实时记账', s: '按 agent / 引擎 / 天聚合成本与 token' },
+        { t: '预算监控', s: '月度预算进度 + 超标告警' },
+        { t: '模型选型', s: '任务分类 + 成本加权 → 推荐最省模型' },
+        { t: '节省分析', s: '本地零成本占比 + 潜在节省估算' },
+      ],
+      capabilities: ['实时用量/费用', '预算监控', '模型选型分析', '节省估算', '成本告警'],
+      route: [
+        { kind: '治理引擎', label: 'agent-ops-governor.js · analyzeCost / recommendEngine' },
+        { kind: '账本', label: '按月 jsonl（UsageLedger）' },
+      ],
+    },
+  },
+  {
+    name: '模型调控官', emoji: '🎚️',
+    tag: '本地优先 · 占满自动切 API · 手动锁定才固定',
+    status: 'active', badge: '运营治理', role: 'orchestrator', canControl: true,
+    engine: 'deepseek', engineLabel: '治理引擎 · 本地规则判定',
+    soul: '你是模型调控官（运营治理）。整体调控工作台模型使用：本地模型（Ollama）可用且不占满时优先本地（零边际成本）；本地离线或显存占满时自动切到 API 兜底（DeepSeek）。除非用户手动锁定了某 agent 的模型——锁定后才固定用那个模型，否则都由你合理分配。',
+    fallbacks: ['gpt', 'qwen'],
+    detail: {
+      sub: 'Model Governor · 本地优先 + 自动降级 + 锁定',
+      desc: '借鉴 RouteLLM / Route42 的「本地小模型优先（零成本）→ 云端兜底」降级链，加上「手动指定模型绕过自动判断」= 锁定机制。动态探测 Ollama 在线状态与显存占用（/api/ps），本地占满/离线自动切 API。',
+      workflow: [
+        { t: '本地优先', s: '本地模型可用 → 零成本优先' },
+        { t: '占满切换', s: '显存 ≥3 模型或 >16GB → 自动切 API' },
+        { t: '离线兜底', s: 'Ollama 未启动 → 自动切 DeepSeek' },
+        { t: '锁定豁免', s: '手动锁定 → 固定该模型，不再自动改' },
+      ],
+      capabilities: ['本地优先', '占满自动切 API', '离线兜底', '锁定豁免', '动态模型解析'],
+      route: [
+        { kind: '治理引擎', label: 'agent-ops-governor.js · resolveModel / lock' },
+        { kind: '本地探测', label: 'Ollama /api/ps 显存占用' },
+      ],
+    },
+  },
+  {
+    name: 'Agent 总管', emoji: '🧭',
+    tag: '工作量监控 · 增/分割/合并建议 · 团队健康',
+    status: 'active', badge: '运营治理', role: 'orchestrator', canControl: true,
+    engine: 'deepseek', engineLabel: '治理引擎 · 本地规则判定',
+    soul: '你是 Agent 总管（运营治理）。实时监控每个 agent 的工作量（调用次数/token/成本）与工作内容（职责域），动态鉴别需要增加、分割或合并的 agent：职责重叠→合并，工作量过低（空壳）→合并/下线，工作量过高→分割，职责真空→建议新增。确保所有 agent 良好协作、各有合理工作内容。只出建议，去留由人拍板。',
+    fallbacks: ['gpt', 'qwen'],
+    detail: {
+      sub: 'Workforce Governor · 团队健康与增分合',
+      desc: '借鉴海归海平台「后台 Agent 组」的治理思想：实时盘点每个 agent 的职责与工作量，做重叠检测与增/分割/合并建议，并给出团队健康度评分。',
+      workflow: [
+        { t: '工作量监控', s: '每 agent 调用 / token / 成本' },
+        { t: '重叠检测', s: '两两共现职责域 → 合并建议' },
+        { t: '增分合', s: '空壳→合并 · 过载→分割 · 真空→新增' },
+        { t: '健康度', s: '利用率 + 重叠惩罚 → 0-100 评分' },
+      ],
+      capabilities: ['工作量监控', '职责重叠检测', '增/分割/合并建议', '健康度评分'],
+      route: [
+        { kind: '治理引擎', label: 'agent-ops-governor.js · auditWorkforce' },
+        { kind: '职责词典', label: 'DOMAIN_KEYWORDS（10 职责域）' },
       ],
     },
   },
@@ -898,8 +968,10 @@ function openModal(a) {
       <div style="display:flex;gap:10px;align-items:center">
         <select id="m-engine" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;background:#fff;color:var(--ink)">${engineOptionsHtml(a.engine)}</select>
         <button id="m-save-engine" style="padding:9px 16px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13px;font-weight:650;cursor:pointer;white-space:nowrap">保存引擎</button>
+        <button id="m-lock-engine" type="button" style="padding:9px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">锁定</button>
       </div>
-      <div class="engine-status" id="m-engine-status">检测可用性…</div></section>`;
+      <div class="engine-status" id="m-engine-status">检测可用性…</div>
+      <div id="m-lock-status" style="font-size:11px;color:#a09b8c;margin-top:6px;">锁定后固定用此模型，不再自动分配；未锁定则由模型调控官本地优先、占满切 API。</div></section>`;
 
   // 工具能力勾选：由 CAPABILITIES 定义表驱动（对齐 t3code 的声明式能力），新增能力无需改这段 HTML
   const capsEditHtml = a.href ? `<section>
@@ -933,6 +1005,34 @@ function openModal(a) {
     closeModal();
     renderAgents();
   });
+  // 模型锁定：点了锁定才固定成手动选择的模型；否则由模型调控官自动分配（本地优先/占满切 API）
+  const normName = String(a.name || '').replace(/\s+/g, '').toLowerCase();
+  let modelLocked = false;
+  const lockBtn = document.getElementById('m-lock-engine');
+  const lockStatus = document.getElementById('m-lock-status');
+  const paintLock = () => {
+    if (!lockBtn) return;
+    lockBtn.textContent = modelLocked ? '已锁定 · 解锁' : '锁定';
+    lockBtn.style.background = modelLocked ? '#f3e8ff' : '#fff';
+    lockBtn.style.borderColor = modelLocked ? '#7c4dcc' : 'var(--line)';
+    lockBtn.style.color = modelLocked ? '#7c4dcc' : 'var(--ink)';
+  };
+  if (lockBtn && IS_DESKTOP && window.ingrid.opsModelState) {
+    window.ingrid.opsModelState().then(st => {
+      modelLocked = !!(st && st.locks && st.locks[normName]);
+      paintLock();
+      if (modelLocked && lockStatus) lockStatus.textContent = '当前已锁定为「' + st.locks[normName] + '」，模型调控官不会自动改它。';
+    });
+    lockBtn.addEventListener('click', () => {
+      const sel = document.getElementById('m-engine');
+      if (modelLocked) {
+        window.ingrid.opsUnlockModel(a.name).then(() => { modelLocked = false; paintLock(); if (lockStatus) lockStatus.textContent = '已解锁，改由模型调控官自动分配。'; });
+      } else {
+        const engine = sel ? sel.value : (a.engine || 'deepseek');
+        window.ingrid.opsLockModel(a.name, engine).then(() => { modelLocked = true; paintLock(); if (lockStatus) lockStatus.textContent = '已锁定为「' + engine + '」，固定使用不再自动改。'; });
+      }
+    });
+  }
   // 工具能力开关（声明式能力）：随点随存，双写 caps（新版权威）+ tools/computer（旧版兼容）
   if (a.href) {
     const saveCaps = () => {
@@ -1187,6 +1287,7 @@ document.addEventListener('click', e => {
   if (id === 'navDashboard') { if (typeof window.__openDashboard === 'function') window.__openDashboard(); setActiveNav('navDashboard'); return; }
   if (id === 'navMermaid') { if (typeof window.__openMermaid === 'function') window.__openMermaid(); setActiveNav('navMermaid'); return; }
   if (id === 'navApiUsage') { if (typeof window.__openApiUsage === 'function') window.__openApiUsage(); setActiveNav('navApiUsage'); return; }
+  if (id === 'navOps') { if (typeof window.__openOpsGovernor === 'function') window.__openOpsGovernor(); setActiveNav('navOps'); return; }
   if (id === 'navWorkspace') { if (typeof window.__openWorkspace === 'function') window.__openWorkspace(); setActiveNav('navWorkspace'); return; }
   if (id === 'navCalendar') { if (typeof window.__openCalendar === 'function') window.__openCalendar(); return; }
   if (id === 'navInspiration') { if (typeof window.__openInspiration === 'function') window.__openInspiration(); setActiveNav('navInspiration'); return; }
@@ -1260,6 +1361,7 @@ window.__workbench = { IS_DESKTOP: IS_DESKTOP, registry: registry, renderAgents:
 <script src="tasks.js"></script>
 <script src="dashboard.js"></script>
 <script src="api-usage.js"></script>
+<script src="ops-governor.js"></script>
 <script src="workspace.js"></script>
 <script src="inspiration.js"></script>
 <script src="sessions.js"></script>

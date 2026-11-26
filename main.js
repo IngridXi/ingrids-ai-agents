@@ -41,6 +41,7 @@ const PermissionCore = globalThis.PermissionCore;
 const KnowledgeSettlerCore = require('./knowledge-settler-core.js');
 const agentGovernance = require('./agent-governance.js');
 const agentTypeGovernor = require('./agent-type-governor.js');
+const agentOpsGovernor = require('./agent-ops-governor.js');
 const SentimentAgentCore = require('./sentiment-agent-core.js');
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
@@ -1689,6 +1690,85 @@ ipcMain.handle('agent-types:unlock', (_e, name) => {
   return runAgentTypeGovernance();
 });
 
+/* ---------------- IPC：运营治理官（CFO 成本 + 模型调控 + Agent 总管）----------------
+ * 把「API 成本 / 模型选择 / 团队健康」从调度中枢拆出，交给三个治理 agent 统一处理：
+ *   CFO 成本官 —— 实时用量/费用聚合 + 预算 + 每个 agent 该用什么模型；
+ *   模型调控官 —— 本地优先（零成本）→ 本地占满/离线自动切 API；手动「锁定」才固定；
+ *   Agent 总管 —— 实时工作量 + 职责重叠 + 增/分割/合并建议。
+ */
+async function localModelStatus() {
+  const out = { now: Date.now(), online: false, busy: false, activeCount: 0, activeModels: [], vramBytes: 0 };
+  out.online = await isPortOpen(11434);
+  if (out.online) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2000);
+      const r = await fetch('http://127.0.0.1:11434/api/ps', { signal: ctrl.signal });
+      clearTimeout(t);
+      if (r.ok) {
+        const j = await r.json();
+        out.activeModels = (j.models || []).map(function (m) {
+          return { name: String(m.name || m.model || ''), size: Number(m.size || 0), vram: Number(m.size_vram || 0), expiresAt: m.expires_at || null };
+        });
+      }
+    } catch (e) { out.activeModels = []; }
+  }
+  out.activeCount = out.activeModels.length;
+  out.vramBytes = out.activeModels.reduce(function (n, m) { return n + (m.vram || 0); }, 0);
+  // 「占满」判定：显存里已加载 >= 3 个模型（不同任务模型争抢显存），或显存占用 > 16GB（接近常见单卡上限）。
+  // 这是保守启发式：宁可早切 API 保证可用，也不让本地并发把机器拖垮。
+  out.busy = out.activeCount >= 3 || out.vramBytes > 16 * 1024 * 1024 * 1024;
+  return out;
+}
+
+function runOpsGovernance() {
+  return localModelStatus().then(function (localStatus) {
+    let report;
+    try {
+      report = agentOpsGovernor.run({ repoRoot: __dirname, dataDir: dataDir(), localStatus: localStatus });
+      writeJson('ops-governor.json', report);
+    } catch (e) {
+      report = { error: String(e && e.message || e), generated_at: new Date().toISOString() };
+      writeJson('ops-governor.json', report);
+      return report;
+    }
+
+    // 有意义的变动：模型被自动切换（本地占满/离线 → API），或预算超标
+    const plan = report.modelPlan || [];
+    const switched = plan.filter(function (m) { return m.switched && !m.locked; });
+    const budget = report.cfo && report.cfo.budget;
+    const overBudget = !!(budget && budget.exceeded);
+
+    if (switched.length || overBudget) {
+      const parts = [];
+      if (switched.length) parts.push(switched.length + ' 个 agent 自动切换模型');
+      if (overBudget) parts.push('本月预算已用尽');
+      const title = '运营治理官 · ' + parts.join('、');
+      const body = (switched.slice(0, 4).map(function (m) {
+        return m.agent + ' → ' + (m.resolvedLabel || m.resolved);
+      }).join('、')) + (switched.length > 4 ? ' 等' : '') + (overBudget ? '；预算 $' + budget.budget.toFixed(2) + ' 已用尽' : '');
+      try {
+        if (Notification.isSupported()) new Notification({ title: title, body: body }).show();
+      } catch (e) { /* 通知失败不阻断 */ }
+    }
+    broadcast('ops:changed', report);
+    return report;
+  });
+}
+ipcMain.handle('ops:run', () => runOpsGovernance());
+ipcMain.handle('ops:report', () => readJson('ops-governor.json', null));
+ipcMain.handle('ops:model-state', () => agentOpsGovernor.modelState(dataDir()));
+ipcMain.handle('ops:local-status', () => localModelStatus());
+// 人工锁定 / 解锁模型：锁定后立即重跑一次，让报告与快照立即反映锁定结果
+ipcMain.handle('ops:lock-model', (_e, name, engine) => {
+  agentOpsGovernor.lockModel(dataDir(), name, engine);
+  return runOpsGovernance();
+});
+ipcMain.handle('ops:unlock-model', (_e, name) => {
+  agentOpsGovernor.unlockModel(dataDir(), name);
+  return runOpsGovernance();
+});
+
 /* ---------------- IPC：打开 agent（单窗口，用 BrowserView 内嵌，不新开窗口） ---------------- */
 function layoutAgentView() {
   if (!mainWindow) return;
@@ -1922,18 +2002,41 @@ ipcMain.handle('session:log:fork', (_e, id) => sessionLog ? sessionLog.fork(id) 
 ipcMain.handle('session:log:resume', (_e, id, opts) => sessionLog ? sessionLog.resumeContext(id, opts) : null);
 
 /* ---------------- IPC：执行一个 Agent ---------------- */
+/* 模型调控官：执行前动态解析引擎。
+ * 规则：人工锁定 → 固定用锁定引擎；本地引擎占满/离线 → 自动切 API（deepseek 兜底）；
+ *       API/CLI 引擎未锁定 → 维持原引擎（不在执行路径做 API→本地降级，避免意外）。
+ */
+async function resolveEngineForRun(engine, agentName, fallbacks) {
+  const locks = agentOpsGovernor.modelState(dataDir()).locks || {};
+  const normName = String(agentName || '').replace(/\s+/g, '').toLowerCase();
+  const isLocalOllama = agentOpsGovernor.isOllamaManaged(engine);
+  // 未锁定且主引擎非 Ollama 本地模型 → 维持原引擎，不查本地状态（省一次 Ollama 探测）
+  if (!isLocalOllama && !locks[normName]) {
+    return { engine: engine, switched: false, locked: false, reason: '' };
+  }
+  const localStatus = await localModelStatus();
+  return agentOpsGovernor.resolveModel(
+    { name: agentName || '', engine: engine, fallbacks: fallbacks || [] },
+    { localStatus: localStatus, locks: locks, allowLocalDowngrade: false }
+  );
+}
+
 ipcMain.handle('agent:run', async (_e, payload) => {
   const p = payload || {};
   const prompt = String(p.prompt || '').slice(0, 20000);
-  const engine = String(p.engine || 'local-llm');
+  const requestedEngine = String(p.engine || 'local-llm');
   const soul = String(p.soul || '');
   const sessionId = String(p.sessionId || '').trim() || SessionLogCore.uid('s');
+
+  // 模型调控官：本地优先 / 占满切 API / 锁定豁免
+  const pick = await resolveEngineForRun(requestedEngine, p.agentName, p.fallbacks);
+  const engine = pick.engine || requestedEngine;
 
   // 会话回放：先把「用户消息 + 注入上下文 + 启动」写进 append-only 事件流
   if (sessionLog && sessionId) {
     sessionLog.record(sessionId, 'user', { text: prompt, agent: String(p.agentName || ''), skills: p.skillIds || [] });
     if (soul) sessionLog.record(sessionId, 'system', { text: soul.slice(0, 4000) });
-    sessionLog.record(sessionId, 'agent_started', { task: prompt.slice(0, 200), engine: engine, dryRun: !!p.dryRun });
+    sessionLog.record(sessionId, 'agent_started', { task: prompt.slice(0, 200), engine: engine, dryRun: !!p.dryRun, switched: pick.switched, switchReason: pick.reason });
   }
 
   let result;
@@ -1952,7 +2055,14 @@ ipcMain.handle('agent:run', async (_e, payload) => {
     sessionLog.record(sessionId, 'agent_output', { text: String((result && result.text) || '').slice(0, 20000), engine: (result && result.engine) || engine });
     sessionLog.record(sessionId, 'turn_end', { status: result && result.status, error: result && result.error, cost: result && result.cost });
   }
-  return Object.assign({}, result, { sessionId: sessionId });
+  return Object.assign({}, result, {
+    sessionId: sessionId,
+    engine: (result && result.engine) || engine,
+    switched: !!pick.switched,
+    switchedFrom: pick.switched ? requestedEngine : '',
+    switchReason: pick.reason || '',
+    locked: !!pick.locked,
+  });
 });
 
 /* ---------------- IPC：研究助手聊天（流式） ---------------- */
@@ -6344,6 +6454,10 @@ if (gotSingleInstanceLock) {
     // 变更时才发系统通知；锁定 agent 豁免自动修正。首次运行会把全部 agent 归入四类。
     setTimeout(() => { runAgentTypeGovernance(); }, 1200);
     setInterval(() => { runAgentTypeGovernance(); }, 24 * 60 * 60 * 1000);
+    // 运营治理官（CFO 成本 + 模型调控 + Agent 总管）：启动自动巡检一次 + 每 15 分钟刷新本地状态与成本，
+    // 每 24 小时深度巡检团队健康。本地模型状态（Ollama 显存占用）是动态的，需更频繁地刷新供面板实时展示。
+    setTimeout(() => { runOpsGovernance().catch(() => {}); }, 1500);
+    setInterval(() => { runOpsGovernance().catch(() => {}); }, 15 * 60 * 1000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });

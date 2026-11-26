@@ -302,6 +302,15 @@ contextBridge.exposeInMainWorld('ingrid', {
   agentTypesUnlock: (name) => ipcRenderer.invoke('agent-types:unlock', name),
   onAgentTypesChanged: (cb) => ipcRenderer.on('agent-types:changed', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // 运营治理官（CFO 成本 + 模型调控 + Agent 总管）
+  opsRun: () => ipcRenderer.invoke('ops:run'),
+  opsReport: () => ipcRenderer.invoke('ops:report'),
+  opsModelState: () => ipcRenderer.invoke('ops:model-state'),
+  opsLocalStatus: () => ipcRenderer.invoke('ops:local-status'),
+  opsLockModel: (name, engine) => ipcRenderer.invoke('ops:lock-model', name, engine),
+  opsUnlockModel: (name) => ipcRenderer.invoke('ops:unlock-model', name),
+  onOpsChanged: (cb) => ipcRenderer.on('ops:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
   // 情绪/偏好 Agent（侦测评价情绪 → 提炼 do/avoid 偏好 → 联动经验沉淀）
   sentimentReport: () => ipcRenderer.invoke('sentiment:report'),
   sentimentSignals: (limit, valence) => ipcRenderer.invoke('sentiment:signals', limit, valence),
