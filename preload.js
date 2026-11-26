@@ -189,6 +189,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   archStatus: () => ipcRenderer.invoke('arch:status'),
   // CityVerse 后台控制台实时概览（采集/洞察/玩法库/建设规划/执行门禁）
   cityverseOverview: () => ipcRenderer.invoke('arch:cityverse-overview'),
+  // CityVerse 待审批规划列表 + 审批动作（供架构图「人工审批」节点就地审批）
+  cityversePendingPlans: () => ipcRenderer.invoke('arch:cityverse-pending-plans'),
+  cityversePlanAction: (id, action, reason) => ipcRenderer.invoke('arch:cityverse-plan-action', id, action, reason),
 
   // 授权门（有副作用操作前显式授权 + 审计：电脑操作 / 可执行 Skill / 文件写入）
   permissionList: () => ipcRenderer.invoke('permission:list'),

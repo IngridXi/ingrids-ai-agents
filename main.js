@@ -6110,6 +6110,39 @@ async function cityverseOverview() {
 }
 ipcMain.handle('arch:cityverse-overview', () => cityverseOverview());
 
+// CityVerse 待审批规划列表 + 审批动作（批准/拒绝/执行），供工作台架构图「人工审批」节点就地审批。
+async function cityversePendingPlans() {
+  if (!(await isPortOpen(8756))) return { online: false, plans: [], error: '控制台未启动（python3 intel/dashboard.py）' };
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch('http://127.0.0.1:8756/api/plans', { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return { online: true, plans: [], error: 'HTTP ' + r.status };
+    const plans = await r.json();
+    return { online: true, plans: (Array.isArray(plans) ? plans : []).filter(function (p) { return p.status === 'pending_approval'; }) };
+  } catch (e) { return { online: true, plans: [], error: String((e && e.message) || e) }; }
+}
+
+async function cityversePlanAction(planId, action, reason) {
+  const ALLOWED = { approve: 1, reject: 1, execute: 1 };
+  if (!ALLOWED[action]) return { ok: false, error: '非法动作：' + action };
+  if (!(await isPortOpen(8756))) return { ok: false, error: '控制台未启动（python3 intel/dashboard.py）' };
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const opts = { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' } };
+    if (reason) opts.body = JSON.stringify({ reason: reason });
+    const r = await fetch('http://127.0.0.1:8756/api/plans/' + planId + '/' + action, opts);
+    clearTimeout(t);
+    const j = await r.json().catch(function () { return {}; });
+    if (!r.ok) return { ok: false, error: (j && j.error) || ('HTTP ' + r.status) };
+    return { ok: true, result: j };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+ipcMain.handle('arch:cityverse-pending-plans', () => cityversePendingPlans());
+ipcMain.handle('arch:cityverse-plan-action', (_e, id, action, reason) => cityversePlanAction(id, action, reason));
+
 ipcMain.handle('workspace:list', () => toolDbWorkspaceList());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));

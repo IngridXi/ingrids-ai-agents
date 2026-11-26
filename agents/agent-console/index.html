@@ -407,7 +407,7 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
             <line x1="600" y1="99" x2="620" y2="99" class="edge-data arch-flow cv-link"/>
             <g id="cv-n-land"><rect x="620" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="658" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">落地</text><text x="658" y="110" text-anchor="middle" font-size="10" fill="#8b949e">apply</text></g>
 
-            <g><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text id="cv-approve" x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
+            <g id="cv-n-approve" style="cursor:pointer" onclick="openCvApprove()"><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text id="cv-approve" x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text id="cv-approve-sub" x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
             <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
 
             <g><rect x="44" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="194" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">PostgreSQL cityverse 库</text><text x="194" y="282" text-anchor="middle" font-size="10" fill="#8b949e">community / insights / playbook / build 等 10 表</text></g>
@@ -959,6 +959,8 @@ $('#sentimentBox').addEventListener('input', (ev) => {
       cvSetActive('cv-exec', executing);
       cvSetActive('cv-gate', reviewing);
       cvSetActive('cv-approve', waiting);
+      var approveSub = aid('cv-approve-sub');
+      if (approveSub) approveSub.textContent = waiting ? ('点击审批 · ' + s.plansPending + ' 条待批') : 'dashboard.py · 127.0.0.1:8756';
       cvSetFlow(executing || reviewing);
       // 「最近活跃」：任务跑得比轮询快，完成后保持琥珀描边 + 副文字标注（10 分钟窗）
       var recentRun = recentlyActive(a.lastRunAt, 10);
@@ -983,6 +985,75 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     window.ingrid.cityverseOverview().then(renderCityverse).catch(function (e) {
       renderCityverse({ online: false, error: String((e && e.message) || e), now: Date.now(), findings: 0, insights: 0, playbook: 0, plans: 0, plansPending: 0, runs: 0, gates: 0 });
     });
+  }
+
+  // —— CityVerse 就地审批：点击「人工审批」节点弹出待审批列表，直接批准并执行 / 拒绝 ——
+  function cvEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function openCvApprove() {
+    var ov = aid('cv-approve-mask');
+    if (ov) { ov.remove(); return; }
+    ov = document.createElement('div');
+    ov.id = 'cv-approve-mask';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px)';
+    ov.innerHTML =
+      '<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;width:680px;max-width:94vw;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,.5)">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #21262d">' +
+          '<div style="font-size:15px;font-weight:600;color:#e6edf3">CityVerse 人工审批 <span id="cv-ap-count" style="color:#d29922;font-size:13px"></span></div>' +
+          '<button onclick="closeCvApprove()" style="background:transparent;border:none;color:#8b949e;font-size:22px;cursor:pointer;line-height:1;padding:0 4px">×</button>' +
+        '</div>' +
+        '<div id="cv-ap-body" style="padding:14px 18px;overflow-y:auto;color:#c9d1d9;font-size:13px">加载中…</div>' +
+        '<div style="padding:10px 18px;border-top:1px solid #21262d;font-size:12px;color:#6e7681">批准后立即执行 → 质量门禁审查，通过才落地（不自动 commit）。完整控制台：<a href="http://127.0.0.1:8756" style="color:#58a6ff" onclick="event.preventDefault();if(window.ingrid&&window.ingrid.openExternal)window.ingrid.openExternal(\'http://127.0.0.1:8756\')">127.0.0.1:8756</a></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    loadCvPlans();
+  }
+  function closeCvApprove() { var ov = aid('cv-approve-mask'); if (ov) ov.remove(); }
+  function loadCvPlans() {
+    var body = aid('cv-ap-body'); var cnt = aid('cv-ap-count');
+    if (!body) return;
+    if (!(window.ingrid && window.ingrid.cityversePendingPlans)) { body.innerHTML = '<div style="color:#f85149">当前页面未连接工作台主进程，无法就地审批。</div>'; return; }
+    window.ingrid.cityversePendingPlans().then(function (res) {
+      res = res || {};
+      if (!res.online) {
+        body.innerHTML = '<div style="color:#f85149">' + cvEsc(res.error || '控制台未启动') + '</div><div style="margin-top:6px;color:#8b949e">请先在终端启动：python3 ~/Dev/cityverse-ar/intel/dashboard.py</div>';
+        if (cnt) cnt.textContent = '';
+        return;
+      }
+      var plans = res.plans || [];
+      if (cnt) cnt.textContent = plans.length ? ('· ' + plans.length + ' 条待批') : '';
+      if (!plans.length) { body.innerHTML = '<div style="color:#8b949e;padding:28px 0;text-align:center">✅ 没有待审批的规划</div>'; return; }
+      body.innerHTML = plans.map(function (p) {
+        return '<div style="border:1px solid #30363d;border-radius:10px;padding:13px 15px;margin-bottom:12px;background:#1c2129">' +
+          '<div style="font-weight:600;color:#e6edf3;margin-bottom:6px">#' + p.id + ' ' + cvEsc(p.title) + '</div>' +
+          (p.human_report ? '<div style="font-size:12.5px;color:#8b949e;margin-bottom:12px;line-height:1.55">' + cvEsc(p.human_report) + '</div>' : '') +
+          '<div style="display:flex;gap:8px;align-items:center">' +
+            '<button onclick="doCvApprove(' + p.id + ')" style="background:#238636;border-color:#2ea043;color:#fff;padding:6px 14px">✓ 批准并执行</button>' +
+            '<button onclick="doCvReject(' + p.id + ')" style="background:transparent;border-color:#f85149;color:#f85149;padding:6px 14px">✕ 拒绝</button>' +
+            '<span style="margin-left:auto;font-size:11px;color:#6e7681">涉及 ' + (Array.isArray(p.files) ? p.files.length : 0) + ' 个文件</span>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }).catch(function (e) { body.innerHTML = '<div style="color:#f85149">加载失败：' + cvEsc((e && e.message) || e) + '</div>'; });
+  }
+  function cvApErr(msg) { var body = aid('cv-ap-body'); if (body) body.innerHTML = '<div style="color:#f85149">' + cvEsc(msg) + '</div><div style="margin-top:12px"><button onclick="loadCvPlans()">返回列表</button></div>'; }
+  function doCvApprove(planId) {
+    var body = aid('cv-ap-body'); if (body) body.innerHTML = '<div style="color:#8b949e">批准 #' + planId + ' 并启动执行…</div>';
+    window.ingrid.cityversePlanAction(planId, 'approve', '').then(function (r1) {
+      if (!(r1 && r1.ok)) { cvApErr('批准失败：' + ((r1 && r1.error) || '未知错误')); return; }
+      return window.ingrid.cityversePlanAction(planId, 'execute', '').then(function (r2) {
+        if (!(r2 && r2.ok)) { cvApErr('已批准 #' + planId + '，但执行启动失败：' + ((r2 && r2.error) || '未知错误')); return; }
+        loadCvPlans(); pollCityverse();
+      });
+    }).catch(function (e) { cvApErr('操作失败：' + ((e && e.message) || e)); });
+  }
+  function doCvReject(planId) {
+    var reason = window.prompt('拒绝理由（可留空）：') || '';
+    if (reason === null) return;
+    var body = aid('cv-ap-body'); if (body) body.innerHTML = '<div style="color:#8b949e">拒绝 #' + planId + '…</div>';
+    window.ingrid.cityversePlanAction(planId, 'reject', reason).then(function (r) {
+      if (!(r && r.ok)) { cvApErr('拒绝失败：' + ((r && r.error) || '未知错误')); return; }
+      loadCvPlans(); pollCityverse();
+    }).catch(function (e) { cvApErr('操作失败：' + ((e && e.message) || e)); });
   }
 
   if (IS_ARCH) {
