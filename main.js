@@ -2267,7 +2267,14 @@ async function runBackgroundTask(ticket) {
   const engine = String(ticket.engine || 'deepseek');
   const model = String(ticket.model || '');
   const cfg = CHAT_ENDPOINTS[engine];
-  if (!cfg) { q.fail(ticket.id, '未知引擎：' + engine); broadcastTasks(); return { ok: false, error: '未知引擎：' + engine }; }
+  if (!cfg) {
+    // 说清楚「为什么不行、该去哪」，别只丢一句「未知引擎」。CLI 引擎（codex /
+    // claude-code / grok / dsh）只有 CLI_ADAPTERS 通道，后台任务循环调不到；
+    // 要跑 CLI 就回工作台对话，或者投 CityVerse 总控的 kind=codex。
+    const cliHint = CLI_ADAPTERS[engine] ? '（它是本机 CLI 引擎，后台任务调不到；请回工作台对话，或投总控的 kind=codex）' : '';
+    const msg = '未知引擎：' + engine + cliHint;
+    q.fail(ticket.id, msg); broadcastTasks(); return { ok: false, error: msg };
+  }
 
   q.start(ticket.id);
   broadcastTasks();
@@ -2676,8 +2683,22 @@ ipcMain.handle('task:classify', (_e, text) => {
   try {
     const c = TaskRouter.classifyTask(text);
     const tt = TaskRouter.typeById(c.type);
-    return { type: c.type, label: c.label, score: c.score, engine: tt.engine, boardHint: tt.boardHint };
-  } catch (e) { return { type: 'general', label: '通用', score: 0, engine: 'deepseek', boardHint: '' }; }
+    // 兜底：路由表里写的引擎必须真的在后台执行器里存在，否则任务一创建就注定失败。
+    // 2026-11-26 就是 coding → codex，而 codex 只有 CLI 通道，凡是编码类任务全部
+    // 当场报「未知引擎」，用户以为在烧 codex 额度，实际一行都没跑。这条分支保证
+    // 「表写错」最多退化成「用了次优引擎」，而不是「用户的任务白跑」。
+    let engine = tt.engine;
+    let downgradedFrom = '';
+    if (!CHAT_ENDPOINTS[engine]) { downgradedFrom = engine; engine = 'deepseek'; }
+    return {
+      type: c.type, label: c.label, score: c.score,
+      engine: engine, downgradedFrom: downgradedFrom,
+      boardHint: tt.boardHint,
+      noBackground: !!tt.noBackground, note: tt.note || '',
+    };
+  } catch (e) {
+    return { type: 'general', label: '通用', score: 0, engine: 'deepseek', downgradedFrom: '', boardHint: '', noBackground: false, note: '' };
+  }
 });
 ipcMain.handle('task:create', (_e, t) => {
   const ticket = getTaskQueue().enqueue(t || {});

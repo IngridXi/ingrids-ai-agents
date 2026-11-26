@@ -224,7 +224,14 @@
     var resolveClassify = function () {
       if (engineSel !== 'auto') return Promise.resolve({ engine: engineSel, category: '' });
       return window.ingrid.taskClassify(goal).then(function (r) {
-        return { engine: (r && r.engine) || 'deepseek', category: (r && r.label) || '' };
+        r = r || {};
+        return {
+          engine: r.engine || 'deepseek',
+          category: r.label || '',
+          noBackground: !!r.noBackground,
+          note: r.note || '',
+          downgradedFrom: r.downgradedFrom || '',
+        };
       }).catch(function () { return { engine: 'deepseek', category: '' }; });
     };
     var resolveSchedule = function () {
@@ -237,11 +244,19 @@
 
     Promise.all([resolveClassify(), resolveSchedule()]).then(function (vals) {
       var cls = vals[0], schedule = vals[1];
+      // 这类活后台队列干不了（转写要 ASR、音乐要生成模型）：拦下来并指路，
+      // 而不是建一条注定报「未知引擎」的任务让用户猜。
+      if (cls.noBackground) {
+        goBtn.disabled = false;
+        alert('这类活后台队列干不了。' + (cls.note ? '\n\n' + cls.note : '') + '\n\n请到对应的 agent 里做。');
+        return;
+      }
       var t = {
         title: titleEl.value.trim() || goal.slice(0, 20),
         goal: goal,
         engine: cls.engine,
-        category: cls.category,
+        // 引擎被兜底降级时留痕（如「编码（原建议 codex，已降级）」），方便事后追溯
+        category: cls.category + (cls.downgradedFrom ? '（原建议 ' + cls.downgradedFrom + '，已降级）' : ''),
         schedule: schedule || null,
       };
       window.ingrid.taskCreate(t).then(function (ticket) {

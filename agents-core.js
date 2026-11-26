@@ -127,9 +127,15 @@
   };
 
   /* ---------- 4. ModelRouter：任务路由 + 限额感知自动降级 ---------- */
+  // 这张表是「任务类型 → 偏好引擎」的声明，供 defaultFor() 查。**目前没有调用点**
+  // （后台任务真正的分拣在 task-router.js → main.js 的 task:classify；agent 用哪个
+  // 模型只看它自己的 engine 字段）。留着是给未来的编排层用，但值必须与实际能力
+  // 一致 —— 只写后台执行器（CHAT_ENDPOINTS）里真有的 API 引擎。codex / claude-code
+  // 是本机 CLI，只走 agent 对话通道，写进来只会让任务一创建就报「未知引擎」。
+  // 2026-11-26 之前这里是 coding: 'codex'，是这个坑的源头。
   var TASK_DEFAULTS = {
-    transcribe: 'funasr', summarize: 'deepseek', writing: 'claude-code',
-    coding: 'codex', translate: 'qwen', general: 'local-llm',
+    transcribe: 'deepseek', summarize: 'deepseek', writing: 'deepseek',
+    coding: 'deepseek', translate: 'qwen', general: 'deepseek',
   };
 
   var LIMIT_PATTERNS = /rate.?limit|quota|usage limit|limit reached|exceeded|insufficient.?credit|402|429|overloaded|capacity/i;

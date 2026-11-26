@@ -984,8 +984,8 @@
         '  tell_prompt（需 words=用户原话，返回「看板+队列+可用 worker」的完整事实，供你自己翻译成任务）\n' +
         '  submit（需 kind、title、spec；可选 args、priority、timeout）—— 真正派活\n' +
         '  cancel（需 id）—— 取消排队中的任务\n' +
-        'kind 只能取：codex（真改代码，唯一消耗 codex 额度）｜ingrids（跑仓库自带的验收/看板脚本）｜intel（建设流水线）｜strategy（战略参谋）｜asset（素材采购）｜shell（白名单命令）。\n' +
-        '派活铁律：① spec 必须自包含——要读哪张卡（agents/tasks/T0x-*.md）、只许改哪些文件、不许动什么、改完跑哪条验收命令、回报要贴哪些数字；② spec 里绝不写「提交」「push」，worker 没有 git 权限，提交权在用户手里；③ 拿不准就先 tell_prompt 或 board 看一眼，别凭空造需求；④ 投完只回报任务 id 和它要干什么，不要在这里等它跑完（一个 codex 任务通常几分钟）；⑤ 用户只是问进度就用 ls / board，不要 submit。');
+        'kind 只能取：codex（真改代码，唯一消耗 codex 额度，**默认不用**）｜ingrids（跑仓库自带的验收/看板脚本）｜intel（建设流水线）｜strategy（战略参谋）｜asset（素材采购）｜shell（白名单命令）。\n' +
+        '派活铁律：⓪ 默认不投 codex。只有「无人值守连续迭代 / 一次要读十几个文件 / 要跑白名单外命令」三条同时成立才用；只改一两个文件就让用户在工作台里对着「软件工程」agent 改。① spec 必须自包含——要读哪张卡（agents/tasks/T0x-*.md）、只许改哪些文件、不许动什么、改完跑哪条验收命令、回报要贴哪些数字；② spec 里绝不写「提交」「push」，worker 没有 git 权限，提交权在用户手里；③ 拿不准就先 tell_prompt 或 board 看一眼，别凭空造需求；④ 投完只回报任务 id 和它要干什么，不要在这里等它跑完（一个 codex 任务通常几分钟）；⑤ 用户只是问进度就用 ls / board，不要 submit。');
     }
     tools.push('doc_generate：生成文档到「导出」目录。type=pptx 产出学术级幻灯片（原生可编辑图表、表格、图片 + 智能图形版式 + 剑桥学术配色）。slides 每页可含 title/subtitle/layout/bullets/charts/table/image/notes/blocks；layout 取值 title标题/section章节/content正文/twoCol双栏/blank空白/cards卡片/flow流程/pyramid金字塔/compare对比；blocks 是「板块」数组 [{title,points:[...]}]，有 blocks 时按板块数量自动匹配智能图形版式（2块左右分栏、3块三栏、4块2×2矩阵、更多则网格；配合 flow/pyramid/compare 做流程/金字塔/对比），把文字嵌进图形而非罗列；顶层可传 theme(academic默认/minimal/corporate)；type=docx/md 用 content(Markdown)；type=xlsx 用 sheets。生成成功返回文件路径');
     tools.push('pptx_fill_template：把内容「套进」已有 .pptx 模板（保留母版/背景/主题/SmartArt，1:1 套用设计，如 Cambridge 学术模板）。先 action=inspect 看模板每页形状名与占位符，再 action=fill 填空：参数 {"action":"inspect|fill","template":"模板绝对路径","output":"输出路径(可选)","replacements":{"{{占位符}}":"新文字"},"byName":[{"name":"形状名","text":"文字"}]}。内置工具，机器已装好依赖，直接调用即可，勿用 shell 手动 pip install');
@@ -1309,6 +1309,9 @@
         '\n① **你是指挥，不是执行者**。不要用 fs_write 去改项目代码、不要试图自己完成 codex 的活 —— 那是 worker 的事，你只负责派得准、看得清。' +
         '\n② **提交权在用户手里**。你派出去的 worker 没有 git 权限，spec 里永远不要出现「提交」「push」「git commit」。改完的东西停在工作区，用户自己验收后提交。' +
         '\n③ **不替用户拍板**。涉及「改采集物真值 / 新增第三方依赖或付费素材 / 改验收标准 / 需要真机才能验」的，先说明为什么必须由用户决定，不要直接投。' +
+        '\n\n**默认不派 codex**。codex 只接 DeepSeek 做不到的活，必须同时满足三条：① 要无人值守连续迭代（自己跑命令、读报错、再改再跑十几轮）；② 要一次性读懂十几个文件才能定方案；③ 要跑白名单外的命令（zsh 脚本 / Unity Editor / 自定义构建）。' +
+        '三条缺一条就不要 submit codex —— 只改一两个文件、用户已说清改哪儿、跑验收、看板、查资料、写报告、翻译，全都不该用 codex：' +
+        '改代码建议用户在工作台里对着「软件工程」agent 做（DeepSeek，省钱可商量），验收投 kind=ingrids（args="verify --only …"），其余用 kind=intel 或直接回答。' +
         '\n\n用户说「推进某张卡 / 接着干 / 把剩下的做完」时的标准动作：' +
         '\n1. `board` 看看板（哪张 TODO / CLAIMED / DONE / BLOCKED）+ `ls` 看队列有没有在跑的 —— 这两步是必须的，不许凭记忆答。' +
         '\n2. 对要派的那张卡，用 `fs_read` 读 `agents/tasks/T0x-*.md`（每张卡自带现状行号、禁区、验收命令、回报格式）。' +

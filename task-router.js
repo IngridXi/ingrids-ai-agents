@@ -22,21 +22,28 @@
   // agentWords  挑 Agent 用的关键词（匹配 agent 的 name/tag/soul/description）
   // boardHint   默认落到哪个技能板块
   // skillWords  兜底挑 Skill 用的名字关键词（SkillsCore.recommend 不可用时用）
-  // engine      默认引擎（与 agents-core 的 TASK_DEFAULTS 对齐）
+  // engine      后台任务的默认引擎。**必须来自 main.js 的 CHAT_ENDPOINTS**
+  //             （deepseek / gpt / qwen / ollama / ollama-review / ollama-vision）。
+  //             codex、claude-code、grok 是「本机 CLI」引擎，只在 agent 对话里用
+  //             （CLI_ADAPTERS），后台执行器调不到它们 —— 写进这张表只会让任务
+  //             起来就报「未知引擎」。2026-11-26 之前 coding 就指到 codex，凡是
+  //             被判定为编码的任务全部当场失败，且一行 codex 都没真跑过。
+  // noBackground 这类活后台队列干不了（转写要 ASR、音乐要生成模型），
+  //             前端应拦下并引导到对应 agent，而不是建一条注定失败的任务。
   var TASK_TYPES = [
-    { id: 'review',    label: '审稿/评审',   words: ['审稿','评审','review','审阅','评阅','匿名评审','同行评审','返修意见','论证','审查','评议','论证链','引用审计','引用核查','引用','citation','可重复性','复现','reproducib','paper-code','预分析','pre-analysis'], agentWords: ['审稿','评审','研究','论文'], boardHint: 'research', skillWords: ['审稿'], engine: 'claude-code' },
-    { id: 'deai',      label: '去 AI 味',    words: ['去ai味','去 ai 味','ai味','ai 味','去AI','机器味','套话','机械化','改写口语','更像人写','防御性写作','defensive','模棱两可','留退路','hedging','委婉','回避','不敢下判断'], agentWords: ['写作','研究','润色'], boardHint: 'research', skillWords: ['去 ai','去ai','去 AI','防御性写作'], engine: 'claude-code' },
+    { id: 'review',    label: '审稿/评审',   words: ['审稿','评审','review','审阅','评阅','匿名评审','同行评审','返修意见','论证','审查','评议','论证链','引用审计','引用核查','引用','citation','可重复性','复现','reproducib','paper-code','预分析','pre-analysis'], agentWords: ['审稿','评审','研究','论文'], boardHint: 'research', skillWords: ['审稿'], engine: 'deepseek' },
+    { id: 'deai',      label: '去 AI 味',    words: ['去ai味','去 ai 味','ai味','ai 味','去AI','机器味','套话','机械化','改写口语','更像人写','防御性写作','defensive','模棱两可','留退路','hedging','委婉','回避','不敢下判断'], agentWords: ['写作','研究','润色'], boardHint: 'research', skillWords: ['去 ai','去ai','去 AI','防御性写作'], engine: 'deepseek' },
     { id: 'litreview', label: '文献综述',    words: ['文献综述','文献','综述','literature','系统综述','荟萃','元分析','梳理文献','研究现状','检索','搜索','sota','前沿','最新进展','benchmark','追踪','state-of-the-art','survey','综述论文'], agentWords: ['研究','文献','综述'], boardHint: 'research', skillWords: ['文献综述','文献','sota'], engine: 'deepseek' },
     { id: 'mentor',    label: '研究指导',    words: ['选题','研究问题','研究设计','开题','方法指导','章节','论文框架','研究计划','指导','拆解','建构','提炼','研究框架','理论框架','假设','变量','项目管理','投稿流程','论文规划','立项','推进','实验','实验设计','随机分组','样本量','提案','计划书','基金','申请','proposal','grant'], agentWords: ['研究','导师','指导','论文'], boardHint: 'research', skillWords: ['研究导师','导师','提案'], engine: 'deepseek' },
-    { id: 'present',   label: '学术表达',    words: ['汇报','演讲','答辩','海报','presentation','talk','讲清','一分钟','电梯','elevator','口头','pre'], agentWords: ['研究','写作','助手'], boardHint: 'research', skillWords: ['学术表达'], engine: 'claude-code' },
-    { id: 'writing',   label: '写作',        words: ['写作','写文章','撰写','论文写作','报告','公文','总结','润色','文笔','成文'], agentWords: ['写作','研究','润色','文章'], boardHint: 'research', skillWords: ['写作'], engine: 'claude-code' },
-    { id: 'coding',    label: '编码',        words: ['代码','编程','重构','调试','函数','bug','api','脚本','部署','实现','写个','开发'], agentWords: ['代码','编程','开发'], boardHint: '', skillWords: ['代码'], engine: 'codex' },
-    { id: 'transcribe',label: '转写/纪要',   words: ['转写','录音','会议纪要','纪要','语音','字幕','转录','说话人','meeting','分钟'], agentWords: ['会议','纪要','转写','录音','语音'], boardHint: '', skillWords: [], engine: 'funasr' },
+    { id: 'present',   label: '学术表达',    words: ['汇报','演讲','答辩','海报','presentation','talk','讲清','一分钟','电梯','elevator','口头','pre'], agentWords: ['研究','写作','助手'], boardHint: 'research', skillWords: ['学术表达'], engine: 'deepseek' },
+    { id: 'writing',   label: '写作',        words: ['写作','写文章','撰写','论文写作','报告','公文','总结','润色','文笔','成文'], agentWords: ['写作','研究','润色','文章'], boardHint: 'research', skillWords: ['写作'], engine: 'deepseek' },
+    { id: 'coding',    label: '编码',        words: ['代码','编程','重构','调试','函数','bug','api','脚本','部署','实现','写个','开发'], agentWords: ['代码','编程','开发'], boardHint: '', skillWords: ['代码'], engine: 'deepseek' },
+    { id: 'transcribe',label: '转写/纪要',   words: ['转写','录音','会议纪要','纪要','语音','字幕','转录','说话人','meeting','分钟'], agentWords: ['会议','纪要','转写','录音','语音'], boardHint: '', skillWords: [], engine: 'deepseek', noBackground: true, note: '这类活请用会议纪要官，后台队列只跑文本模型' },
     { id: 'summarize', label: '总结',        words: ['总结','摘要','概括','提炼','归纳','大纲','要点','summarize'], agentWords: ['总结','纪要','助手'], boardHint: '', skillWords: [], engine: 'deepseek' },
     { id: 'translate', label: '翻译',        words: ['翻译','译成','英译','中译','本地化','术语','互译'], agentWords: ['翻译'], boardHint: '', skillWords: [], engine: 'qwen' },
-    { id: 'music',     label: '音乐',        words: ['写歌','歌词','作词','作曲','编曲','音乐','歌曲','翻唱','配乐','旋律','bgm','suno','ace-step','歌'], agentWords: ['音乐','歌','作曲','作词'], boardHint: '', skillWords: [], engine: 'local-llm' },
+    { id: 'music',     label: '音乐',        words: ['写歌','歌词','作词','作曲','编曲','音乐','歌曲','翻唱','配乐','旋律','bgm','suno','ace-step','歌'], agentWords: ['音乐','歌','作曲','作词'], boardHint: '', skillWords: [], engine: 'deepseek', noBackground: true, note: '这类活请用音乐创作 agent，后台队列只跑文本模型' },
     { id: 'data',      label: '数据分析',    words: ['数据','分析','图表','统计','透视','清洗','可视化','报表','指标','excel','csv'], agentWords: ['数据','分析','图表'], boardHint: '', skillWords: [], engine: 'gpt' },
-    { id: 'general',   label: '通用',        words: [], agentWords: ['助手'], boardHint: '', skillWords: [], engine: 'local-llm' },
+    { id: 'general',   label: '通用',        words: [], agentWords: ['助手'], boardHint: '', skillWords: [], engine: 'deepseek' },
   ];
 
   function typeById(id) {
