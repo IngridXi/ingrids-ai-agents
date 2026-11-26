@@ -1055,6 +1055,12 @@ $('#sentimentBox').addEventListener('input', (ev) => {
       loadCvPlans(); pollCityverse();
     }).catch(function (e) { cvApErr('操作失败：' + ((e && e.message) || e)); });
   }
+  // 内联 onclick 在全局作用域查找，而这些函数被包在 IIFE 里，需显式挂到 window 才能被 SVG 节点 / 弹窗按钮调用
+  window.openCvApprove = openCvApprove;
+  window.closeCvApprove = closeCvApprove;
+  window.loadCvPlans = loadCvPlans;
+  window.doCvApprove = doCvApprove;
+  window.doCvReject = doCvReject;
 
   if (IS_ARCH) {
     document.querySelectorAll('#viewArch .edge-data').forEach(function (e) { e.classList.add('arch-flow'); });
