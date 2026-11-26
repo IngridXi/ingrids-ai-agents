@@ -1807,8 +1807,8 @@
       var dl = upcomingDeadlinesCache.map(function (e) {
         return '- ' + (e.emoji || '') + ' [' + (e.categoryLabel || '日程') + '] ' + e.title + ' · ' + fmtDeadline(e) + (e.location ? ' · 📍' + e.location : '');
       }).join('\n');
-      extra += '\n\n【你主人最近的研究日程（未来两周内到期）】\n' + dl +
-        '\n当对话涉及这些事项、或用户请你做时间规划 / 排优先级 / 收尾时，主动提醒临近的截止日期，并给出轻重缓急建议。';
+      extra += '\n\n【你主人近期的日程（未来两周内）】\n' + dl +
+        '\n铁律：① 日程/会议只能引用上面列表里真实出现的事件及其准确日期与时刻，绝不自行编造会议、约会或 1:1；列表里没有的，默认当天没有该安排，不要臆测。② 每条日程的日期以「距今 N 天 / 今天 / 明天 / 后天」标注为准，引用时必须对应到具体日期与时刻，严禁把未来日程说成「今天」，严禁把不同日程的日期/时间/地点张冠李戴。③ 只有当用户问起日程、时间规划或排优先级时才主动提及，平时不要突然插播日程。';
     }
     var caps = agentCapabilities();
     var s = systemPrompt + extra + toolSpecText(caps);
@@ -1820,7 +1820,8 @@
     }
     var _now = new Date();
     var _wd = ['日', '一', '二', '三', '四', '五', '六'][_now.getDay()];
-    s = '【今天日期】今天是 ' + _now.getFullYear() + '年' + (_now.getMonth() + 1) + '月' + _now.getDate() + '日 星期' + _wd + '。回答涉及日期、星期、时间、截止日、时效性时以此为准，不要凭记忆猜测。\n\n' + s;
+    var _hm = ('0' + _now.getHours()).slice(-2) + ':' + ('0' + _now.getMinutes()).slice(-2);
+    s = '【当前时间】现在是 ' + _now.getFullYear() + '年' + (_now.getMonth() + 1) + '月' + _now.getDate() + '日 星期' + _wd + ' ' + _hm + '（本地时间）。回答涉及日期、星期、时间、截止日、时效性，以及「距离某个事件/会议/截止日还有多久」时，一律以此为准，绝不凭记忆猜测当前时刻，也不凭感觉推算相对时间。\n\n' + s;
     if (webEnabled) {
       s += '\n\n【联网搜索能力 · 已开启】你具备主动联网搜索能力，可直接调用 web_search 工具检索实时信息。遇到最新事实、日期、数据、SOTA 进展、外部资料、论文 DOI/卷期页码、投稿/录用/正式发表状态、作者现任职位，或任何你不确定是否已过时的内容，优先联网核实再作答，并标注来源与检索时间；不要凭记忆编造最新数据或事实，更不要把「本地材料里成员自列清单」当成已核验的事实。';
     } else {
@@ -1880,10 +1881,13 @@
   function fmtDeadline(e) {
     var d = new Date(e.at);
     if (!isFinite(d.getTime())) return '';
+    var now = new Date();
     var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-    var md = (d.getMonth() + 1) + '月' + d.getDate() + '日';
-    if (d.getFullYear() !== new Date().getFullYear()) md = d.getFullYear() + '年' + md;
-    return md + ' ' + hm;
+    var md = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    var wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    var dayDiff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    var rel = dayDiff === 0 ? '今天' : dayDiff === 1 ? '明天' : dayDiff === 2 ? '后天' : (dayDiff > 0 ? dayDiff + ' 天后' : '已过期');
+    return md + ' 星期' + wd + ' ' + hm + '（' + rel + '）';
   }
   function refreshDeadlines() {
     if (!IS_DESKTOP || !window.ingrid.calendarUpcoming) { upcomingDeadlinesCache = []; return; }
