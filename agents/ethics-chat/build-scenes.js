@@ -11,6 +11,16 @@ const OUT = process.argv[2] || '/Users/ingridxi/Documents/Obsidian Vault/伦理�
 
 const scenes = JSON.parse(fs.readFileSync(path.join(DIR, 'scenes.json'), 'utf8'));
 
+// 6 大板块：主题分组（仅影响总索引展示顺序，不改 catNo / 文件名 / id）
+const BOARDS = [
+  { name: '企业经营合规', cats: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] },
+  { name: '避税与优惠滥用', cats: [21, 22, 23, 24, 25] },
+  { name: '跨境税务与财富', cats: [30, 32, 33, 34, 35, 36] },
+  { name: '高校创业与股权', cats: [26, 27, 31] },
+  { name: '签证与在读创业', cats: [28, 29, 37, 38, 39] },
+  { name: '跨境数据流动', cats: [40] }
+];
+
 // 合并 practices 分片（01~09.json：key=场景id，value 含 u、a；gray-*.json：value 含 g）
 const practices = {};
 const gray = {};
@@ -18,6 +28,7 @@ const pdir = path.join(DIR, 'practices');
 if (fs.existsSync(pdir)) {
   for (const f of fs.readdirSync(pdir)) {
     if (!f.endsWith('.json')) continue;
+    if (f === 'answers.json') continue; // 答案基线缓存，不是做法来源，跳过以免覆盖 u/a
     const obj = JSON.parse(fs.readFileSync(path.join(pdir, f), 'utf8'));
     if (f.startsWith('gray-')) Object.assign(gray, obj);
     else if (f.startsWith('bound-')) { for (const id of Object.keys(obj)) (practices[id] = practices[id] || {}).bound = obj[id].bound; }
@@ -181,10 +192,18 @@ idx.push('> **阶段**：种子期（创业早期）／成长期／退出期／�
 idx.push('');
 idx.push('## 目录');
 idx.push('');
-idx.push('| # | 分类 | 场景数 | 🟡 灰 | 🔴 违法 |');
-idx.push('|---|------|:---:|:---:|:---:|');
-meta.forEach(m => idx.push(`| ${m.no} | [[${m.fname.replace(/\.md$/, '')}]] | ${m.total} | ${m.grey} | ${m.illegal} |`));
-idx.push('');
+const metaByNo = {};
+meta.forEach(m => { metaByNo[m.no] = m; });
+BOARDS.forEach((board) => {
+  const rows = board.cats.map(no => metaByNo[no]).filter(Boolean);
+  if (!rows.length) return;
+  idx.push(`### ${board.name}`);
+  idx.push('');
+  idx.push('| # | 分类 | 场景数 | 🟡 灰 | 🔴 违法 |');
+  idx.push('|---|------|:---:|:---:|:---:|');
+  rows.forEach(m => idx.push(`| ${m.no} | [[${m.fname.replace(/\.md$/, '')}]] | ${m.total} | ${m.grey} | ${m.illegal} |`));
+  idx.push('');
+});
 idx.push('## 使用说明');
 idx.push('');
 idx.push('- 点击上表分类名可跳转到对应分类文件；每类文件内按「问题 + 做法」逐条展开');
@@ -193,6 +212,15 @@ idx.push('- 用标签 `#伦理场景库` 可聚合所有场景；打印可用 Ob
 idx.push('');
 
 fs.writeFileSync(path.join(OUT, '00-总索引.md'), idx.join('\n'));
+
+// 清理改名后残留的旧分类文件：仅删除 build 生成的 NN-*.md 中不属于当前分类的孤儿文件
+const valid = new Set(meta.map(m => m.fname).concat(['00-判定标准.md', '00-总索引.md']));
+for (const f of fs.readdirSync(OUT)) {
+  if (/^\d\d-.*\.md$/.test(f) && !valid.has(f)) {
+    fs.unlinkSync(path.join(OUT, f));
+    console.log('已清理残留旧文件：' + f);
+  }
+}
 
 console.log('完成：' + (cats.length + 1) + ' 个文件 → ' + OUT);
 console.log(`场景 ${total.n} 条（🟡 ${total.grey} / 🔴 ${total.illegal}），做法库 ${Object.keys(practices).length} 条（含灰色地带 ${Object.keys(gray).length} 条），全部匹配`);
