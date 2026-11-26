@@ -322,7 +322,7 @@
         <button class="side-item" id="navDashboard"><span class="ic" data-icon="chart"></span><span>仪表盘</span></button>
         <button class="side-item" id="navMermaid"><span class="ic" data-icon="flow"></span><span>流程图</span></button>
         <button class="side-item" id="navApiUsage"><span class="ic" data-icon="money"></span><span>API 用量</span><span class="bdot" id="apiDot" hidden></span></button>
-        <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>调度中枢</span><span class="scnt" id="skillsCount">0</span></button>
+        <button class="side-item" id="navSkills"><span class="ic" data-icon="grid"></span><span>类型治理</span><span class="scnt" id="skillsCount">0</span></button>
         <button class="side-item" id="navSessions"><span class="ic" data-icon="clock"></span><span>会话回放</span></button>
         <button class="side-item" id="navSettings"><span class="ic" data-icon="settings"></span><span>引擎设置</span></button>
       </nav>
@@ -451,25 +451,25 @@ const SEED_AGENTS = [
   },
   {
     name: '智能路由 ra', emoji: '🧭',
-    tag: '指挥其他 Agent · 限额切换 · 成本记账',
-    status: 'active', badge: '调度中枢', role: 'orchestrator', canControl: true,
-    engine: 'deepseek', engineLabel: '多模型路由 · 已启用',
-    soul: '你是调度中枢：把任务派给最合适的 Agent，并在引擎撞到限额时自动切换。',
+    tag: '自动巡检 · 四类触发类型判定/修正 · 锁定豁免',
+    status: 'active', badge: '类型治理官', role: 'orchestrator', canControl: true,
+    engine: 'deepseek', engineLabel: '治理引擎 · 本地规则判定',
+    soul: '你是 Agent 类型治理官（原调度中枢）。自动巡检工作台上每一个 agent——新加入的和老的都审查——按四类触发类型判定并默认自动修正：🔶主动型（时间驱动，每天定时，有新鲜度）、⬜链路驱动（被动接续上游）、🔴缺口驱动（事件触发，差什么才做什么）、🟢人工驱动（人等点/审批/对话）。被人工锁定的 agent 豁免自动修改；无规则命中的新 agent 保守判「人工驱动」并标记待确认，绝不臆断成会自动跑的类型。发生变动时产出报告并发系统通知。仍保留任务委派能力（并行/串行/流水线、限额切换、成本记账）。',
     fallbacks: ['gpt', 'qwen'],
     detail: {
-      sub: 'Orchestrator · 点击方块打开调度中枢',
-      desc: '工作台的调度中枢（对应 phd-ra-agent）。ra 可以指挥其他 Agent 干活：并行 / 串行 / 流水线，危险操作先弹审批卡片；某个引擎撞到用量上限会自动切到降级链里下一个可用模型；每次调用都记账，可设月度预算、导出 CSV。',
+      sub: 'Agent Type Governor · 自动类型治理',
+      desc: '工作台的类型治理官（由原调度中枢升级）。不再等人派活，而是主动每天巡检，把每个 agent 归入四类触发类型（主动/链路/缺口/人工），默认自动修正写回注册表；锁定即豁免。变更发报告+系统通知。仍保留手动委派（并行/串行/流水线、限额切换、成本记账）作为次级通道。',
       workflow: [
-        { t: '选择指挥官', s: '只有 role=orchestrator 的 Agent 能派活' },
-        { t: '勾选目标', s: '选一个或多个 Agent，填任务内容' },
-        { t: '审批 / 执行', s: 'ask 模式逐个确认，然后调用各自引擎' },
-        { t: '限额自动切换', s: '主引擎到额度 → 自动换降级引擎' },
-        { t: '记账', s: '按 Agent / 引擎 / 日汇总，月度预算封顶' },
+        { t: '自动巡检', s: '启动 + 每天定时扫描 registry / 种子 / 前端页' },
+        { t: '类型判定', s: '种子表命中 → 关键词推断 → 默认人工（保守）' },
+        { t: '自动修正', s: '写回 triggerType，除非该 agent 被锁定' },
+        { t: '变更报告', s: '变动 append-only 记历史 + 系统通知' },
+        { t: '任务委派', s: '保留：并行 / 流水线 / 限额切换 / 记账' },
       ],
-      capabilities: ['Agent 委派', '并行 / 流水线', '审批卡片', '限额自动切换', '成本记账', '月度预算', 'CSV 导出'],
+      capabilities: ['四类触发类型判定', '自动修正', '锁定豁免', '每日定时巡检', '变更报告 + 通知', 'Agent 委派', '限额自动切换', '成本记账'],
       route: [
-        { kind: '调度', label: 'AgentOrchestrator（agents-core.js）' },
-        { kind: '路由', label: 'ModelRouter · 降级链' },
+        { kind: '治理引擎', label: 'agent-type-governor.js' },
+        { kind: '委派', label: 'AgentOrchestrator（agents-core.js）' },
         { kind: '账本', label: 'UsageLedger · data/usage/*.jsonl' },
       ],
     },
@@ -648,8 +648,8 @@ registry.list().forEach(function (a) {
   if (/路由|调度|\bra\b/i.test(a.name || '') && a.role !== 'orchestrator') {
     registry.update(a.id, {
       role: 'orchestrator', canControl: true, status: 'active',
-      tag: '指挥其他 Agent · 限额切换 · 成本记账',
-      engineLabel: '多模型路由 · 已启用', badge: '调度中枢',
+      tag: '自动巡检 · 四类触发类型判定/修正 · 锁定豁免',
+      engineLabel: '治理引擎 · 本地规则判定', badge: '类型治理官',
     });
   }
 });
@@ -702,6 +702,17 @@ SEED_AGENTS.forEach(function (seed) {
   if (!a || !a.href) return;
   var tools = Array.isArray(a.tools) ? a.tools.slice() : [];
   if (tools.indexOf('chief') < 0) { tools.push('chief'); registry.update(a.id, { tools: tools }); }
+});
+// v11 迁移：把「智能路由 ra / 调度中枢」升级为「Agent 类型治理官」定位（老用户 soul/tag/badge 同步更新）
+['智能路由 ra'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (!a) return;
+  registry.update(a.id, {
+    badge: '类型治理官',
+    tag: '自动巡检 · 四类触发类型判定/修正 · 锁定豁免',
+    engineLabel: '治理引擎 · 本地规则判定',
+    soul: '你是 Agent 类型治理官（原调度中枢）。自动巡检工作台上每一个 agent——新加入的和老的都审查——按四类触发类型判定并默认自动修正：🔶主动型（时间驱动，每天定时，有新鲜度）、⬜链路驱动（被动接续上游）、🔴缺口驱动（事件触发，差什么才做什么）、🟢人工驱动（人等点/审批/对话）。被人工锁定的 agent 豁免自动修改；无规则命中的新 agent 保守判「人工驱动」并标记待确认。发生变动时产出报告并发系统通知。仍保留任务委派能力。',
+  });
 });
 window.__reg = registry;
 

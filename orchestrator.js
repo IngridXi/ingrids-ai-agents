@@ -90,6 +90,8 @@
   var selectedIds = [];
   var skillQuery = '';
   var showImport = false;
+  var currentTab = 'govern';   // 默认落在「类型治理」（调度中枢的新定位），「任务委派」是次级手动通道
+  var governReport = null;     // 最近一次类型治理报告（缓存）
 
   function log(type, payload) {
     eventLog.push({ type: type, at: Date.now(), payload: payload || {} });
@@ -243,6 +245,29 @@
     '.sk-warn{font-size:11px;color:var(--danger);margin-top:5px;}',
     '.orch-preset{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;}',
     '.orch-preset select{flex:1;min-width:130px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;font-size:12px;background:#fff;color:var(--ink);}',
+    /* —— 类型治理视图 —— */
+    '.gt-tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:0;}',
+    '.gt-tab{padding:9px 16px;border:none;border-bottom:2px solid transparent;background:transparent;font-size:14px;font-weight:650;color:var(--ink-faint);cursor:pointer;font-family:inherit;}',
+    '.gt-tab.on{color:var(--accent);border-bottom-color:var(--accent);}',
+    '.gt-legend{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}',
+    '.gt-legend .lg{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);padding:5px 11px;border-radius:999px;}',
+    '.gt-dot{width:9px;height:9px;border-radius:50%;flex:none;}',
+    '.gt-actions{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}',
+    '.gt-list{display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto;margin-bottom:14px;}',
+    '.gt-row{display:flex;align-items:center;gap:11px;padding:10px 13px;background:#fff;border:1px solid var(--line);border-radius:11px;}',
+    '.gt-row .g-ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:16px;background:var(--surface-2);flex:none;}',
+    '.gt-row .g-name{font-size:13.5px;font-weight:650;flex:1;min-width:0;}',
+    '.gt-row .g-src{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}',
+    '.gt-pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;color:#fff;white-space:nowrap;}',
+    '.gt-row .g-lock{flex:none;display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);cursor:pointer;padding:5px 9px;border:1px solid var(--line);border-radius:9px;background:#fff;user-select:none;}',
+    '.gt-row .g-lock:hover{border-color:var(--accent);}',
+    '.gt-row .g-lock.on{background:var(--warning-soft);border-color:var(--warning);color:var(--warning);}',
+    '.gt-row .g-rev{flex:none;font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--gold-soft);color:var(--gold-text);}',
+    '.gt-changes{background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:12px 14px;max-height:150px;overflow:auto;font-size:12px;color:var(--ink-soft);line-height:1.7;}',
+    '.gt-changes .gc-add{color:var(--success);font-weight:650;} .gt-changes .gc-chg{color:var(--warning);font-weight:650;} .gt-changes .gc-lk{color:var(--info);font-weight:650;}',
+    '.gt-note{font-size:11.5px;color:var(--ink-faint);line-height:1.7;margin-top:8px;}',
+    '.gt-city{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);}',
+    '.gt-city .cc{font-size:11px;color:var(--ink-soft);background:#fff;border:1px solid var(--line);padding:3px 9px;border-radius:999px;}',
   ].join('\n');
   document.head.appendChild(style);
 
@@ -438,6 +463,164 @@
     if (wb.renderAgents) wb.renderAgents();
   }
 
+  /* ---------- 类型治理视图（调度中枢的新定位：治理型 agent） ---------- */
+  var TRIGGER_META = {
+    active:   { label: '主动型',  emoji: '🔶', color: '#f59e0b', desc: '时间驱动 · 每天定时' },
+    pipeline: { label: '链路驱动', emoji: '⬜', color: '#0ea5e9', desc: '被动接续上游' },
+    gap:      { label: '缺口驱动', emoji: '🔴', color: '#dc2626', desc: '事件触发 · 差什么才做什么' },
+    human:    { label: '人工驱动', emoji: '🟢', color: '#16a34a', desc: '人等点 / 审批 / 对话' },
+  };
+  function typeMeta(key) { return TRIGGER_META[key] || TRIGGER_META.human; }
+
+  function governBodyHtml() {
+    var legend = Object.keys(TRIGGER_META).map(function (k) {
+      var m = TRIGGER_META[k];
+      return '<span class="lg"><span class="gt-dot" style="background:' + m.color + '"></span>' + m.emoji + ' ' + m.label + ' · ' + m.desc + '</span>';
+    }).join('');
+    return '<div class="gt-legend">' + legend + '</div>' +
+      '<div class="gt-actions">' +
+        '<button class="orch-btn" id="gt-run">🔍 立即巡检</button>' +
+        '<span id="gt-tip" style="font-size:12px;color:var(--ink-faint)"></span>' +
+      '</div>' +
+      '<div class="gt-list" id="gt-list"><div style="padding:14px;color:var(--ink-faint);font-size:12.5px">正在巡检…</div></div>' +
+      '<div class="gt-changes" id="gt-changes"></div>' +
+      '<div class="gt-city" id="gt-city"></div>' +
+      '<div class="gt-note">治理官每天自动巡检一次，新加入与老 agent 都会审查。' +
+        '默认<b>自动修正</b>类型（写回注册表）；点「锁定」则该 agent 豁免自动修改，直到解锁。' +
+        '改下拉框 = 人工指定类型并锁定。变更会发系统通知。</div>';
+  }
+
+  function governTip(t) {
+    var el = document.getElementById('gt-tip');
+    if (el) el.textContent = t || '';
+  }
+
+  function renderGovernList(report) {
+    var list = document.getElementById('gt-list');
+    var chg = document.getElementById('gt-changes');
+    var city = document.getElementById('gt-city');
+    if (!list) return;
+    var recs = (report && report.records) || [];
+    if (!recs.length) {
+      list.innerHTML = '<div style="padding:14px;color:var(--ink-faint);font-size:12.5px">没有可治理的 agent。</div>';
+    } else {
+      list.innerHTML = recs.map(function (r) {
+        var m = typeMeta(r.type);
+        var opts = Object.keys(TRIGGER_META).map(function (k) {
+          var mm = TRIGGER_META[k];
+          return '<option value="' + k + '"' + (r.type === k ? ' selected' : '') + '>' + mm.emoji + ' ' + mm.label + '</option>';
+        }).join('');
+        var lockCls = r.locked ? ' on' : '';
+        var lockLabel = r.locked ? '🔒 已锁定' : '🔓 自动';
+        return '<div class="gt-row" data-key="' + esc(r.key) + '">' +
+          '<div class="g-ic">' + iconFor(r.emoji || '🤖') + '</div>' +
+          '<div class="g-name">' + esc(r.name) +
+            '<div class="g-src">' + esc(sourceLabel(r.source)) + (r.needsReview ? ' · 待人工确认' : '') + '</div></div>' +
+          (r.needsReview ? '<span class="g-rev">待确认</span>' : '') +
+          '<select class="g-type" style="padding:5px 8px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff;color:var(--ink)">' + opts + '</select>' +
+          '<button class="g-lock' + lockCls + '" title="锁定后豁免自动修改">' + lockLabel + '</button>' +
+          '</div>';
+      }).join('');
+    }
+    // 变更报告
+    var changes = (report && report.changes) || [];
+    if (chg) {
+      if (!changes.length) {
+        chg.innerHTML = '<div style="color:var(--ink-faint)">本次巡检无类型变动 —— 全部 agent 类型已就位。</div>';
+      } else {
+        chg.innerHTML = changes.map(function (c) {
+          var cls = c.kind === 'added' ? 'gc-add' : 'gc-chg';
+          return '<div class="' + cls + '">' + (c.kind === 'added' ? '＋ 新增' : '↻ 修正') + '　' +
+            esc(c.name) + '　→　' + typeMeta(c.to).emoji + ' ' + typeMeta(c.to).label + '</div>';
+        }).join('');
+      }
+    }
+    // CityVerse 只读参考
+    var cv = (report && report.cityverse) || [];
+    if (city) {
+      city.innerHTML = cv.length
+        ? '<span style="font-size:11px;color:var(--ink-faint);font-weight:650">CityVerse 参考（只读，另由其自身治理）</span>' +
+          cv.map(function (c) {
+            return '<span class="cc"><span class="gt-dot" style="display:inline-block;background:' + typeMeta(c.type).color + '"></span> ' +
+              esc(c.name) + ' · ' + typeMeta(c.type).emoji + typeMeta(c.type).label + '</span>';
+          }).join('')
+        : '';
+    }
+  }
+  function sourceLabel(s) {
+    return { registry: '注册表', seed: '内置种子', frontend: '前端页', panel: '面板型', cityverse: 'CityVerse' }[s] || s;
+  }
+
+  function loadGovern() {
+    if (!DESKTOP || !window.ingrid.agentTypesRun) {
+      renderGovernList({ records: [], changes: [], cityverse: [] });
+      governTip('桌面版才能巡检（浏览器预览无数据目录）');
+      return;
+    }
+    governTip('正在巡检…');
+    window.ingrid.agentTypesRun().then(function (report) {
+      governReport = report || {};
+      renderGovernList(governReport);
+      var s = governReport.summary || {};
+      governTip('共 ' + s.scanned + ' 个 agent · 主动 ' + s.active + ' / 链路 ' + s.pipeline +
+        ' / 缺口 ' + s.gap + ' / 人工 ' + s.human + ' · 变动 ' + (governReport.changes || []).length);
+    }).catch(function (e) {
+      renderGovernList({ records: [], changes: [], cityverse: [] });
+      governTip('✕ ' + (e && e.message || e));
+    });
+  }
+
+  function bindGovern() {
+    var run = document.getElementById('gt-run');
+    if (run) run.addEventListener('click', loadGovern);
+    var list = document.getElementById('gt-list');
+    if (list) {
+      list.addEventListener('change', function (e) {
+        var sel = e.target && e.target.closest ? e.target.closest('select.g-type') : null;
+        if (!sel) return;
+        var row = sel.closest('.gt-row');
+        var key = row ? row.getAttribute('data-key') : '';
+        var name = governRowName(key);
+        if (!name || !window.ingrid.agentTypesLock) return;
+        window.ingrid.agentTypesLock(name, sel.value).then(function (report) {
+          governReport = report || {};
+          renderGovernList(governReport);
+          governTip('已把「' + name + '」人工指定为 ' + typeMeta(sel.value).label + ' 并锁定');
+        }).catch(function (e) { governTip('✕ ' + (e && e.message || e)); });
+      });
+      list.addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest('.g-lock') : null;
+        if (!btn) return;
+        var row = btn.closest('.gt-row');
+        var key = row ? row.getAttribute('data-key') : '';
+        var rec = governRecord(key);
+        if (!rec || !window.ingrid.agentTypesLock) return;
+        if (rec.locked) {
+          window.ingrid.agentTypesUnlock(rec.name).then(function (report) {
+            governReport = report || {}; renderGovernList(governReport);
+            governTip('已解锁「' + rec.name + '」，恢复自动判定');
+          }).catch(function (e) { governTip('✕ ' + (e && e.message || e)); });
+        } else {
+          window.ingrid.agentTypesLock(rec.name, rec.type).then(function (report) {
+            governReport = report || {}; renderGovernList(governReport);
+            governTip('已锁定「' + rec.name + '」为 ' + typeMeta(rec.type).label + '，此后不再自动改');
+          }).catch(function (e) { governTip('✕ ' + (e && e.message || e)); });
+        }
+      });
+    }
+  }
+  function governRecord(key) {
+    if (!governReport || !governReport.records) return null;
+    for (var i = 0; i < governReport.records.length; i++) {
+      if (governReport.records[i].key === key) return governReport.records[i];
+    }
+    return null;
+  }
+  function governRowName(key) {
+    var r = governRecord(key);
+    return r ? r.name : '';
+  }
+
   /* ---------- 完整面板 ---------- */
   function render() {
     var list = agents();
@@ -460,9 +643,15 @@
     }).join('');
 
     modal.innerHTML =
-      '<header><div class="emoji">' + iconSvg('sliders') + '</div><div><h2>调度中枢</h2>' +
-        '<div class="sub">一个 Agent 指挥其他 Agent · 按板块挂载技能 · 限额切换 · 成本记账</div></div>' +
+      '<header><div class="emoji">' + iconSvg('sliders') + '</div><div><h2>调度中枢 · Agent 类型治理官</h2>' +
+        '<div class="sub">自动巡检四类触发类型（主动 / 链路 / 缺口 / 人工）· 默认自动修正 · 锁定豁免 · 变更报告</div></div>' +
         '<button class="close" id="orch-close">✕</button></header>' +
+      '<div class="gt-tabs">' +
+        '<button class="gt-tab' + (currentTab === 'govern' ? ' on' : '') + '" id="gt-tab-govern">🧭 类型治理</button>' +
+        '<button class="gt-tab' + (currentTab === 'delegate' ? ' on' : '') + '" id="gt-tab-delegate">🚀 任务委派</button>' +
+      '</div>' +
+      '<div id="orch-govern"' + (currentTab === 'govern' ? '' : ' style="display:none"') + '>' + governBodyHtml() + '</div>' +
+      '<div id="orch-delegate"' + (currentTab === 'delegate' ? '' : ' style="display:none"') + '>' +
       '<div class="orch-bar" id="orch-bar">' + budgetHtml() + '</div>' +
       '<div class="orch-cols">' +
         '<div>' +
@@ -502,11 +691,19 @@
         '<button class="orch-btn ghost" id="orch-clearlimits">解除所有限额</button>' +
       '</div>' +
       '<div class="orch-note">账本按月份写在 <b>data/usage/YYYY-MM.jsonl</b>，记录 skills 与 skillTokens，只记元数据、不记消息正文。' +
-        '板块与预设存 data/boards.json、data/presets.json；内置技能在 skills/&lt;板块&gt;/*.md，可直接编辑。</div>';
+        '板块与预设存 data/boards.json、data/presets.json；内置技能在 skills/&lt;板块&gt;/*.md，可直接编辑。</div>' +
+      '</div>';
     document.getElementById('orch-close').addEventListener('click', close);
-    bind();
-    renderSkillBox();
-    renderEventLog();
+    document.getElementById('gt-tab-govern').addEventListener('click', function () { switchTab('govern'); });
+    document.getElementById('gt-tab-delegate').addEventListener('click', function () { switchTab('delegate'); });
+    if (currentTab === 'govern') { bindGovern(); loadGovern(); }
+    else { bind(); renderSkillBox(); renderEventLog(); }
+  }
+
+  function switchTab(t) {
+    if (t === currentTab) return;
+    currentTab = t;
+    render();
   }
 
   function bind() {
@@ -666,6 +863,7 @@
 
   function open() { render(); mask.classList.add('open'); }
   function openWith(p) {
+    currentTab = 'delegate';   // 预设是「一键委派」组合，落到任务委派页签
     currentBoardId = p.boardId || currentBoardId;
     selectedIds = (p.skillIds || []).filter(function (id) { return skills.byId(id); });
     render();
@@ -683,5 +881,17 @@
 
   if (DESKTOP && window.ingrid.getRunMode) {
     window.ingrid.getRunMode().then(function (on) { realMode = !!on; });
+  }
+
+  // 类型治理官在后台（每日定时）巡检发现变动时，若面板开着且正看治理页，就地刷新
+  if (DESKTOP && window.ingrid.onAgentTypesChanged) {
+    window.ingrid.onAgentTypesChanged(function (report) {
+      governReport = report || {};
+      if (mask.classList.contains('open') && currentTab === 'govern') {
+        renderGovernList(governReport);
+        var s = governReport.summary || {};
+        governTip('后台巡检发现 ' + (governReport.changes || []).length + ' 处变动，已刷新');
+      }
+    });
   }
 })();

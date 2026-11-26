@@ -40,6 +40,7 @@ require('./permission-core.js');
 const PermissionCore = globalThis.PermissionCore;
 const KnowledgeSettlerCore = require('./knowledge-settler-core.js');
 const agentGovernance = require('./agent-governance.js');
+const agentTypeGovernor = require('./agent-type-governor.js');
 const SentimentAgentCore = require('./sentiment-agent-core.js');
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
@@ -1647,6 +1648,45 @@ ipcMain.handle('governance:run', () => {
   const report = agentGovernance.run(__dirname, dataDir());
   writeJson('agent-governance.json', report);
   return report;
+});
+
+/* ---------------- IPC：Agent 类型治理官（自动巡检 + 自动判定/修正 + 人工锁定 + 变更报告）----------------
+ * 把「调度中枢」升级成治理型 agent：默认自动修正各 agent 的触发类型（主动/链路/缺口/人工），
+ * 除非用户人工锁定某个 agent。变更 append-only 落盘 + 系统通知 + 广播给面板。
+ */
+function runAgentTypeGovernance() {
+  try {
+    const report = agentTypeGovernor.run({ repoRoot: __dirname, dataDir: dataDir(), includeCityverse: true });
+    writeJson('agent-types-report.json', report);
+    if (report.hasChanges) {
+      const s = report.summary || {};
+      const title = 'Agent 类型治理官 · ' + report.changes.length + ' 处变动';
+      const body = report.changes.slice(0, 4).map(function (c) {
+        return c.name + ' → ' + (agentTypeGovernor.TRIGGER_TYPES[c.to] ? agentTypeGovernor.TRIGGER_TYPES[c.to].label : c.to);
+      }).join('、') + (report.changes.length > 4 ? ' 等' : '');
+      try {
+        if (Notification.isSupported()) new Notification({ title: title, body: body }).show();
+      } catch (e) { /* 通知失败不阻断 */ }
+      broadcast('agent-types:changed', report);
+    }
+    return report;
+  } catch (e) {
+    const err = { error: String(e && e.message || e), generated_at: new Date().toISOString() };
+    writeJson('agent-types-report.json', err);
+    return err;
+  }
+}
+ipcMain.handle('agent-types:run', () => runAgentTypeGovernance());
+ipcMain.handle('agent-types:report', () => readJson('agent-types-report.json', null));
+ipcMain.handle('agent-types:state', () => agentTypeGovernor.state(dataDir()));
+// 人工锁定 / 解锁：锁定后立即重跑一次，让报告与快照立即反映锁定结果
+ipcMain.handle('agent-types:lock', (_e, name, type) => {
+  agentTypeGovernor.lock(dataDir(), name, type);
+  return runAgentTypeGovernance();
+});
+ipcMain.handle('agent-types:unlock', (_e, name) => {
+  agentTypeGovernor.unlock(dataDir(), name);
+  return runAgentTypeGovernance();
 });
 
 /* ---------------- IPC：打开 agent（单窗口，用 BrowserView 内嵌，不新开窗口） ---------------- */
@@ -6300,6 +6340,10 @@ if (gotSingleInstanceLock) {
     // API 余额监控：启动延时检查一次 + 每 60 分钟自动刷新余额并低余额提醒（DeepSeek 可自动查，其余手动填）
     setTimeout(() => { refreshBalanceAndAlert().catch(() => {}); }, 3000);
     setInterval(() => { refreshBalanceAndAlert().catch(() => {}); }, 60 * 60 * 1000);
+    // Agent 类型治理官：启动自动巡检一次 + 每 24 小时定时巡检（主动型 · 时间驱动）
+    // 变更时才发系统通知；锁定 agent 豁免自动修正。首次运行会把全部 agent 归入四类。
+    setTimeout(() => { runAgentTypeGovernance(); }, 1200);
+    setInterval(() => { runAgentTypeGovernance(); }, 24 * 60 * 60 * 1000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });

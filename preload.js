@@ -294,6 +294,14 @@ contextBridge.exposeInMainWorld('ingrid', {
   governanceReport: () => ipcRenderer.invoke('governance:report'),
   governanceRun: () => ipcRenderer.invoke('governance:run'),
 
+  // Agent 类型治理官（自动巡检 + 自动判定/修正四类触发类型 + 人工锁定 + 变更报告）
+  agentTypesRun: () => ipcRenderer.invoke('agent-types:run'),
+  agentTypesReport: () => ipcRenderer.invoke('agent-types:report'),
+  agentTypesState: () => ipcRenderer.invoke('agent-types:state'),
+  agentTypesLock: (name, type) => ipcRenderer.invoke('agent-types:lock', name, type),
+  agentTypesUnlock: (name) => ipcRenderer.invoke('agent-types:unlock', name),
+  onAgentTypesChanged: (cb) => ipcRenderer.on('agent-types:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
   // 情绪/偏好 Agent（侦测评价情绪 → 提炼 do/avoid 偏好 → 联动经验沉淀）
   sentimentReport: () => ipcRenderer.invoke('sentiment:report'),
   sentimentSignals: (limit, valence) => ipcRenderer.invoke('sentiment:signals', limit, valence),
