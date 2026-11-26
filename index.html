@@ -186,6 +186,7 @@
     background: var(--card);
   }
   .tile.featured .emoji { background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; }
+  .tile .emoji.purple { background: linear-gradient(135deg, var(--accent), var(--deep)); color: #fff; }
 
   .tile.placeholder { opacity: .8; }
   .tile.placeholder .emoji { background: #eceaf2; filter: grayscale(.35); }
@@ -405,7 +406,7 @@ const SEED_AGENTS = [
   {
     name: '会议纪要官', emoji: '🎙️',
     tag: '实时转写 · 声纹认人 · 纪要 · 一键 PPT',
-    status: 'active', featured: true, badge: '首个',
+    status: 'active', badge: '首个',
     engine: 'funasr', engineLabel: 'FunASR · 本地大模型',
     href: 'agents/meeting-audio/index.html',
     soul: '你是专业会议记录员：转写、区分说话人、提炼行动项与决策。',
@@ -784,6 +785,12 @@ SEED_AGENTS.forEach(function (seed) {
     soul: '你是 Agent 类型治理官（原调度中枢）。自动巡检工作台上每一个 agent——新加入的和老的都审查——按四类触发类型判定并默认自动修正：🔶主动型（时间驱动，每天定时，有新鲜度）、⬜链路驱动（被动接续上游）、🔴缺口驱动（事件触发，差什么才做什么）、🟢人工驱动（人等点/审批/对话）。被人工锁定的 agent 豁免自动修改；无规则命中的新 agent 保守判「人工驱动」并标记待确认。发生变动时产出报告并发系统通知。仍保留任务委派能力。',
   });
 });
+// v12 迁移：会议纪要官不再置顶高亮，移到伦理agent之后（去掉 featured，排序交给 ORDER）。
+// 研究助手/通用助手的「紫色图标」由渲染层按 name 判断，无需改数据。
+['会议纪要官'].forEach(function (nm) {
+  var a = registry.list().find(function (x) { return x.name === nm; });
+  if (a && a.featured) registry.update(a.id, { featured: false });
+});
 window.__reg = registry;
 
 /* ---------- 渲染 ---------- */
@@ -882,8 +889,8 @@ function renderAgents() {
   grid.innerHTML = '';
   // 首页不显示「调度中枢」（控制面板）与「灵感目录」（生态雷达，仅侧边栏入口），其余 Agent 正常展示
   const agents = registry.list().filter(a => a.role !== 'orchestrator' && a.id !== 'eco-radar');
-  // featured（主力）排最前，其余按固定顺序（通用助手排在音乐创作之前）
-  const ORDER = ['会议纪要官', '研究助手', '通用助手', '软件工程', '伦理agent', '界面设计师', '音乐创作'];
+  // featured（主力）排最前，其余按固定顺序（会议纪要官排在伦理agent之后）
+  const ORDER = ['研究助手', '通用助手', '软件工程', '伦理agent', '会议纪要官', '界面设计师', '音乐创作'];
   agents.sort((x, y) => {
     const fx = x.featured ? 1 : 0, fy = y.featured ? 1 : 0;
     if (fx !== fy) return fy - fx;
@@ -902,10 +909,12 @@ function renderAgents() {
     const badge = a.badge
       ? `<span class="badge new">${a.badge}</span>`
       : (a.status === 'soon' ? `<span class="badge soon">敬请期待</span>` : '');
+    // 研究助手 / 通用助手用紫色图标（实底紫渐变 + 白色线条）
+    const purpleIcon = ['研究助手', '通用助手'].indexOf(a.name) >= 0;
     el.innerHTML = `
       ${badge}
       ${a.href ? `<button class="tile-gear" title="设置引擎与工具能力">⚙</button>` : ''}
-      <div class="emoji">${iconFor(a.emoji)}</div>
+      <div class="emoji${purpleIcon ? ' purple' : ''}">${iconFor(a.emoji)}</div>
       <div class="name">${a.name}</div>
       <div class="tag">${a.tag}</div>
       <div class="engine">${engineLabelOf(a)}</div>`;
