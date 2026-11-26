@@ -963,6 +963,73 @@ function dedupeEventsByUid(events) {
   return out.concat(noUid);
 }
 
+/** 归一化标题用于匹配：去 Re:/Fwd:/回复:/转发: 前缀、压空白、转小写 */
+function normSubjectForMatch(s) {
+  return String(s || '')
+    .replace(/^(re|fw|fwd|回复|转发|答复)\s*[:：]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/** 检测「会议改期」：RECURRENCE-ID 例外且非取消 = 时间被改，写入 meeting-changes.json */
+function detectMeetingChanges(allEvents) {
+  const changes = [];
+  (Array.isArray(allEvents) ? allEvents : []).forEach(function (ev) {
+    if (!ev.recurrenceId) return;
+    const st = String(ev.status || '').toUpperCase();
+    if (st === 'CANCELLED' || /^cancell?ed\b/i.test(String(ev.title || ''))) return;
+    if (!ev.at || ev.recurrenceId === ev.at) return;
+    changes.push({
+      uid: ev.uid || '',
+      title: ev.title || '',
+      oldTime: ev.recurrenceId,
+      newTime: ev.at,
+      source: ev._feedName || 'ICS 订阅',
+      detectedAt: Date.now(),
+    });
+  });
+  if (changes.length) writeJson('meeting-changes.json', { changes: changes });
+  return changes;
+}
+
+/** 检查「会议改期」是否已回复；未回复则发秘书提醒（去重，避免重复打扰） */
+function runMeetingChangeCheck() {
+  const changes = readJson('meeting-changes.json', { changes: [] }).changes || [];
+  if (!changes.length) return { reminded: 0 };
+  const state = readJson('secretary.json', { emails: [] });
+  const emails = Array.isArray(state.emails) ? state.emails : [];
+  const sent = emails.filter(function (m) { return m.dir === 'sent'; });
+  const reminded = readJson('meeting-reminded.json', { keys: [] }).keys || [];
+  const toNotify = [];
+
+  changes.forEach(function (ch) {
+    const key = hashStr(String(ch.uid || '') + '|' + String(ch.newTime || '') + '|' + String(ch.oldTime || ''));
+    if (reminded.indexOf(key) >= 0) return;   // 已提醒过，不再打扰
+    const nt = normSubjectForMatch(ch.title);
+    if (!nt) return;
+    // 发件箱里最近 30 天有「同主题」的回复 = 已回复，跳过
+    const replied = sent.some(function (m) {
+      const ms = normSubjectForMatch(m.subject);
+      if (!ms) return false;
+      if (ms.indexOf(nt) < 0 && nt.indexOf(ms) < 0) return false;
+      const mt = new Date(m.at).getTime();
+      return isFinite(mt) && mt >= Date.now() - 30 * 86400000;
+    });
+    if (replied) { reminded.push(key); return; }   // 已回复，记录并跳过
+    toNotify.push(ch);
+    reminded.push(key);
+  });
+
+  writeJson('meeting-reminded.json', { keys: reminded });
+  toNotify.forEach(function (ch) {
+    const body = '「' + (ch.title || '会议') + '」时间由 ' + fmtDateTime(ch.oldTime) + ' 改为 ' + fmtDateTime(ch.newTime) + '，你似乎还没回复，记得确认。';
+    try { if (Notification.isSupported()) new Notification({ title: '📅 会议改期待确认', body: body }).show(); } catch (e) { /* 通知失败不阻断 */ }
+  });
+  if (toNotify.length) broadcast('meeting-change:remind', toNotify);
+  return { reminded: toNotify.length };
+}
+
 /** 拉取所有 ICS 订阅并合并进秘书日程（只读；每 30 分钟自动调用） */
 async function runIcsSync() {
   const feeds = listIcsFeeds();
@@ -986,6 +1053,9 @@ async function runIcsSync() {
   }
   // 同 UID 折叠：改期残留的「旧时间 + 新时间」两条 VEVENT 只留最新版本，避免重复日程
   allEvents = dedupeEventsByUid(allEvents);
+
+  // 检测「会议改期」（RECURRENCE-ID 例外），供秘书判断是否已回复并提醒
+  detectMeetingChanges(allEvents);
 
   // 展开重复事件：母事件 + RRULE 实例；跳过已取消（Canceled）的实例
   const canceledKeys = new Set();
@@ -1151,7 +1221,6 @@ function upcomingDeadlines(days) {
 /* ---------------- 邮箱同步：Outlook（Microsoft Graph） ---------------- */
 async function runMailSync() {
   const accounts = decryptSyncAccounts().filter(function (a) { return a.type === 'microsoft'; });
-  if (!accounts.length) return { ok: true, skipped: true, total: 0, results: [] };
   const results = [];
   let allEmails = [];
   for (const acct of accounts) {
@@ -1171,6 +1240,36 @@ async function runMailSync() {
     results.push({ id: acct.id, name: acct.name, ok: r.ok, count: (r.emails || []).length, error: r.error || '' });
     if (r.ok && r.emails) allEmails = allEmails.concat(r.emails);
   }
+  // 通道 2：Apple Mail（macOS「邮件」App 里的剑桥邮箱，读收件箱 + 发件箱，用于判断改期邮件是否已回复）
+  if (process.platform === 'darwin') {
+    let am = null;
+    try { am = await readAppleMail(); } catch (e) { am = { ok: false, error: String(e && e.message || e) }; }
+    if (am && am.ok && Array.isArray(am.mails) && am.mails.length) {
+      am.mails.forEach(function (m, i) {
+        allEmails.push({
+          id: 'msmail-apple-' + hashStr(String(m.at || '') + '|' + String(m.subject || '') + '|' + String(m.from || '') + '|' + i),
+          from: m.from || '',
+          fromName: '',
+          subject: m.subject || '（无主题）',
+          body: String(m.body || '').slice(0, 500),
+          at: m.at || '',
+          read: true,
+          link: '',
+          source: 'Apple 邮件',
+          dir: m.dir === 'sent' ? 'sent' : 'inbox',
+        });
+      });
+      results.push({ id: 'apple-mail', name: 'Apple 邮件', ok: true, count: am.mails.length, error: '' });
+    } else {
+      results.push({ id: 'apple-mail', name: 'Apple 邮件', ok: false, count: 0, error: (am && am.error) || '未读到剑桥邮箱邮件' });
+    }
+  }
+  // 所有通道都没读到邮件 → 跳过合并，避免清空已有数据
+  if (!allEmails.length) {
+    const summary = { results: results, total: 0, skipped: true, syncedAt: Date.now() };
+    broadcast('mail:synced', summary);
+    return summary;
+  }
   // 合并进 secretary.json：移除旧的同步邮件（id 以 msmail- 开头），写入新邮件（自动分类），保留手动导入。
   // 用串行化队列写入，避免与日历同步并发覆盖（根因修复）
   const totalEmails = allEmails.length;
@@ -1186,6 +1285,8 @@ async function runMailSync() {
   });
   const summary = { results: results, total: totalEmails, syncedAt: Date.now() };
   broadcast('mail:synced', summary);
+  // 邮件同步完 → 检查会议改期是否已回复，未回复则发秘书提醒（幂等 + 去重）
+  try { runMeetingChangeCheck(); } catch (e) { /* 检查失败不阻断邮件同步 */ }
   return summary;
 }
 
@@ -4609,10 +4710,10 @@ function readAppleMail() {
   return new Promise((resolve) => {
     if (process.platform !== 'darwin') { resolve({ ok: false, error: '仅 macOS 支持读取 Apple Mail' }); return; }
     const script = 'function run(){\n' +
-      '  var res = { account: "", found: [], total: 0, inWindow: 0, mails: [], noAccounts: false };\n' +
+      '  var res = { account: "", found: [], total: 0, inbox: 0, sent: 0, mails: [], noAccounts: false };\n' +
       '  var Mail;\n' +
       '  try { Mail = Application("Mail"); } catch (e) { res.fatal = "启动「邮件」App 失败：" + String(e); return JSON.stringify(res); }\n' +
-      '  var msgs = null;\n' +
+      '  var inboxMsgs = null, sentMsgs = null;\n' +
       '  try {\n' +
       '    var accounts = Mail.accounts();\n' +
       '    var ac = accounts.length;\n' +
@@ -4627,51 +4728,56 @@ function readAppleMail() {
       '      } catch (e) {}\n' +
       '      var nm = ""; try { nm = String(accounts[a].name() || ""); } catch (e) {}\n' +
       '      res.found.push(nm + " [" + addrs.join(",") + "]");\n' +
-      '      if (!msgs && addrs.join(",").toLowerCase().indexOf("cam.ac.uk") >= 0) {\n' +
+      '      if (addrs.join(",").toLowerCase().indexOf("cam.ac.uk") >= 0) {\n' +
       '        res.account = addrs.join(",");\n' +
-      '        // account 没有 inbox 属性，只能遍历 mailboxes 找 Inbox 文件夹\n' +
+      '        // account 没有 inbox 属性，只能遍历 mailboxes 找 Inbox / Sent 文件夹\n' +
       '        try {\n' +
       '          var mbs = accounts[a].mailboxes();\n' +
       '          for (var b = 0; b < mbs.length; b++) {\n' +
       '            var bn = ""; try { bn = String(mbs[b].name() || ""); } catch (e) {}\n' +
-      '            if (/^inbox$/i.test(bn) || bn.indexOf("收件箱") >= 0) {\n' +
-      '              try { msgs = mbs[b].messages; } catch (e) {}\n' +
-      '              if (msgs) break;\n' +
-      '            }\n' +
+      '            if (/^inbox$/i.test(bn) || bn.indexOf("收件箱") >= 0) { try { inboxMsgs = mbs[b].messages; } catch (e) {} }\n' +
+      '            else if (/^sent/i.test(bn) || bn.indexOf("已发送") >= 0 || bn.indexOf("发件箱") >= 0 || bn.indexOf("Sent") >= 0) { try { sentMsgs = mbs[b].messages; } catch (e) {} }\n' +
       '          }\n' +
       '        } catch (e) {}\n' +
       '      }\n' +
       '    }\n' +
       '  } catch (e) { res.accountsErr = String(e); }\n' +
-      '  if (!msgs) { try { msgs = Mail.inbox.messages; } catch (e) {} }\n' +
-      '  if (!msgs) { return JSON.stringify(res); }\n' +
-      '  var n = Math.min(msgs.length, 800);\n' +
+      '  if (!inboxMsgs) { try { inboxMsgs = Mail.inbox.messages; } catch (e) {} }\n' +
       '  var now = Date.now();\n' +
       '  var weekAgo = now - 7 * 24 * 60 * 60 * 1000;\n' +
-      '  var kept = [];\n' +
-      '  for (var i = 0; i < n; i++) {\n' +
-      '    var tm = null;\n' +
-      '    try {\n' +
-      '      var d = msgs[i].dateReceived();\n' +
-      '      if (d) { var p = d.getTime ? d.getTime() : new Date(d).getTime(); if (!isNaN(p)) tm = p; }\n' +
-      '    } catch (e) {}\n' +
-      '    if (tm === null || tm >= weekAgo) kept.push(i);\n' +
+      '  function readMsgs(msgs, dir) {\n' +
+      '    if (!msgs) return [];\n' +
+      '    var n = Math.min(msgs.length, 800);\n' +
+      '    var kept = [];\n' +
+      '    for (var i = 0; i < n; i++) {\n' +
+      '      var tm = null;\n' +
+      '      try {\n' +
+      '        var d = msgs[i].dateReceived();\n' +
+      '        if (!d) { try { d = msgs[i].dateSent(); } catch (e3) {} }\n' +
+      '        if (d) { var p = d.getTime ? d.getTime() : new Date(d).getTime(); if (!isNaN(p)) tm = p; }\n' +
+      '      } catch (e) {}\n' +
+      '      if (tm === null || tm >= weekAgo) kept.push(i);\n' +
+      '    }\n' +
+      '    if (kept.length === 0 && n > 0) { for (var j = 0; j < Math.min(n, 30); j++) kept.push(j); }\n' +
+      '    var out = [];\n' +
+      '    for (var k = 0; k < kept.length; k++) {\n' +
+      '      var m = msgs[kept[k]];\n' +
+      '      var subject = "", sender = "", body = "", time = "";\n' +
+      '      try { subject = String(m.subject() || ""); } catch (e) {}\n' +
+      '      try { var s = m.sender(); if (typeof s === "string") { sender = s; } else if (s) { try { sender = String(s.address() || ""); } catch (e2) {} } } catch (e) {}\n' +
+      '      try { var d2 = m.dateReceived(); if (!d2) { try { d2 = m.dateSent(); } catch (e3) {} } if (d2) { time = String(d2); } } catch (e) {}\n' +
+      '      try { body = String(m.content() || ""); } catch (e) { body = ""; }\n' +
+      '      if (!body) { try { body = String(m.source() || ""); } catch (e) {} }\n' +
+      '      out.push({ subject: subject, sender: sender, body: body, time: time, dir: dir });\n' +
+      '    }\n' +
+      '    return out;\n' +
       '  }\n' +
-      '  if (kept.length === 0 && n > 0) { for (var j = 0; j < Math.min(n, 30); j++) kept.push(j); }\n' +
-      '  var out = [];\n' +
-      '  for (var k = 0; k < kept.length; k++) {\n' +
-      '    var m = msgs[kept[k]];\n' +
-      '    var subject = "", sender = "", body = "", time = "";\n' +
-      '    try { subject = String(m.subject() || ""); } catch (e) {}\n' +
-      '    try { var s = m.sender(); if (typeof s === "string") { sender = s; } else if (s) { try { sender = String(s.address() || ""); } catch (e2) {} } } catch (e) {}\n' +
-      '    try { var d2 = m.dateReceived(); if (d2) { time = String(d2); } } catch (e) {}\n' +
-      '    try { body = String(m.content() || ""); } catch (e) { body = ""; }\n' +
-      '    if (!body) { try { body = String(m.source() || ""); } catch (e) {} }\n' +
-      '    out.push({ subject: subject, sender: sender, body: body, time: time });\n' +
-      '  }\n' +
-      '  res.total = n;\n' +
-      '  res.inWindow = kept.length;\n' +
-      '  res.mails = out;\n' +
+      '  var inboxOut = readMsgs(inboxMsgs, "inbox");\n' +
+      '  var sentOut = readMsgs(sentMsgs, "sent");\n' +
+      '  res.total = inboxOut.length + sentOut.length;\n' +
+      '  res.inbox = inboxOut.length;\n' +
+      '  res.sent = sentOut.length;\n' +
+      '  res.mails = inboxOut.concat(sentOut);\n' +
       '  return JSON.stringify(res);\n' +
       '}';
     execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -4702,12 +4808,14 @@ function readAppleMail() {
             from: String((m && m.sender) || '').trim(),
             body: String((m && m.body) || '').trim(),
             at: (m && m.time) || '',
+            dir: (m && m.dir) === 'sent' ? 'sent' : 'inbox',
           }))
           .filter((m) => m.subject || m.body);
         resolve({
           ok: true, mails: mails, count: mails.length,
           total: (obj && obj.total) || 0,
-          inWindow: (obj && obj.inWindow) || 0,
+          inbox: (obj && obj.inbox) || 0,
+          sent: (obj && obj.sent) || 0,
           account: (obj && obj.account) || '',
           diag: buildOutlookDiag(obj),
         });
