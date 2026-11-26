@@ -458,6 +458,8 @@
       /路由|调度|orchestrat|\bra\b/i.test(commander.name || '');
   }
 
+  var activitySequence = 0;
+
   function AgentOrchestrator(opts) {
     var o = opts || {};
     if (!o.registry) throw new Error('AgentOrchestrator 需要 registry');
@@ -467,6 +469,7 @@
     this.executor = o.executor || defaultExecutor;
     this.providers = o.providers || null;   // ProviderRegistry（可选；有则优先走 adapter.run）
     this.onEvent = o.onEvent || function () {};
+    this.onActivity = o.onActivity || function () {};
     this.onApproval = o.onApproval || function () { return Promise.resolve(true); };
     this.canControl = o.canControl || defaultCanControl;
     this._listeners = {};
@@ -487,6 +490,15 @@
   /** 单个 Agent 执行一轮（含审批、限额切换、记账） */
   AgentOrchestrator.prototype._runOne = function (target, task, opts, commander) {
     var self = this;
+    var activityId = String(++activitySequence);
+    function track(stage, extra) {
+      try {
+        self.onActivity(Object.assign({
+          id: activityId, stage: stage, targetId: target.id, commanderId: commander.id,
+          previousId: opts.previousId, task: opts.task, simulated: !!opts.dryRun,
+        }, extra || {}));
+      } catch (e) { /* Activity reporting is optional. */ }
+    }
     var budget = this.ledger.budgetStatus();
     if (budget.exceeded && !opts.dryRun) {
       return Promise.resolve({ agentId: target.id, agentName: target.name, status: 'blocked',
@@ -503,6 +515,7 @@
         var needApproval = opts.autoApprove !== true &&
           (target.approvalMode === 'ask' || danger === 'high');
         if (needApproval) {
+          track('waiting');
           self.emit('approval', { commander: commander.name, target: target.name, task: task, caps: caps, danger: danger });
           return self.onApproval({ commander: commander, target: target, task: task, caps: caps, danger: danger });
         }
@@ -522,6 +535,8 @@
           return { agentId: target.id, agentName: target.name, status: 'blocked',
             error: pick.reason, engine: pick.engine, cost: 0 };
         }
+
+        track('running', { engine: pick.engine });
 
         // v3：技能说明书只挂在「这一次任务」的 soul 上，用完即卸，不写回 Agent
         var skillContext = String(opts.skillContext || '');
@@ -549,6 +564,7 @@
                 if (!next.exhausted && next.engine !== engineId) {
                   self.emit('switched', { target: target.name, from: engineId, to: next.engine,
                     reason: '撞到用量上限，自动切换' });
+                  track('running', { engine: next.engine });
                   return call(next.engine, 1).then(function (r2) {
                     r2.switchedFrom = engineId; return r2;
                   });
@@ -591,6 +607,9 @@
         self.emit('failed', { target: target.name, reason: String(err && err.message || err) });
         return { agentId: target.id, agentName: target.name, status: 'error',
           error: String(err && err.message || err), cost: 0, engine: '' };
+      }).then(function (result) {
+        track('finish', { status: result.status, simulated: !!result.dryRun || !!opts.dryRun });
+        return result;
       });
   };
 
@@ -644,10 +663,12 @@
     var results = [], chain = Promise.resolve();
     targets.forEach(function (t) {
       chain = chain.then(function () {
-        var task = mode === 'chain' && results.length && results[results.length - 1].text
-          ? s.task + '\n\n【上一位 Agent 的结果】\n' + results[results.length - 1].text
+        var previous = mode === 'chain' && results[results.length - 1];
+        var task = previous && previous.text
+          ? s.task + '\n\n【上一位 Agent 的结果】\n' + previous.text
           : s.task;
-        return self._runOne(t, task, s, commander).then(function (r) { results.push(r); });
+        var opts = Object.assign({}, s, { previousId: previous && previous.text ? previous.agentId : '' });
+        return self._runOne(t, task, opts, commander).then(function (r) { results.push(r); });
       });
     });
     return chain.then(function () { return finish(results); });

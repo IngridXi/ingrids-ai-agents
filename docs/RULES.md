@@ -68,6 +68,12 @@
 - `kb-engine.js` — 知识库（Obsidian/Zotero/Notion/OneDrive 索引 + RAG 检索）。
 - `scripts/` — 本地辅助脚本（`pdf_extract.swift`、`doc_edit.py`、`bin_patch.py` 等）。
 
+### 工作台架构图
+
+入口为「Agent 总控台 → Agent 架构图」。职责分组和显示名由 `agent-architecture-core.js` 定义，成员来自本机注册表。显示名保留与原注册名的映射，供已有会话、模型锁和路由继续使用。
+
+节点详情读取当前 Electron 进程的对话生成、审稿阶段、委派、会议处理和已接入的本机协作事件，以及队列和巡检报告。委派演练单独标记，模型常驻显存只代表模型已加载。CityVerse 建设阶段读取本机项目控制台，未接入阶段显示为暂无可确认的状态。近期运行事件在进程内保留，任务队列和巡检报告沿用各自落盘记录。
+
 ### 聊天数据流
 前端 `chatStream(payload)` → 主进程 `chat:start` → 流式推 `chat:delta` / `chat:done`（**带 requestId**，见 §7）→ 前端 `renderStream()` 渲染。
 
