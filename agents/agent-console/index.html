@@ -385,13 +385,13 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
       </div>
       <div class="proj-view">
         <div class="arch-svg" id="projView-cityverse">
-          <svg viewBox="0 0 760 900" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 760 1100" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
             <title>CityVerse 二级架构</title>
-            <desc>CityVerse 项目 = intel 建设流水线（开发自动化）+ ops 运营 Agent 组（运营控制面）+ 串联关系</desc>
+            <desc>CityVerse 项目 = intel 建设流水线（舆情驱动）+ intel/strategy 战略参谋（战略驱动）+ ops 运营 Agent 组 + 串联关系</desc>
 
-            <!-- ============ intel 建设流水线 ============ -->
+            <!-- ============ intel 建设流水线（舆情驱动） ============ -->
             <rect x="30" y="24" width="700" height="300" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="44" font-size="12" font-weight="600" fill="#8b949e">intel/ 建设流水线 · Python + PostgreSQL · 真实闭环（每日 07:30 自动 → 停在待审批）</text><text id="cv-status" x="716" y="44" text-anchor="end" font-size="11" font-weight="600" fill="#8b949e">连接中…</text>
+            <text x="44" y="44" font-size="12" font-weight="600" fill="#8b949e">intel/ 建设流水线 · 舆情驱动闭环 · Python + PostgreSQL（每日 07:30 自动 → 停在待审批）</text><text id="cv-status" x="716" y="44" text-anchor="end" font-size="11" font-weight="600" fill="#8b949e">连接中…</text>
 
             <g id="cv-n-collect"><rect x="44" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="82" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">采集</text><text id="cv-findings" x="82" y="110" text-anchor="middle" font-size="10" fill="#8b949e">舆情·情感</text></g>
             <line x1="120" y1="99" x2="140" y2="99" class="edge-data arch-flow cv-link"/>
@@ -411,38 +411,54 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
             <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
 
             <g><rect x="44" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="194" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">PostgreSQL cityverse 库</text><text x="194" y="282" text-anchor="middle" font-size="10" fill="#8b949e">community / insights / playbook / build 等 10 表</text></g>
-            <g><rect x="380" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="530" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">intel/daily 简报</text><text x="530" y="282" text-anchor="middle" font-size="10" fill="#8b949e">竞品/技术/素材（dev-agent 产出 → 喂规划）</text></g>
+            <g><rect x="380" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="530" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">intel/daily 简报</text><text x="530" y="282" text-anchor="middle" font-size="10" fill="#8b949e">竞品/技术/素材（research 产出 → 喂规划）</text></g>
+
+            <!-- ============ intel/strategy 战略参谋（战略驱动） ============ -->
+            <rect x="30" y="340" width="700" height="156" rx="8" fill="none" stroke="#30363d"/>
+            <text x="44" y="360" font-size="12" font-weight="600" fill="#8b949e">intel/strategy/ 战略参谋 Agent 组 · 战略驱动闭环（每日 08:00 自动 · launchd 常驻）</text>
+
+            <g id="cv-n-selfcheck"><rect x="44" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="104" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">自我检测</text><text x="104" y="422" text-anchor="middle" font-size="10" fill="#8b949e">盘点能力·短板</text></g>
+            <line x1="164" y1="408" x2="182" y2="408" class="edge-data arch-flow cv-link"/>
+            <g id="cv-n-competitor"><rect x="182" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="242" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">竞品对标</text><text x="242" y="422" text-anchor="middle" font-size="10" fill="#8b949e">vs 竞品·差距</text></g>
+            <line x1="302" y1="408" x2="320" y2="408" class="edge-data arch-flow cv-link"/>
+            <g id="cv-n-research"><rect x="320" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="380" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">路线资讯</text><text x="380" y="422" text-anchor="middle" font-size="10" fill="#8b949e">检索动态·简报</text></g>
+            <line x1="440" y1="408" x2="458" y2="408" class="edge-data arch-flow cv-link"/>
+            <g id="cv-n-analyze"><rect x="458" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="518" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">差距分析</text><text x="518" y="422" text-anchor="middle" font-size="10" fill="#8b949e">优先级清单</text></g>
+            <line x1="578" y1="408" x2="596" y2="408" class="edge-data arch-flow cv-link"/>
+            <g id="cv-n-feed"><rect x="596" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="656" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">转建设任务</text><text x="656" y="422" text-anchor="middle" font-size="10" fill="#8b949e">→ build_plans</text></g>
+
+            <text x="44" y="474" font-size="10.5" fill="#6e7681">feed 产出 build_plans（停待审批）→ 汇入上方「规划 → 执行 → 门禁」主链；research 简报同步写 intel/daily/</text>
 
             <!-- ============ ops 运营 Agent 组 ============ -->
-            <rect x="30" y="340" width="700" height="246" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="360" font-size="12" font-weight="600" fill="#8b949e">ops/ 运营 Agent 组 · 浏览器 JS · localStorage + 云数据库</text>
+            <rect x="30" y="512" width="700" height="246" rx="8" fill="none" stroke="#30363d"/>
+            <text x="44" y="532" font-size="12" font-weight="600" fill="#8b949e">ops/ 运营 Agent 组 · 浏览器 JS · localStorage + 云数据库</text>
 
-            <g><rect x="44" y="384" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="82" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容策划</text></g>
-            <line x1="120" y1="412" x2="140" y2="412" class="edge-data arch-flow cv-link"/>
-            <g><rect x="140" y="384" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="178" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">点位运营</text></g>
-            <line x1="216" y1="412" x2="236" y2="412" class="edge-data arch-flow cv-link"/>
-            <g><rect x="236" y="384" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="274" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容执行</text></g>
-            <line x1="312" y1="412" x2="332" y2="412" class="edge-data arch-flow cv-link"/>
-            <g><rect x="332" y="384" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="370" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">质量门禁</text></g>
-            <line x1="408" y1="412" x2="428" y2="412" class="edge-data arch-flow cv-link"/>
-            <g><rect x="428" y="384" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="466" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">经验沉淀</text></g>
+            <g><rect x="44" y="556" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="82" y="588" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容策划</text></g>
+            <line x1="120" y1="584" x2="140" y2="584" class="edge-data arch-flow cv-link"/>
+            <g><rect x="140" y="556" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="178" y="588" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">点位运营</text></g>
+            <line x1="216" y1="584" x2="236" y2="584" class="edge-data arch-flow cv-link"/>
+            <g><rect x="236" y="556" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="274" y="588" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容执行</text></g>
+            <line x1="312" y1="584" x2="332" y2="584" class="edge-data arch-flow cv-link"/>
+            <g><rect x="332" y="556" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="370" y="588" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">质量门禁</text></g>
+            <line x1="408" y1="584" x2="428" y2="584" class="edge-data arch-flow cv-link"/>
+            <g><rect x="428" y="556" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="466" y="588" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">经验沉淀</text></g>
 
-            <g><rect x="44" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="88" y="488" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">商户顾问</text><text x="88" y="506" text-anchor="middle" font-size="10" fill="#8b949e">soon</text></g>
-            <g><rect x="140" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="184" y="496" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">风控巡检</text></g>
-            <g><rect x="236" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="280" y="496" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">数据治理</text></g>
-            <g><rect x="332" y="464" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="376" y="496" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">IP 保护</text></g>
-            <g><rect x="470" y="464" width="220" height="56" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="580" y="488" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">云数据库</text><text x="580" y="506" text-anchor="middle" font-size="10" fill="#8b949e">tasks/merchants/coupons → 玩家客户端</text></g>
+            <g><rect x="44" y="636" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="88" y="660" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">商户顾问</text><text x="88" y="678" text-anchor="middle" font-size="10" fill="#8b949e">soon</text></g>
+            <g><rect x="140" y="636" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="184" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">风控巡检</text></g>
+            <g><rect x="236" y="636" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="280" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">数据治理</text></g>
+            <g><rect x="332" y="636" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="376" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">IP 保护</text></g>
+            <g><rect x="470" y="636" width="220" height="56" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="580" y="660" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">云数据库</text><text x="580" y="678" text-anchor="middle" font-size="10" fill="#8b949e">tasks/merchants/coupons → 玩家客户端</text></g>
 
             <!-- ============ 串联关系 ============ -->
-            <rect x="30" y="602" width="700" height="270" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="622" font-size="12" font-weight="600" fill="#8b949e">串联关系 · 调度唯一事实源 + 数据流 + 控制台互链</text>
+            <rect x="30" y="774" width="700" height="270" rx="8" fill="none" stroke="#30363d"/>
+            <text x="44" y="798" font-size="12" font-weight="600" fill="#8b949e">串联关系 · 两条调度源（舆情 07:30 + 战略 08:00）+ 数据流 + 控制台互链</text>
 
-            <g><rect x="44" y="644" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">WorkBuddy automation 07:30</text><text x="204" y="686" text-anchor="middle" font-size="10" fill="#8b949e">→ 触发采集（唯一调度源）</text></g>
-            <g><rect x="396" y="644" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">工作台 dev-agent 07:30</text><text x="556" y="686" text-anchor="middle" font-size="10" fill="#8b949e">→ 竞品/技术/素材简报 → intel/daily</text></g>
-            <g><rect x="44" y="732" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="756" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">两控制台互链</text><text x="204" y="774" text-anchor="middle" font-size="10" fill="#8b949e">ops/index.html ↔ dashboard.py</text></g>
-            <g><rect x="396" y="732" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="756" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">经验沉淀闭环</text><text x="556" y="774" text-anchor="middle" font-size="10" fill="#8b949e">运营 knowledge-settler + 开发 insights/MEMORY</text></g>
+            <g><rect x="44" y="820" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="844" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">WorkBuddy automation 07:30</text><text x="204" y="862" text-anchor="middle" font-size="10" fill="#8b949e">→ 触发采集（舆情驱动唯一调度源）</text></g>
+            <g><rect x="396" y="820" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="844" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">战略参谋 scheduler 08:00</text><text x="556" y="862" text-anchor="middle" font-size="10" fill="#8b949e">→ research/selfcheck 自主跑 → 差距 → build_plans</text></g>
+            <g><rect x="44" y="908" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="932" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">两控制台互链</text><text x="204" y="950" text-anchor="middle" font-size="10" fill="#8b949e">ops/index.html ↔ dashboard.py</text></g>
+            <g><rect x="396" y="908" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="932" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">经验沉淀闭环</text><text x="556" y="950" text-anchor="middle" font-size="10" fill="#8b949e">运营 knowledge-settler + 开发 insights/MEMORY</text></g>
 
-            <text x="44" y="852" font-size="10.5" fill="#6e7681">权威名册：docs/37-agent-orchestration.md · 未来新项目 = 加 tab + 复用该结构</text>
+            <text x="44" y="1024" font-size="10.5" fill="#6e7681">权威名册：docs/41-agent-orchestration.md · 未来新项目 = 加 tab + 复用该结构</text>
           </svg>
         </div>
         <div class="arch-legend" style="margin-top:10px">
