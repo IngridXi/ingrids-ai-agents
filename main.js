@@ -996,6 +996,12 @@ async function runIcsSync() {
       canceledKeys.add((ev.uid || '') + '|' + String(ev.at || ''));
     }
   });
+  // 收集「例外实例」覆盖的旧实例：RECURRENCE-ID 指向被改期/取消的原始实例时间，
+  // 展开母事件 RRULE 时须跳过这些旧实例、只保留例外本身的新时间（修复改期后日历重复）
+  const overrideKeys = new Set();
+  allEvents.forEach(function (ev) {
+    if (ev.recurrenceId) overrideKeys.add((ev.uid || '') + '|' + String(ev.recurrenceId));
+  });
   const expanded = [];
   allEvents.forEach(function (ev) {
     const key = (ev.uid || '') + '|' + String(ev.at || '');
@@ -1005,7 +1011,8 @@ async function runIcsSync() {
       const instances = syncEngine.expandRrule(ev.at, ev.rrule, 365);
       instances.forEach(function (inst) {
         const atIso = inst.toISOString();
-        if (canceledKeys.has((ev.uid || '') + '|' + atIso)) return; // 被取消的实例跳过
+        if (canceledKeys.has((ev.uid || '') + '|' + atIso)) return;    // 被取消的实例跳过
+        if (overrideKeys.has((ev.uid || '') + '|' + atIso)) return;    // 被改期例外覆盖的旧实例跳过
         const endIso = dur > 0 ? new Date(inst.getTime() + dur).toISOString() : '';
         expanded.push(Object.assign({}, ev, { at: atIso, end: endIso }));
       });

@@ -154,6 +154,9 @@ function parseICalendar(ics) {
     const at = parseCalDate(dtStartRaw);
     if (!title && !at) continue;
     const end = parseCalDate(dtEndRaw);
+    // RECURRENCE-ID 指向「被改期/取消的原始实例时间」，须连同 TZID 一起解析成 ISO，
+    // 否则展开 RRULE 时无法与母事件的实例对齐（Exchange 改期即靠它覆盖旧实例）
+    const ridRaw = ((b.match(/(^|\r?\n)RECURRENCE-ID[^\r\n]*/) || ['', ''])[0] || '').trim();
     out.push({
       uid: prop(b, 'UID'),
       title: title || '（无标题）',
@@ -164,7 +167,7 @@ function parseICalendar(ics) {
       allDay: /VALUE=DATE/i.test(dtStartRaw),
       rrule: prop(b, 'RRULE'),
       status: prop(b, 'STATUS'),
-      recurrenceId: prop(b, 'RECURRENCE-ID'),
+      recurrenceId: ridRaw ? parseCalDate(ridRaw) : '',
       sequence: parseInt(prop(b, 'SEQUENCE'), 10) || 0,
       dtstamp: prop(b, 'DTSTAMP'),
       lastModified: prop(b, 'LAST-MODIFIED'),
@@ -325,10 +328,14 @@ async function syncCalendarAccount(account, opts) {
       }
       // 先收集被取消的实例 (uid|发生时刻)，用于跳过「单次取消」的重复实例
       const canceled = new Set();
+      // 收集「改期例外」覆盖的旧实例：RECURRENCE-ID 指向被改期的原始实例时间，展开 RRULE 时跳过
+      const overridden = new Set();
       calEvents.forEach(function (ev) {
         if (String(ev.status || '').toUpperCase() === 'CANCELLED') {
-          const rid = ev.recurrenceId ? parseCalDate(ev.recurrenceId) : ev.at;
+          const rid = ev.recurrenceId || ev.at;   // recurrenceId 已是 ISO 字符串
           canceled.add((ev.uid || '') + '|' + (rid || ev.at));
+        } else if (ev.recurrenceId) {
+          overridden.add((ev.uid || '') + '|' + String(ev.recurrenceId));
         }
       });
       calEvents.forEach(function (ev) {
@@ -348,7 +355,8 @@ async function syncCalendarAccount(account, opts) {
         occTimes.forEach(function (t) {
           if (t < minAt || t > maxAt) return;                       // 时间窗口过滤
           const atIso = new Date(t).toISOString();
-          if (canceled.has((ev.uid || '') + '|' + atIso)) return;  // 单次取消的实例跳过
+          if (canceled.has((ev.uid || '') + '|' + atIso)) return;   // 单次取消的实例跳过
+          if (overridden.has((ev.uid || '') + '|' + atIso)) return; // 被改期例外覆盖的旧实例跳过
           const id = 'cal-' + uidBase + '-' + atIso.replace(/[^0-9]/g, '');
           if (seen.has(id)) return;
           seen.add(id);
