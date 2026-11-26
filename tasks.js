@@ -186,6 +186,7 @@
       html += '<div class="tk-foot"><span class="tk-time">' + fmtTime(t.createdAt) + ' · ' + esc(t.engine || 'deepseek') + '</span>' +
         '<span class="tk-actions">';
       if (t.status === 'queued') html += '<button data-act="run" data-id="' + t.id + '">运行</button>';
+      if (t.status === 'failed') html += '<button data-act="retry" data-id="' + t.id + '">重试</button>';
       if (t.status === 'running' || t.status === 'queued') html += '<button data-act="stop" data-id="' + t.id + '">停止</button>';
       html += '<button class="tk-danger" data-act="remove" data-id="' + t.id + '">删除</button>';
       html += '</span></div></div>';
@@ -199,6 +200,7 @@
         var act = b.getAttribute('data-act');
         var id = b.getAttribute('data-id');
         if (act === 'run') { window.ingrid.taskRun(id).then(load); }
+        else if (act === 'retry') { window.ingrid.taskRetry(id).then(load); }
         else if (act === 'stop') { window.ingrid.taskStop(id).then(load); }
         else if (act === 'remove') { window.ingrid.taskRemove(id).then(load); }
       });

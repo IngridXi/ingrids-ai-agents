@@ -268,6 +268,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   taskRemove: (id) => ipcRenderer.invoke('task:remove', id),
   taskClear: () => ipcRenderer.invoke('task:clear'),
   taskRun: (id) => ipcRenderer.invoke('task:run', id),
+  taskRetry: (id) => ipcRenderer.invoke('task:retry', id),
   taskStop: (id) => ipcRenderer.invoke('task:stop', id),
   taskClassify: (text) => ipcRenderer.invoke('task:classify', text),
   onTaskChanged: (cb) => ipcRenderer.on('task:changed', (_e, d) => { if (cb) cb(d || {}); }),

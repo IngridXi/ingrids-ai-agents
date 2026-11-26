@@ -2709,6 +2709,20 @@ ipcMain.handle('task:run', async (_e, id) => {
   });
   return { ok: true, id: t.id };
 });
+ipcMain.handle('task:retry', async (_e, id) => {
+  const q = getTaskQueue();
+  const t = q.get(id);
+  if (!t) return { ok: false, error: '任务不存在' };
+  if (t.status === 'running') return { ok: false, error: '任务已在运行' };
+  // 重置失败态：清空错误、结果与对话历史，从头重跑（保留任务定义/引擎/定时）
+  q.setStatus(id, 'queued', { error: '', result: '', messages: [], question: '', needsUser: false, round: 0 });
+  broadcastTasks();
+  runBackgroundTask(t).catch((e) => {
+    q.fail(t.id, String((e && e.message) || e));
+    broadcastTasks();
+  });
+  return { ok: true, id: t.id };
+});
 ipcMain.handle('task:stop', (_e, id) => {
   const q = getTaskQueue();
   const t = q.get(id);
