@@ -408,7 +408,7 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
             <g id="cv-n-land"><rect x="620" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="692" y="80" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="658" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">落地</text><text x="658" y="110" text-anchor="middle" font-size="10" fill="#8b949e">apply</text></g>
 
             <g id="cv-n-approve" style="cursor:pointer" onclick="openCvApprove()"><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="420" y="168" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text id="cv-approve" x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text id="cv-approve-sub" x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
-            <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="686" y="168" text-anchor="end" font-size="9" fill="#e3b341">主动</text><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
+            <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="686" y="168" text-anchor="end" font-size="9" fill="#e3b341">定时</text><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
 
             <g><rect x="44" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="194" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">PostgreSQL cityverse 库</text><text x="194" y="282" text-anchor="middle" font-size="10" fill="#8b949e">community / insights / playbook / build 等 10 表</text></g>
             <g><rect x="380" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="530" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">intel/daily 简报</text><text x="530" y="282" text-anchor="middle" font-size="10" fill="#8b949e">竞品/技术/素材（research 产出 → 喂规划）</text></g>
@@ -462,8 +462,9 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
             <g><rect x="44" y="988" width="320" height="56" rx="8" fill="#241a2e" stroke="#a371f7"/><text x="204" y="1012" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">chief 总控（常驻调度）</text><text x="204" y="1030" text-anchor="middle" font-size="10" fill="#8b949e">agent_jobs → codex/ingrids/intel/strategy/asset/shell</text></g>
             <g><rect x="396" y="988" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="1012" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">两控制台互链</text><text x="556" y="1030" text-anchor="middle" font-size="10" fill="#8b949e">ops/index.html ↔ dashboard.py</text></g>
 
-            <text x="44" y="1082" font-size="10.5" fill="#6e7681">触发类型：主动(琥珀·每日定时) / 链路(灰·被动接续) / 缺口(珊瑚·按需触发) / 人工(绿·人等点)</text>
-            <text x="44" y="1100" font-size="10.5" fill="#6e7681">权威名册：docs/41-agent-orchestration.md + docs/42-chief-orchestration.md · 未来新项目 = 加 tab + 复用该结构</text>
+            <text x="44" y="1082" font-size="10.5" fill="#6e7681">触发类型：主动(琥珀·每日定时·仅采集/research/selfcheck) / 链路(灰·被动接续上游) / 缺口(珊瑚·事件触发·仅asset_agent) / 人工(绿·人等点)</text>
+            <text x="44" y="1100" font-size="10.5" fill="#6e7681">人工驱动还含工作台 3 聊天 agent（软件工程/研究/伦理，人等对话）——见一级架构图「功能 agent」区</text>
+            <text x="44" y="1118" font-size="10.5" fill="#6e7681">权威名册：docs/41-agent-orchestration.md + docs/42-chief-orchestration.md · 未来新项目 = 加 tab + 复用该结构</text>
           </svg>
         </div>
         <div class="arch-legend" style="margin-top:10px">
