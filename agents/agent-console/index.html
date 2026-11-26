@@ -160,6 +160,7 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 @keyframes dashflow{to{stroke-dashoffset:-12}}
 .arch-node-active{animation:archpulse 1.4s ease-in-out infinite}
 .arch-node-active rect{stroke:var(--warn) !important;stroke-width:2.5}
+.arch-node-recent rect{stroke:var(--warn) !important;stroke-width:2}
 @keyframes archpulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.arch-flow,.arch-flow-fast,.arch-node-active{animation:none}}
 </style>
@@ -905,8 +906,16 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   function setCvTxt(id, txt) { var e = aid(id); if (e) e.textContent = txt; }
   function cvNode(id) { var t = aid(id); return t ? t.parentNode : null; }
   function cvSetActive(id, on) { var g = cvNode(id); if (g) g.classList.toggle('arch-node-active', !!on); }
+  function cvSetRecent(id, on) { var g = cvNode(id); if (g) g.classList.toggle('arch-node-recent', !!on); }
+  function recentlyActive(isoStr, minutes) { return !!isoStr && (Date.now() - Date.parse(isoStr)) < minutes * 60000; }
+  function agoText(isoStr) {
+    if (!isoStr) return '';
+    var m = Math.round((Date.now() - Date.parse(isoStr)) / 60000);
+    return m < 1 ? '刚刚' : (m + ' 分钟前');
+  }
   function cvClearActive() {
     document.querySelectorAll('#projView-cityverse .arch-node-active').forEach(function (n) { n.classList.remove('arch-node-active'); });
+    document.querySelectorAll('#projView-cityverse .arch-node-recent').forEach(function (n) { n.classList.remove('arch-node-recent'); });
     document.querySelectorAll('#projView-cityverse .cv-link.arch-flow-fast').forEach(function (l) { l.classList.remove('arch-flow-fast'); });
   }
   function cvSetFlow(on) {
@@ -935,6 +944,13 @@ $('#sentimentBox').addEventListener('input', (ev) => {
       cvSetActive('cv-gate', reviewing);
       cvSetActive('cv-approve', waiting);
       cvSetFlow(executing || reviewing);
+      // 「最近活跃」：任务跑得比轮询快，完成后保持琥珀描边 + 副文字标注（10 分钟窗）
+      var recentRun = recentlyActive(a.lastRunAt, 10);
+      var recentGate = recentlyActive(a.lastGateAt, 10);
+      cvSetRecent('cv-exec', !executing && recentRun);
+      cvSetRecent('cv-gate', !reviewing && recentGate);
+      if (recentRun) setCvTxt('cv-exec', '执行 ' + s.runs + ' 次 · ' + agoText(a.lastRunAt));
+      if (recentGate) setCvTxt('cv-gate', '门禁 ' + s.gates + ' 次 · ' + agoText(a.lastGateAt));
     } else {
       st.setAttribute('fill', '#d29922');
       st.textContent = '控制台未启动';
@@ -956,7 +972,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   if (IS_ARCH) {
     document.querySelectorAll('#viewArch .edge-data').forEach(function (e) { e.classList.add('arch-flow'); });
     pollArch(); setInterval(pollArch, 3000);
-    pollCityverse(); setInterval(pollCityverse, 5000);
+    pollCityverse(); setInterval(pollCityverse, 2000);
   } else {
     renderArch(null);
   }

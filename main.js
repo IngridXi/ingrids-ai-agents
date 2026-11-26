@@ -6101,6 +6101,8 @@ async function cityverseOverview() {
         plansExecuting: Number(j.active.plans_executing || 0),
         gatesReviewing: Number(j.active.gates_reviewing || 0),
         pendingApproval: Number(j.active.pending_approval || 0),
+        lastRunAt: j.active.last_run_at || '',
+        lastGateAt: j.active.last_gate_at || '',
       };
     }
   } catch (e) { out.error = String((e && e.message) || e); }
