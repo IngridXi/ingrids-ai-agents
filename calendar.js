@@ -57,11 +57,11 @@
     '.cal-grid .day.today:not(.sel){box-shadow:inset 0 0 0 2px var(--accent);}',
     '.cal-grid .day.today:not(.sel) .num{color:var(--accent);font-weight:800;}',
     '.cal-grid .day .num{line-height:1;}',
-    '.cal-grid .day .dots{display:flex;gap:2.5px;align-items:center;height:6px;}',
+    '.cal-grid .day .dots{display:flex;gap:2.5px;align-items:center;height:8px;}',
     '.cal-grid .day .dots i{width:6px;height:6px;border-radius:50%;display:block;box-shadow:0 0 0 1.5px #fff;}',
     '.cal-grid .day.sel .dots i{box-shadow:0 0 0 1.5px rgba(255,255,255,.45);}',
-    '.cal-grid .day .more{position:absolute;top:3px;right:3px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--accent);color:#fff;font-size:8px;font-weight:700;line-height:14px;text-align:center;}',
-    '.cal-grid .day.sel .more{background:#fff;color:var(--accent);}',
+    '.cal-grid .day .dots .more{font-size:7.5px;font-weight:800;color:var(--accent);line-height:1;margin-left:1px;}',
+    '.cal-grid .day.sel .dots .more{color:#fff;}',
     '.cal-day-head{display:flex;align-items:baseline;gap:8px;}',
     '.cal-day-head .d{font-weight:700;font-size:13px;}',
     '.cal-day-head .cnt{font-size:11px;color:var(--ink-faint);}',
@@ -207,8 +207,9 @@
     var dots = '';
     if (dd.count) {
       cls += ' has';
-      dots = '<span class="dots">' + dd.colors.map(function (c) { return '<i style="background:' + c + '"></i>'; }).join('') + '</span>' +
-        (dd.count > dd.colors.length ? '<span class="more">' + dd.count + '</span>' : '');
+      // 色点 + 数量角标放在同一行（角标不再绝对定位，避免压住日期数字）
+      dots = '<span class="dots">' + dd.colors.map(function (c) { return '<i style="background:' + c + '"></i>'; }).join('') +
+        (dd.count > dd.colors.length ? '<b class="more">' + dd.count + '</b>' : '') + '</span>';
     }
     return '<div class="' + cls + '" data-d="' + ds + '"><span class="num">' + num + '</span>' + dots + '</div>';
   }

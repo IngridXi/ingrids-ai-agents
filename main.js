@@ -924,6 +924,45 @@ function hashStr(s) {
   return (h >>> 0).toString(36);
 }
 
+/**
+ * 同 UID 的多个 VEVENT 折叠（借鉴 calendiff/ics 的思路：Events sharing a UID are
+ * folded into a single Event）。Outlook/Exchange 在会议被改期（reschedule）后，其 ICS
+ * 快照里常残留「旧时间」与「新时间」两条同 UID、无 RECURRENCE-ID 的 VEVENT，若不去重
+ * 就会在日历里出现一模一样的重复日程。规则：
+ *   · 无 RECURRENCE-ID 的多条 = 同一事件的多个版本 → 按 SEQUENCE 取最新（默认 0，越大越新）；
+ *     同 SEQUENCE 再比 DTSTAMP / LAST-MODIFIED，再兜底取靠后的。
+ *   · 有 RECURRENCE-ID 的 = 重复系列的实例级覆盖（每个对应不同实例）→ 保留。
+ */
+function dedupeEventsByUid(events) {
+  const byUid = new Map();
+  const noUid = [];
+  events.forEach(function (ev) {
+    const uid = String(ev.uid || '').trim();
+    if (!uid) { noUid.push(ev); return; }
+    if (!byUid.has(uid)) byUid.set(uid, []);
+    byUid.get(uid).push(ev);
+  });
+  const out = [];
+  byUid.forEach(function (list) {
+    const overrides = list.filter(function (e) { return e.recurrenceId; });
+    let masters = list.filter(function (e) { return !e.recurrenceId; });
+    if (masters.length > 1) {
+      // 记录原始相对顺序：SEQUENCE / DTSTAMP 都区分不了时，取靠后的（新版本通常在 feed 末尾）
+      masters.forEach(function (e, i) { e._i = i; });
+      masters.sort(function (a, b) {
+        if ((b.sequence || 0) !== (a.sequence || 0)) return (b.sequence || 0) - (a.sequence || 0);
+        const dt = String(b.dtstamp || b.lastModified || '').localeCompare(String(a.dtstamp || a.lastModified || ''));
+        if (dt !== 0) return dt;
+        return (b._i || 0) - (a._i || 0);
+      });
+      masters = masters.slice(0, 1);
+    }
+    out.push.apply(out, masters);
+    out.push.apply(out, overrides);
+  });
+  return out.concat(noUid);
+}
+
 /** 拉取所有 ICS 订阅并合并进秘书日程（只读；每 30 分钟自动调用） */
 async function runIcsSync() {
   const feeds = listIcsFeeds();
@@ -945,6 +984,9 @@ async function runIcsSync() {
     }
     results.push({ id: feed.id, name: feed.name, ok: r.ok, count: r.count, error: r.error || '' });
   }
+  // 同 UID 折叠：改期残留的「旧时间 + 新时间」两条 VEVENT 只留最新版本，避免重复日程
+  allEvents = dedupeEventsByUid(allEvents);
+
   // 展开重复事件：母事件 + RRULE 实例；跳过已取消（Canceled）的实例
   const canceledKeys = new Set();
   allEvents.forEach(function (ev) {

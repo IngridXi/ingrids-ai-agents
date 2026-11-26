@@ -165,6 +165,9 @@ function parseICalendar(ics) {
       rrule: prop(b, 'RRULE'),
       status: prop(b, 'STATUS'),
       recurrenceId: prop(b, 'RECURRENCE-ID'),
+      sequence: parseInt(prop(b, 'SEQUENCE'), 10) || 0,
+      dtstamp: prop(b, 'DTSTAMP'),
+      lastModified: prop(b, 'LAST-MODIFIED'),
     });
   }
   return out;
