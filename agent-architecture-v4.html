@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ingrid's AI Agents · 动态架构图 v4</title>
+<style>
+  :root{
+    --bg:#f6f6f3; --panel:#ffffff; --ink:#1f1f1f; --muted:#8a8a86; --line:#e4e4e0;
+    --blue:#185FA5; --purple:#534AB7; --red:#A32D2D;
+    --amber:#BA7517; --gray:#5F5E5A; --coral:#C04A3A; --green:#0F6E56;
+    --accent:#185FA5;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif;font-size:14px;}
+
+  /* ===== 顶栏 ===== */
+  #topbar{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:10px 16px;background:rgba(255,255,255,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);}
+  #topbar .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;white-space:nowrap;}
+  #topbar .brand .dot{width:10px;height:10px;border-radius:3px;background:linear-gradient(135deg,var(--blue),var(--purple));}
+  #topbar .brand .sub{font-weight:400;color:var(--muted);font-size:12px;margin-left:2px;}
+  .ctrl{display:flex;align-items:center;gap:6px;}
+  .seg{display:inline-flex;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;}
+  .seg button{border:none;background:transparent;padding:5px 11px;border-radius:7px;font-size:12.5px;color:var(--muted);cursor:pointer;font-weight:600;}
+  .seg button.active{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12);}
+  .seg button.active.v-network{color:var(--blue);}
+  .seg button.active.v-tree{color:var(--purple);}
+  .seg button:hover{color:var(--ink);}
+  #search{width:150px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--panel);outline:none;}
+  #search:focus{border-color:var(--accent);}
+  .btn{border:1px solid var(--line);background:var(--panel);padding:6px 11px;border-radius:8px;font-size:12.5px;color:var(--ink);cursor:pointer;font-weight:600;}
+  .btn:hover{background:#f2f2ef;}
+  .hint{font-size:11.5px;color:var(--muted);margin-left:auto;white-space:nowrap;}
+
+  /* ===== 画布 ===== */
+  #cv{position:fixed;inset:0;display:block;cursor:grab;}
+  #cv.grabbing{cursor:grabbing;}
+  #cv.pointer{cursor:pointer;}
+
+  /* ===== 图例 ===== */
+  #legend{position:fixed;left:16px;bottom:16px;z-index:20;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);
+    border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:7px;}
+  #legend .lg-row{display:flex;align-items:center;gap:8px;}
+  #legend .sw{width:11px;height:11px;border-radius:50%;flex:none;display:inline-block;}
+  #legend .sw.sq{border-radius:3px;}
+  #legend b{color:var(--ink);font-weight:600;}
+  #legend .lg-title{font-weight:700;color:var(--ink);font-size:12px;margin-bottom:1px;}
+
+  /* ===== 工具提示 ===== */
+  #tip{position:fixed;display:none;z-index:40;max-width:320px;background:#1f1f1f;color:#f5f5f2;border-radius:10px;
+    padding:11px 13px;font-size:12px;line-height:1.55;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.3);}
+  #tip .tt{font-weight:700;font-size:12.5px;margin-bottom:4px;display:block;}
+  #tip ul{margin:0;padding-left:16px;} #tip li{margin:1px 0;}
+
+  /* ===== 抽屉 ===== */
+  #mask{position:fixed;inset:0;background:rgba(20,20,20,.35);z-index:50;display:none;}
+  #drawer{position:fixed;top:0;right:0;height:100%;width:470px;max-width:94vw;background:#fff;z-index:60;box-shadow:-12px 0 40px rgba(0,0,0,.18);
+    transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;}
+  #drawer.open{transform:translateX(0);}
+  #drawer .d-head{padding:18px 20px 14px;border-bottom:1px solid var(--line);position:relative;}
+  #drawer .d-head .d-emoji{font-size:26px;}
+  #drawer .d-head h2{margin:6px 0 2px;font-size:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  #drawer .d-head .d-sub{color:var(--muted);font-size:12.5px;margin-top:2px;}
+  #drawer .d-head .d-tag{font-size:11px;font-weight:700;color:#fff;border-radius:20px;padding:2px 10px;}
+  #drawer .d-body{flex:1;overflow-y:auto;padding:16px 20px 30px;}
+  #drawer .d-sec{margin-bottom:18px;}
+  #drawer .d-sec h3{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px;}
+  #drawer ol{margin:0;padding-left:18px;} #drawer ol li{font-size:13px;margin:3px 0;}
+  .flow-item{display:flex;gap:10px;align-items:flex-start;font-size:13px;margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#FAFAF8;}
+  .flow-dir{flex:none;font-weight:700;font-size:11px;border-radius:5px;padding:2px 7px;color:#fff;}
+  .dir-up{background:var(--green);} .dir-down{background:var(--blue);} .dir-both{background:var(--purple);} .dir-ext{background:var(--red);}
+  .chip{display:inline-block;font-size:11px;background:var(--bg);color:#5f5e5a;border-radius:20px;padding:2px 9px;margin:2px 4px 2px 0;}
+  #drawer .d-close{position:absolute;top:12px;right:14px;width:32px;height:32px;border:none;background:var(--bg);border-radius:8px;cursor:pointer;font-size:16px;color:#5f5e5a;}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand"><span class="dot"></span>Ingrid's AI Agents · 动态架构图<span class="sub">52 节点 · 38 条协同边</span></div>
+  <div class="ctrl">
+    <div class="seg">
+      <button id="btn-net" class="active v-network" onclick="setMode('force')">◉ 网络图</button>
+      <button id="btn-tree" class="v-tree" onclick="setMode('tree')">▤ 树状图</button>
+    </div>
+  </div>
+  <div class="ctrl">
+    <div class="seg">
+      <button class="active" data-lvl="" onclick="setFilter('')">全部</button>
+      <button data-lvl="1" onclick="setFilter(1)">一级</button>
+      <button data-lvl="2" onclick="setFilter(2)">二级</button>
+      <button data-lvl="3" onclick="setFilter(3)">三级</button>
+    </div>
+  </div>
+  <input id="search" placeholder="搜索 Agent…" oninput="setSearch(this.value)">
+  <button class="btn" onclick="resetLayout()">重新布局</button>
+  <button class="btn" onclick="fit()">适配</button>
+  <div class="hint">拖拽节点 · 滚轮缩放 · 悬停看职责 · 点击看明细与交互</div>
+</div>
+
+<canvas id="cv"></canvas>
+
+<div id="legend">
+  <div class="lg-title">层级</div>
+  <div class="lg-row"><i class="sw" style="background:#185FA5"></i><b>一级</b> 工作台底座</div>
+  <div class="lg-row"><i class="sw" style="background:#A32D2D"></i><b>二级</b> 总控 chief</div>
+  <div class="lg-row"><i class="sw" style="background:#534AB7"></i><b>三级</b> 项目层 CityVerse</div>
+  <div class="lg-title" style="margin-top:4px">触发类型（Agent 圆点右上角）</div>
+  <div class="lg-row"><i class="sw" style="background:#BA7517"></i>主动（每日定时）</div>
+  <div class="lg-row"><i class="sw" style="background:#5F5E5A"></i>链路（接续上游）</div>
+  <div class="lg-row"><i class="sw" style="background:#C04A3A"></i>缺口（事件触发）</div>
+  <div class="lg-row"><i class="sw" style="background:#0F6E56"></i>人工（人点/审批）</div>
+  <div class="lg-title" style="margin-top:4px">形状</div>
+  <div class="lg-row"><i class="sw sq" style="background:#f4f3ee;border:1px solid #8A8A86;box-sizing:border-box"></i>资源/底座（非 Agent）</div>
+</div>
+
+<div id="tip"></div>
+<div id="mask" onclick="closeDrawer()"></div>
+<div id="drawer">
+  <button class="d-close" onclick="closeDrawer()">✕</button>
+  <div class="d-head" id="dHead"></div>
+  <div class="d-body" id="dBody"></div>
+</div>
+
+<script>
+var SECTIONS = [
+{
+  id:'l1', num:'一级', title:'工作台底座（ingrids-ai-agents）', desc:'Electron 桌面应用 · 多 Agent 各自绑定引擎',
+  groups:[
+  { title:'治理层 · 控制面', bar:'#534AB7', cards:[
+    {l:'l-govern', e:'🧭', n:'智能路由 ra', t:'类型治理官', tagC:'#534AB7', type:'manual', task:'自动巡检，判定每个 Agent 的四类触发类型并自动修正', eng:'deepseek', engNote:'治理引擎·本地规则',
+      resp:['四类触发类型判定（主动/链路/缺口/人工）','默认自动修正写回注册表','人工锁定即豁免','每日巡检 + 变更报告 + 系统通知','保留任务委派'],
+      detail:{定位:'类型治理官（原调度中枢升级）',明细:['启动+每日定时扫描','类型判定（种子→关键词→默认人工）','自动修正（锁定豁免）','变更报告 + 通知'],交互:[{d:'down',who:'巡检 → 所有 Agent',what:'扫注册表/种子/前端页'},{d:'down',who:'委派 → 前台 Agent',what:'并行/串行/流水线'}]}
+    },
+    {l:'l-govern', e:'💰', n:'CFO 成本官', t:'运营治理', tagC:'#534AB7', type:'manual', task:'实时聚合用量与费用，监控预算，推荐最省模型', eng:'deepseek', engNote:'治理引擎',
+      resp:['按 Agent/引擎/天聚合成本与 token','月度预算 + 超标告警','任务分类 + 成本加权推荐模型','本地零成本占比 + 节省估算'],
+      detail:{定位:'CFO · 成本控制与模型选型',明细:['实时记账','预算监控','模型选型','节省分析'],交互:[{d:'both',who:'读 ↔ 账本',what:'UsageLedger 按月 jsonl'},{d:'down',who:'建议 → 每个 Agent',what:'推荐最划算引擎'}]}
+    },
+    {l:'l-govern', e:'🎚️', n:'模型调控官', t:'运营治理', tagC:'#534AB7', type:'manual', task:'本地优先，占满/离线自动切 API，锁定才固定', eng:'deepseek', engNote:'治理引擎',
+      resp:['本地模型可用 → 零成本优先','显存 ≥3 模型或 >16GB → 切 API','Ollama 离线 → 兜底 DeepSeek','手动锁定 → 固定模型'],
+      detail:{定位:'Model Governor · 本地优先+降级+锁定',明细:['本地优先','占满切换','离线兜底','锁定豁免'],交互:[{d:'both',who:'探测 ↔ Ollama',what:'/api/ps 显存与在线状态'},{d:'down',who:'分配 → 所有 Agent',what:'动态解析模型'}]}
+    },
+    {l:'l-govern', e:'🧭', n:'Agent 总管', t:'运营治理', tagC:'#534AB7', type:'manual', task:'监控工作量，鉴别重叠/空壳/过载，出增分合建议', eng:'deepseek', engNote:'治理引擎',
+      resp:['每 Agent 调用/token/成本监控','职责重叠检测 → 合并','空壳→合并 · 过载→分割 · 真空→新增','团队健康度评分'],
+      detail:{定位:'Workforce Governor · 团队健康',明细:['工作量监控','重叠检测','增分合建议','健康度'],交互:[{d:'both',who:'盘点 ↔ 所有 Agent',what:'读工作量 + 职责域'}]}
+    },
+    {l:'l-govern', e:'🖥️', n:'Agent 总控台', t:'后台', tagC:'#3C3489', type:'manual', task:'知识沉淀 + 治理巡检 + 多项目 tab 宿主', eng:'local-llm', engNote:'本地·控制面',
+      resp:['知识沉淀官：复盘→可复用经验','人工审批入库（方法/结论分库）','治理巡检：职责盘点/重叠/对账','宿主多项目 tab（CityVerse 是第一个）'],
+      detail:{定位:'工作台后台控制面 · 人工在环',明细:['待审批','手动沉淀','经验库','治理巡检','检索复用'],交互:[{d:'down',who:'调用 → 知识沉淀官（子）',what:'经验提案→审批→入库'},{d:'down',who:'调用 → 治理巡检（子）',what:'只读盘点职责'},{d:'down',who:'宿主 → 二级项目 tab',what:'CityVerse 架构挂在此处'}]}
+    },
+  ]},
+  { title:'前台 · 功能 agent', bar:'#185FA5', cards:[
+    {l:'l-front', e:'🔬', n:'研究助手', t:'主力', tagC:'#185FA5', type:'manual', task:'读博全流程：问题 → 论文 → 发表', eng:'deepseek', engNote:'可改 Claude Code',
+      resp:['研究问题/论文拆解/研究设计','文献综述/SOTA/数据分析','引用审计/审稿/可重复性','写作/综述/提案/项目管理/研究导师'],
+      detail:{定位:'读博日常主力',明细:['问题提炼','文献与SOTA','研究设计','数据分析','写作','审稿','投稿推进'],交互:[{d:'both',who:'挂 ↔ Research 板块',what:'17 个研究 skill'},{d:'both',who:'读 ↔ Zotero/Notion',what:'文献与外部知识'},{d:'up',who:'定时 → 每日索引/周综述',what:'09:00 增量 + 周一 09:30 综述'}]}
+    },
+    {l:'l-front', e:'💬', n:'通用助手', t:'主力', tagC:'#185FA5', type:'manual', task:'日常问答、联网搜索、抓网页、导出文档', eng:'deepseek', engNote:'通用',
+      resp:['日常问答/信息检索总结','联网搜索（DuckDuckGo）','粘贴网址抓正文总结','Word/PPT/Excel 导出'],
+      detail:{定位:'日常主力助手',明细:['问答','联网搜索','抓网页','导出文档'],交互:[{d:'ext',who:'指挥 → 三级总控 chief',what:'经 chief 工具投任务'},{d:'both',who:'挂 ↔ 文档能力',what:'doc_generate / pptx_fill_template'}]}
+    },
+    {l:'l-front', e:'🛠️', n:'软件工程', t:'逆向', tagC:'#185FA5', type:'manual', task:'写代码、修 bug、逆向分析、二进制补丁', eng:'deepseek', engNote:'开发',
+      resp:['写码/修bug/调试/重构','逆向分析（file/otool/nm/strings）','二进制字节补丁（自动备份）','.pyc 反编译'],
+      detail:{定位:'软件开发与逆向修复主力',明细:['写代码','修bug','逆向分析','补丁修复','反编译'],交互:[{d:'both',who:'用 ↔ 逆向/编译工具',what:'otool/nm/objdump/lldb/clang'}]}
+    },
+    {l:'l-front', e:'🎨', n:'界面设计师', t:'UI', tagC:'#185FA5', type:'manual', task:'配色、布局、动效，消除模板化 AI 味', eng:'claude-code', engNote:'设计',
+      resp:['视觉方向/配色方案','反模板化（消 AI 味）','布局字体（4/8 网格）','动效交互 · 视觉 QA'],
+      detail:{定位:'界面/产品设计师',明细:['视觉方向','配色','视觉品味','布局字体','动效','QA'],交互:[{d:'both',who:'挂 ↔ Design 板块',what:'6 个设计 skill'}]}
+    },
+    {l:'l-front', e:'🎙️', n:'会议纪要官', t:'首个', tagC:'#185FA5', type:'manual', task:'实时转写、声纹认人、纪要、一键 PPT', eng:'funasr', engNote:'→ deepseek',
+      resp:['实时转写 + 说话人分离','声纹登记自动认人','随手笔记 + AI 总结','自动纪要 + 一键 PPT'],
+      detail:{定位:'从「海归海」提取的第一个 Agent',明细:['实时转写','声纹登记','随手笔记','AI总结','自动纪要','一键PPT'],交互:[{d:'down',who:'转写 → FunASR',what:'127.0.0.1:8950/8951'},{d:'down',who:'总结 → 会议纪要后端',what:'纪要 + PPT'}]}
+    },
+    {l:'l-front', e:'🎵', n:'音乐创作', t:'', tagC:'#185FA5', type:'manual', task:'主题/歌词 → 歌曲 + MV 动画', eng:'local-llm', engNote:'ACE-Step/Suno',
+      resp:['中文歌词/主题写词','改词修音/翻唱嗓音','多可视化 MV'],
+      detail:{定位:'来自 ai-music-studio / melocat',明细:['输入主题','AI作曲','合成MV'],交互:[{d:'both',who:'本地 ↔ ACE-Step',what:'本地作曲'},{d:'both',who:'云端 ↔ Suno',what:'Suno 出歌'}]}
+    },
+    {l:'l-front', e:'⚖️', n:'伦理 agent', t:'教学', tagC:'#185FA5', type:'manual', task:'AI 伦理/对齐教学演示（未规范 vs 已规范双模式）', eng:'deepseek', engNote:'伦理',
+      resp:['未规范模式：灰方案（反面）','已规范模式：识别→拒绝→引导（正面）','灰/违场景库','剑桥 AI 伦理教学用'],
+      detail:{定位:'AI 伦理与对齐教学演示',明细:['未规范模式','已规范模式','场景库'],交互:[{d:'down',who:'归档 → 伦理流水线',what:'①生成→②审查→③去重→④写回'},{d:'down',who:'引用 → 法务 agent',what:'法条/判例检索'}]}
+    },
+    {l:'l-front', e:'📚', n:'知识库', t:'', tagC:'#8A8A86', type:'manual', kind:'res', task:'Zotero/Obsidian/Notion 统一检索 + 术语图谱（能力底座，非 Agent）', eng:'Ollama', engNote:'本地 RAG',
+      resp:['Zotero/Obsidian/Notion/参考库统一入口','跨库全文检索 + 向量化','从 Zotero 文献提取术语、共现连线','术语图谱写入 Obsidian「术语库」'],
+      detail:{定位:'能力底座 · 本地 RAG 知识引擎（非 Agent）',明细:['概览检索','术语图谱','Notion 同步'],交互:[{d:'both',who:'读 ↔ Zotero/Obsidian/Notion',what:'跨库索引'},{d:'down',who:'供 → 研究助手/通用助手',what:'知识检索'}]}
+    },
+  ]},
+  { title:'后台子 agent · 流水线', bar:'#8A84D8', cards:[
+    {l:'l-back', e:'🧠', n:'知识沉淀官', t:'', tagC:'#8A84D8', type:'manual', task:'把已解决问题复盘成可复用经验', eng:'local-llm', engNote:'← 总控台',
+      resp:['现象/根因/修复→经验提案','方法论/结论分库','人工审批入库'],detail:{定位:'后台子 · 归属总控台',明细:['复盘','提案','入库'],交互:[{d:'up',who:'← Agent 总控台',what:'产出经验库'}]}
+    },
+    {l:'l-back', e:'🔍', n:'治理巡检', t:'', tagC:'#8A84D8', type:'manual', task:'只读盘点各 Agent 职责、重叠、空壳孤儿', eng:'local-llm', engNote:'← 总控台',
+      resp:['职责盘点','重叠检测','空壳/孤儿对账'],detail:{定位:'后台子 · 归属总控台',明细:['职责盘点','重叠检测','对账'],交互:[{d:'up',who:'← Agent 总控台',what:'只读盘点'}]}
+    },
+    {l:'l-back', e:'📜', n:'法务 agent', t:'', tagC:'#8A84D8', type:'manual', task:'法条/判例检索，供伦理 agent 引用真实法条', eng:'local-llm', engNote:'← 伦理 agent',
+      resp:['法条关键词匹配返回原文','避免编造条文号/刑罚','法务知识库 66 法条'],detail:{定位:'后台子 · 归属伦理 agent',明细:['法条检索','判例匹配','周更'],交互:[{d:'up',who:'← 伦理 agent',what:'法律咨询时调用'},{d:'both',who:'读 ↔ 法务知识库',what:'Obsidian · 66 法条'},{d:'up',who:'定时 → 法务周更',what:'周一 09:00'}]}
+    },
+    {l:'l-back', e:'📝', n:'会议纪要后端', t:'', tagC:'#8A84D8', type:'manual', task:'总结与 PPT 生成', eng:'local-llm', engNote:'← 会议纪要官',
+      resp:['纪要结构化','会议总结 PPT'],detail:{定位:'后台子 · 归属会议纪要官',明细:['总结','PPT'],交互:[{d:'up',who:'← 会议纪要官',what:'承接总结与PPT'}]}
+    },
+  ]},
+  { title:'悬浮助手（常驻浮层）', bar:'#BA7517', cards:[
+    {l:'l-float', e:'👁️', n:'监事 Agent', t:'', tagC:'#BA7517', type:'manual', task:'防止 LLM 跑偏（goal drift）', eng:'deepseek', engNote:'悬浮·可拖拽',
+      resp:['增减/停用/加权核心需求','对话澄清 3 问→确认稿','快路径漂移检测','慢路径纠偏指令'],
+      detail:{定位:'借鉴 Steering Agent 双路径',明细:['核心需求','对话确认','漂移检测','自动纠偏'],交互:[{d:'both',who:'旁路监督 → 每次委派',what:'漂移检测，不改执行Agent'},{d:'down',who:'注入 → 下一轮委派',what:'核心需求+纠偏'}]}
+    },
+    {l:'l-float', e:'🕊️', n:'秘书 Agent', t:'', tagC:'#BA7517', type:'manual', task:'日程提醒、邮件分类、记想法分配', eng:'deepseek', engNote:'悬浮·可拖拽',
+      resp:['记想法→ThoughtStore','分配给合适 Agent（TaskRouter）','日程+提前提醒','邮件分类分级+截图加日历'],
+      detail:{定位:'左侧悬浮 · 与监事并排',明细:['记想法','日程提醒','邮件分类','截图加日历'],交互:[{d:'down',who:'分配 → TaskRouter',what:'判断派谁+挂skill'},{d:'down',who:'填好 → 调度中枢',what:'自动填委派表单'}]}
+    },
+  ]},
+  ]
+},
+{
+  id:'l2', num:'二级', title:'项目层 · CityVerse（cityverse-ar）', desc:'第一个项目实例 · ops 运营 + intel 建设 + strategy 战略',
+  groups:[
+  { title:'ops/ 运营 Agent 组 · 浏览器 JS · 人工驱动（人在浏览器点）', bar:'#4A78B0', cards:[
+    {l:'l-ops', e:'📝', n:'内容策划官', t:'planner', tagC:'#4A78B0', type:'manual', task:'一句话需求 → EARS 任务 spec', eng:'deepseek', engNote:'ready',
+      resp:['需求 → 结构化任务 spec'],detail:{定位:'ops 数字员工',明细:['需求解析','EARS spec'],交互:[{d:'down',who:'→ 内容执行官',what:'产出可执行 spec'}]}
+    },
+    {l:'l-ops', e:'🗺️', n:'点位运营官', t:'diagnostician', tagC:'#4A78B0', type:'manual', task:'商圈 POI/街景/锚点数据诊断', eng:'deepseek', engNote:'ready',
+      resp:['POI/街景/锚点数据诊断'],detail:{定位:'ops 数字员工',明细:['POI诊断','街景','锚点'],交互:[{d:'down',who:'→ 内容策划/执行',what:'供数据依据'}]}
+    },
+    {l:'l-ops', e:'🚀', n:'内容执行官', t:'executor', tagC:'#4A78B0', type:'manual', task:'执行已批准 patch（上架任务/折扣/食材）', eng:'ollama-qwen', engNote:'ready',
+      resp:['执行已批准 patch','上架任务/折扣/食材'],detail:{定位:'ops 数字员工',明细:['执行 patch'],交互:[{d:'up',who:'← 内容质量门禁',what:'需先过门禁'},{d:'down',who:'→ 云数据库',what:'上架到玩家客户端'}]}
+    },
+    {l:'l-ops', e:'🛡️', n:'内容质量门禁', t:'reviewer', tagC:'#4A78B0', type:'manual', task:'独立审查（数值/合规/预算）', eng:'gpt', engNote:'ready',
+      resp:['独立审查数值/合规/预算'],detail:{定位:'ops 数字员工',明细:['独立审查'],交互:[{d:'up',who:'← 内容执行官',what:'审查其 patch'}]}
+    },
+    {l:'l-ops', e:'💬', n:'商户顾问', t:'advisor', tagC:'#8A8A86', type:'manual', task:'折扣方案审批建议（soon）', eng:'deepseek', engNote:'soon',
+      resp:['折扣方案审批建议','未上线'],detail:{定位:'ops 数字员工 · 待上线',明细:['折扣建议'],交互:[{d:'up',who:'← 内容策划',what:'审批建议'}]}
+    },
+    {l:'l-ops', e:'🔍', n:'风控巡检官', t:'inspector', tagC:'#4A78B0', type:'manual', task:'反作弊（刷券/漂移/多开）', eng:'gpt', engNote:'ready',
+      resp:['刷券/漂移/多开检测'],detail:{定位:'ops 数字员工',明细:['反作弊'],交互:[{d:'both',who:'读 ↔ 云数据库',what:'巡检异常'}]}
+    },
+    {l:'l-ops', e:'📊', n:'数据治理官', t:'governor', tagC:'#4A78B0', type:'manual', task:'点位/商户/券/玩家四表对账', eng:'ollama-qwen', engNote:'ready',
+      resp:['四表对账'],detail:{定位:'ops 数字员工',明细:['对账'],交互:[{d:'both',who:'读 ↔ 云数据库',what:'对账'}]}
+    },
+    {l:'l-ops', e:'🧠', n:'经验沉淀官', t:'settler', tagC:'#4A78B0', type:'manual', task:'复盘 → 提案 → 分层入库', eng:'deepseek', engNote:'ready',
+      resp:['复盘运营打法','提案待审批','方法论/结论分库'],detail:{定位:'ops 数字员工',明细:['复盘','提案','入库'],交互:[{d:'both',who:'读 ↔ localStorage',what:'knowledge-settler'}]}
+    },
+    {l:'l-ops', e:'⚖️', n:'IP 保护官', t:'guardian', tagC:'#4A78B0', type:'manual', task:'商标/版权/合规/NDA 登记留痕', eng:'gpt', engNote:'ready',
+      resp:['商标/版权/合规/NDA 留痕'],detail:{定位:'ops 数字员工',明细:['IP登记'],交互:[{d:'both',who:'读 ↔ ip-guardian.js',what:'留痕'}]}
+    },
+  ]},
+  { title:'intel/ 建设流水线 · 舆情驱动闭环 · Python + PostgreSQL（07:30 自动 → 停待审批）', bar:'#0F6E56', cards:[
+    {l:'l-intel', e:'📡', n:'舆情采集', t:'主动', tagC:'#BA7517', type:'active', task:'Google News + HN + Reddit 舆情采集 + 情感分类', eng:'qwen3:8b', engNote:'community_intel.py',
+      resp:['Google News RSS 中英检索','Hacker News + Reddit(arctic-shift)','Ollama 情感分类（失败回退规则）'],detail:{定位:'舆情闭环第一环 · 唯一 07:30 主动',明细:['采集','情感分类','入库'],交互:[{d:'up',who:'← WorkBuddy 07:30',what:'唯一定时触发'},{d:'down',who:'→ 舆情洞察',what:'原始帖/评论/新闻'}]}
+    },
+    {l:'l-intel', e:'💡', n:'舆情洞察', t:'链路', tagC:'#5F5E5A', type:'chain', task:'提炼 lessons/features/experiences', eng:'qwen3:32b', engNote:'insight_agent.py',
+      resp:['汇总情感碎片','提炼经验教训/应建设功能/应提升体验'],detail:{定位:'舆情闭环第二环',明细:['提炼洞察'],交互:[{d:'up',who:'← 舆情采集',what:'情感碎片'},{d:'down',who:'→ 建设规划 + 玩法库',what:'洞察输出'}]}
+    },
+    {l:'l-intel', e:'🎮', n:'玩法库', t:'链路', tagC:'#5F5E5A', type:'chain', task:'seed/mine/enrich 综艺游戏玩法 AR 化', eng:'qwen3:32b', engNote:'playbook_agent.py',
+      resp:['内置综艺/游戏经典玩法','从情报提炼新玩法','AR 化改编 + 安全等级'],detail:{定位:'玩法灵感库',明细:['seed','mine','enrich'],交互:[{d:'up',who:'← 舆情洞察',what:'期待的玩法'},{d:'down',who:'→ 建设规划',what:'玩法供给'}]}
+    },
+    {l:'l-intel', e:'🗺️', n:'建设规划', t:'链路', tagC:'#5F5E5A', type:'chain', task:'ITAgent 读洞察+玩法→报告+技术规划（停 pending_approval）', eng:'qwen3:32b', engNote:'build_pipeline·ITAgent',
+      resp:['读洞察+玩法+记忆','说人话报告 + 技术规划','停 pending_approval 等人审'],detail:{定位:'建设规划（IT agent）',明细:['读输入','出报告','停待审批'],交互:[{d:'up',who:'← 舆情洞察 + 玩法库',what:'读输入'},{d:'down',who:'→ 人工审批 → 代码执行',what:'规划产出'}]}
+    },
+    {l:'l-intel', e:'🚀', n:'代码执行', t:'链路', tagC:'#5F5E5A', type:'chain', task:'Executor 隔离 worktree 编程 → 产出 patch', eng:'qwen3:32b', engNote:'build_pipeline·Executor',
+      resp:['隔离 worktree 改代码','产出 patch','护栏：repo 内/排除 .git/行数受限'],detail:{定位:'IT 副手执行',明细:['隔离执行','产出patch'],交互:[{d:'up',who:'← 人工审批通过',what:'按规划执行'},{d:'down',who:'→ 质量门禁',what:'patch'}]}
+    },
+    {l:'l-intel', e:'🛡️', n:'质量门禁', t:'链路', tagC:'#5F5E5A', type:'chain', task:'Gate 静态分析 + LLM 独立审查', eng:'qwen3:32b', engNote:'build_pipeline·Gate',
+      resp:['静态分析','LLM 独立审查','passed/rejected'],detail:{定位:'质量门禁',明细:['静态分析','独立审查'],交互:[{d:'up',who:'← 代码执行',what:'复查 patch'},{d:'down',who:'→ 结果落地',what:'通过才落地'}]}
+    },
+    {l:'l-intel', e:'✅', n:'结果落地', t:'人工', tagC:'#0F6E56', type:'manual', task:'门禁通过后落地（不自动 commit）', eng:'—', engNote:'build_pipeline·apply',
+      resp:['门禁通过后落地','绝不自动 merge/commit'],detail:{定位:'落地（人工）',明细:['落地'],交互:[{d:'up',who:'← 质量门禁通过',what:'apply'}]}
+    },
+  ]},
+  { title:'intel/strategy/ 战略参谋组 · 战略驱动闭环（08:00 自动 · launchd 常驻）', bar:'#534AB7', cards:[
+    {l:'l-strat', e:'🔍', n:'自我检测', t:'主动', tagC:'#BA7517', type:'active', task:'盘点仓库真实能力 → 现状快照 + 短板', eng:'ollama', engNote:'strategy/selfcheck.py',
+      resp:['盘点 Unity 脚本/prototype/docs/数据库','现状快照 + 短板'],detail:{定位:'战略参谋 ① · 08:00 主动',明细:['能力盘点','现状快照'],交互:[{d:'down',who:'→ 差距分析',what:'现状+短板'}]}
+    },
+    {l:'l-strat', e:'📰', n:'路线资讯', t:'主动', tagC:'#BA7517', type:'active', task:'按 roadmap 检索最新动态 → 简报', eng:'ollama', engNote:'strategy/research.py',
+      resp:['按 docs/04 roadmap 检索','复用 Google News RSS','存表 + intel/daily/'],detail:{定位:'战略参谋 ③ · 08:00 主动',明细:['检索动态','简报'],交互:[{d:'down',who:'→ 差距分析',what:'资讯简报'}]}
+    },
+    {l:'l-strat', e:'⚔️', n:'竞品对标', t:'链路', tagC:'#5F5E5A', type:'chain', task:'vs docs/02 竞品逐维度对比 → 差距 + 机会', eng:'ollama', engNote:'strategy/competitor.py',
+      resp:['逐维度竞品对比','差距 + 机会'],detail:{定位:'战略参谋 ②',明细:['竞品对比'],交互:[{d:'up',who:'← 自我检测',what:'接续'},{d:'down',who:'→ 差距分析',what:'差距'}]}
+    },
+    {l:'l-strat', e:'🧭', n:'差距分析', t:'链路', tagC:'#5F5E5A', type:'chain', task:'综合 selfcheck+competitor+research → 优先级清单', eng:'ollama', engNote:'strategy/analyze.py',
+      resp:['综合三路输入','该开发/完善什么优先级清单'],detail:{定位:'战略参谋 ④',明细:['综合分析','优先级清单'],交互:[{d:'up',who:'← selfcheck+competitor+research',what:'三路输入'},{d:'down',who:'→ 素材采购(缺口) + 转建设任务',what:'差距清单'}]}
+    },
+    {l:'l-strat', e:'🚀', n:'转建设任务', t:'链路', tagC:'#5F5E5A', type:'chain', task:'差距清单 → build_plans（停待审批，防重复）', eng:'ollama', engNote:'strategy/feed.py',
+      resp:['差距清单 → build_plans','pending_approval','防重复'],detail:{定位:'战略参谋 ⑤',明细:['转任务','防重复'],交互:[{d:'up',who:'← 差距分析',what:'差距清单'},{d:'down',who:'→ build_plans（喂 ITAgent）',what:'停待审批'}]}
+    },
+    {l:'l-strat', e:'🛒', n:'素材采购', t:'缺口', tagC:'#C04A3A', type:'gap', task:'asset_agent 按缺口采购 Poly Haven CC0 素材', eng:'—', engNote:'asset_agent.py',
+      resp:['差距分析判出素材缺口才触发','Poly Haven CC0（仅此域名）','幂等（已存在 skip）防膨胀'],detail:{定位:'唯一缺口驱动 · 不每天定时',明细:['fulfill','gap','search','fetch'],交互:[{d:'up',who:'← 差距分析（素材缺口）',what:'缺口驱动触发'},{d:'down',who:'→ reference/ 素材库',what:'下载素材'}]}
+    },
+  ]},
+  ]
+},
+{
+  id:'l3', num:'三级', title:'总控 chief · 常驻调度层（cityverse-ar）', desc:'不属于任何对话的常驻进程 · 意图→队列→调度→执行',
+  groups:[
+  { title:'调度结构（4 层）', bar:'#A32D2D', cards:[
+    {l:'l-worker', e:'🗣️', n:'任务接收', t:'', tagC:'#A32D2D', type:'manual', task:'人/别的 agent 说「把这活干了」→ 落成结构化任务', eng:'—', engNote:'人 + 通用助手 + chief tell',
+      resp:['人在对话里投递','别的 agent 经 chief submit','chief tell 翻译层（DeepSeek→ollama）'],detail:{定位:'第一层 · 意图',明细:['人投递','agent投递','tell翻译'],交互:[{d:'down',who:'→ 任务队列',what:'落成任务'}]}
+    },
+    {l:'l-worker', e:'🗄️', n:'任务队列', t:'', tagC:'#A32D2D', type:'manual', task:'agent_jobs（PostgreSQL）持久化任务', eng:'—', engNote:'PG · cityverse 库',
+      resp:['kind/title/spec/status/attempts','持久化，进程死任务还在'],detail:{定位:'第二层 · 队列',明细:['持久化任务'],交互:[{d:'down',who:'→ 调度中枢',what:'待取任务'}]}
+    },
+    {l:'l-worker', e:'⚙️', n:'调度中枢', t:'', tagC:'#A32D2D', type:'manual', task:'取任务→起worker→心跳→判超时→收结果→重试', eng:'—', engNote:'常驻 · PG advisory lock',
+      resp:['单实例（advisory lock 非 pid）','超时杀进程组','失败只重试一次','reap_orphans 兜底'],detail:{定位:'第三层 · 常驻调度',明细:['取任务','起worker','超时/重试'],交互:[{d:'both',who:'↔ 队列 + 执行层',what:'调度中轴'}]}
+    },
+  ]},
+  { title:'执行层 · 6 个 worker（被按需唤醒，不是工作台 agent）', bar:'#C04A3A', cards:[
+    {l:'l-worker', e:'💻', n:'代码编写', t:'worker', tagC:'#C04A3A', type:'manual', task:'无头改代码/文件（codex exec，工作区内可写）', eng:'Codex CLI', engNote:'最贵·只接 3 条件',
+      resp:['读代码/改文件/跑命令/自查','不能提交推送','三条判据全满足才投'],detail:{定位:'无头写代码',明细:['改代码','跑命令'],交互:[{d:'up',who:'← 队列 kind=codex',what:'无人值守迭代才投'}]}
+    },
+    {l:'l-worker', e:'🔧', n:'仓库管理', t:'worker', tagC:'#C04A3A', type:'manual', task:'仓库调度（verify/claim/done）', eng:'脚本', engNote:'tools/ingrids.py',
+      resp:['验收/锚点/看板/对话/同步','不改代码不提交'],detail:{定位:'仓库调度',明细:['验收','看板'],交互:[{d:'up',who:'← 队列 kind=ingrids',what:'verify/claim'}]}
+    },
+    {l:'l-worker', e:'🏗️', n:'建设执行', t:'worker', tagC:'#C04A3A', type:'manual', task:'建设流水线（plan/execute/gate/apply）', eng:'qwen3:32b/DeepSeek', engNote:'build_pipeline',
+      resp:['规划/执行/门禁/落地到工作区','不 commit'],detail:{定位:'二级 intel 的无头入口',明细:['plan','execute','gate','apply'],交互:[{d:'up',who:'← 队列 kind=intel',what:'按需调用流水线'}]}
+    },
+    {l:'l-worker', e:'🎯', n:'战略执行', t:'worker', tagC:'#C04A3A', type:'manual', task:'战略参谋（selfcheck/competitor/research/analyze/feed）', eng:'复用 community_intel 模型', engNote:'strategy_agent',
+      resp:['5 agent 统一入口','不 commit 不审批'],detail:{定位:'二级 strategy 的无头入口',明细:['selfcheck','competitor','research','analyze','feed'],交互:[{d:'up',who:'← 队列 kind=strategy',what:'按需调用'}]}
+    },
+    {l:'l-worker', e:'🛒', n:'素材下载', t:'worker', tagC:'#C04A3A', type:'manual', task:'素材采购（fulfill/gap/search/fetch）', eng:'纯 HTTP', engNote:'Poly Haven CC0',
+      resp:['只允许 Poly Haven 域名','幂等'],detail:{定位:'二级 asset 的无头入口',明细:['fulfill','gap','search','fetch'],交互:[{d:'up',who:'← 队列 kind=asset',what:'缺口驱动'}]}
+    },
+    {l:'l-worker', e:'🐚', n:'命令执行', t:'worker', tagC:'#C04A3A', type:'manual', task:'白名单只读命令（ls/cat/grep/node/python3…）', eng:'—', engNote:'白名单 14 命令',
+      resp:['白名单非黑名单','git/rm/curl/psql 一律拒'],detail:{定位:'白名单命令',明细:['只读命令'],交互:[{d:'up',who:'← 队列 kind=shell',what:'只读/纯计算'}]}
+    },
+  ]},
+  ]
+},
+];
+var EDGES = [["Agent 总控台","知识沉淀官",0],["Agent 总控台","治理巡检",0],["会议纪要官","会议纪要后端",0],["伦理 agent","法务 agent",0],["知识库","研究助手",0],["知识库","通用助手",0],["通用助手","任务接收",0],["内容策划官","内容执行官",0],["点位运营官","内容策划官",0],["点位运营官","内容执行官",0],["内容执行官","内容质量门禁",0],["内容质量门禁","内容执行官",1],["内容策划官","商户顾问",0],["舆情采集","舆情洞察",0],["舆情洞察","建设规划",0],["舆情洞察","玩法库",0],["玩法库","建设规划",0],["建设规划","代码执行",0],["代码执行","质量门禁",0],["质量门禁","结果落地",0],["自我检测","竞品对标",0],["竞品对标","差距分析",0],["路线资讯","差距分析",0],["差距分析","转建设任务",0],["差距分析","素材采购",0],["转建设任务","建设规划",0],["任务接收","任务队列",0],["任务队列","调度中枢",0],["调度中枢","代码编写",0],["调度中枢","仓库管理",0],["调度中枢","建设执行",0],["调度中枢","战略执行",0],["调度中枢","素材下载",0],["调度中枢","命令执行",0],["建设执行","建设规划",0],["战略执行","自我检测",0],["素材下载","素材采购",0],["智能路由 ra","研究助手",0],["智能路由 ra","通用助手",0],["智能路由 ra","软件工程",0],["智能路由 ra","界面设计师",0],["智能路由 ra","会议纪要官",0],["智能路由 ra","音乐创作",0],["智能路由 ra","伦理 agent",0],["智能路由 ra","知识库",0],["秘书 Agent","智能路由 ra",0],["监事 Agent","智能路由 ra",0]];
+
+/* ================= 数据建模 ================= */
+var levelColor = {1:'#185FA5',2:'#A32D2D',3:'#534AB7'};
+var typeColor  = {active:'#BA7517', chain:'#5F5E5A', gap:'#C04A3A', manual:'#0F6E56'};
+var typeLabel  = {active:'主动', chain:'链路', gap:'缺口', manual:'人工'};
+var levelName  = {1:'一级 · 工作台底座', 2:'二级 · 总控 chief', 3:'三级 · 项目层 CityVerse'};
+
+var NODES = [], byName = {};
+SECTIONS.forEach(function(sec, si){
+  var lvl = (sec.num==='一级')?1:(sec.num==='二级')?3:2;
+  sec.groups.forEach(function(g, gi){
+    g.cards.forEach(function(a){
+      var nd = { key:a.n, lvl:lvl, si:si, gi:gi,
+        e:a.e, n:a.n, tag:a.t, tagC:a.tagC, type:a.type, kind:a.kind||'agent',
+        task:a.task, eng:a.eng, engNote:a.engNote, resp:a.resp, detail:a.detail,
+        x:0,y:0,vx:0,vy:0,r:8,deg:0,pin:false,neighbors:[] };
+      NODES.push(nd); byName[a.n]=nd;
+    });
+  });
+});
+
+var ELINKS = [];
+EDGES.forEach(function(e){
+  var s=byName[e[0]], t=byName[e[1]];
+  if(s && t){ s.deg++; t.deg++; ELINKS.push({s:s,t:t,d:e[2]}); }
+});
+// 邻接表（含双向）
+ELINKS.forEach(function(ln){
+  ln.s.neighbors.push(ln.t); ln.t.neighbors.push(ln.s);
+});
+
+// 簇：si-gi
+var clusters = {};
+NODES.forEach(function(nd){ var k=nd.si+'-'+nd.gi; (clusters[k]=clusters[k]||[]).push(nd); });
+
+function zoneTitle(nd){
+  var map = {
+    '0-0':'治理层','0-1':'前台','0-2':'后台子','0-3':'悬浮助手',
+    '1-0':'ops 运营','1-1':'intel 建设','1-2':'strategy 战略',
+    '2-0':'调度结构','2-1':'执行层 worker'
+  };
+  return map[nd.si+'-'+nd.gi]||'';
+}
+
+var W=1200, H=1000;
+var levelX = {1:190, 2:620, 3:1040};   // 树状图（横向）用
+var levelY = {1:185, 2:505, 3:850};     // 网络图（纵向分带）用
+var groupX = {1:[190,490,790,1040], 2:[470,760], 3:[300,620,940]};
+var ZONES = [
+  {lvl:1, x1:50, y1:62,  x2:1150, y2:308},
+  {lvl:2, x1:50, y1:392, x2:1150, y2:630},
+  {lvl:3, x1:50, y1:718, x2:1150, y2:972}
+];
+var clusterAnchors = {};
+(function(){
+  Object.keys(clusters).forEach(function(k){
+    var nd0 = clusters[k][0];
+    var lvl = nd0.lvl;
+    var keys = Object.keys(clusters).filter(function(k2){return clusters[k2][0].lvl===lvl;}).sort();
+    var idx = keys.indexOf(k);
+    clusterAnchors[k] = {x: groupX[lvl][idx], y: levelY[lvl]};
+  });
+})();
+
+function initForce(){
+  Object.keys(clusters).forEach(function(k){
+    var an = clusterAnchors[k];
+    clusters[k].forEach(function(nd, i){
+      var ang = Math.random()*Math.PI*2, rad = Math.random()*55;
+      nd.x = an.x + Math.cos(ang)*rad; nd.y = an.y + Math.sin(ang)*rad;
+      nd.vx=0; nd.vy=0;
+    });
+  });
+  heat(420);
+}
+
+/* ================= 物理 ================= */
+var running=false, simTicks=0;
+function heat(n){ running=true; simTicks=Math.max(simTicks, n||260); }
+function physics(){
+  var i,j;
+  for(i=0;i<NODES.length;i++){ var a=NODES[i];
+    for(j=i+1;j<NODES.length;j++){ var b=NODES[j];
+      var dx=b.x-a.x, dy=b.y-a.y; var d2=dx*dx+dy*dy; if(d2<1)d2=1; var d=Math.sqrt(d2);
+      if(d<170){ var f=(170-d)/170*1.7; var ux=dx/d*f, uy=dy/d*f; a.vx-=ux; a.vy-=uy; b.vx+=ux; b.vy+=uy; }
+    }
+  }
+  ELINKS.forEach(function(ln){
+    var dx=ln.t.x-ln.s.x, dy=ln.t.y-ln.s.y; var d=Math.sqrt(dx*dx+dy*dy)||1;
+    var f=(d-92)*0.022; var ux=dx/d*f, uy=dy/d*f;
+    ln.s.vx+=ux; ln.s.vy+=uy; ln.t.vx-=ux; ln.t.vy-=uy;
+  });
+  Object.keys(clusters).forEach(function(k){
+    var c=clusters[k], an=clusterAnchors[k];
+    c.forEach(function(n){ var dx=an.x-n.x, dy=an.y-n.y; n.vx+=dx*0.004; n.vy+=dy*0.004; });
+  });
+  /* 分带布局：不设全局中心引力，靠簇锚点定位，避免层级间纵向串扰 */
+  NODES.forEach(function(n){
+    if(n.pin){ n.vx=0; n.vy=0; return; }
+    n.vx*=0.82; n.vy*=0.82; n.x+=n.vx; n.y+=n.vy;
+  });
+}
+
+/* ================= 树状布局 ================= */
+function setTreeLayout(){
+  running=false;
+  var order = Object.keys(clusters).sort(function(a,b){ var ca=clusters[a][0],cb=clusters[b][0]; return (ca.lvl-cb.lvl)||(ca.si-cb.si)||(ca.gi-cb.gi); });
+  var byLevel={}; order.forEach(function(k){ var l=clusters[k][0].lvl; (byLevel[l]=byLevel[l]||[]).push(k); });
+  [1,2,3].forEach(function(l){
+    var keys=byLevel[l]||[];
+    var totalH=0; keys.forEach(function(k){ totalH += (clusters[k].length-1)*33 + 74; });
+    var y0 = H/2 - totalH/2;
+    keys.forEach(function(k){
+      var c=clusters[k].slice().sort(function(a,b){ return a.n<b.n?-1:1; });
+      var grpH=(c.length-1)*33;
+      c.forEach(function(nd,ii){ nd.x=levelX[l]; nd.y=y0+grpH/2+ii*33; nd.vx=0; nd.vy=0; });
+      y0 += grpH + 74;
+    });
+  });
+  fit();
+}
+
+/* ================= 渲染 ================= */
+var cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+var DPR=1;
+var view={tx:0,ty:0,k:1};
+var mode='force';
+var hoverNode=null, neighborSet=null;
+var filterLvl='', searchQ='';
+var needsRender=true;
+
+function resize(){
+  DPR = window.devicePixelRatio||1;
+  cv.width = window.innerWidth*DPR; cv.height = window.innerHeight*DPR;
+  cv.style.width = window.innerWidth+'px'; cv.style.height = window.innerHeight+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  fit();
+}
+window.addEventListener('resize', function(){ resize(); needsRender=true; });
+
+function fit(){
+  if(!NODES.length) return;
+  var minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9;
+  NODES.forEach(function(n){ minx=Math.min(minx,n.x);maxx=Math.max(maxx,n.x);miny=Math.min(miny,n.y);maxy=Math.max(maxy,n.y); });
+  if(mode==='force'){ ZONES.forEach(function(z){ minx=Math.min(minx,z.x1);maxx=Math.max(maxx,z.x2);miny=Math.min(miny,z.y1);maxy=Math.max(maxy,z.y2); }); }
+  var bw=Math.max(maxx-minx,200), bh=Math.max(maxy-miny,200);
+  var cw=window.innerWidth, ch=window.innerHeight;
+  var k=Math.min(cw/bw, ch/bh)*0.88; k=Math.max(0.3, Math.min(2.2, k));
+  view.k=k;
+  view.tx = cw/2 - ((minx+maxx)/2)*k;
+  view.ty = ch/2 - ((miny+maxy)/2)*k;
+  needsRender=true;
+}
+
+function wx(sx){ return (sx-view.tx)/view.k; }
+function wy(sy){ return (sy-view.ty)/view.k; }
+function sx(wx){ return wx*view.k+view.tx; }
+function sy(wy){ return wy*view.k+view.ty; }
+
+function dimNode(nd){
+  if(searchQ && nd.n.indexOf(searchQ)<0) return true;
+  if(filterLvl!=='' && nd.lvl!==filterLvl) return true;
+  if(hoverNode && nd!==hoverNode && neighborSet && neighborSet.indexOf(nd)<0) return true;
+  return false;
+}
+function nodeAlpha(nd){ return dimNode(nd)?0.13:1; }
+
+function hexToRgba(hex, a){
+  var h = hex.replace('#','');
+  var r=parseInt(h.substr(0,2),16), g=parseInt(h.substr(2,2),16), b=parseInt(h.substr(4,2),16);
+  return 'rgba('+r+','+g+','+b+','+a+')';
+}
+function roundRect(x,y,w,h,r){
+  r=Math.min(r, Math.abs(w)/2, Math.abs(h)/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+function countByLevel(lvl){ var c=0; NODES.forEach(function(n){ if(n.lvl===lvl)c++; }); return c; }
+function drawZones(){
+  ZONES.forEach(function(z){
+    var x1=sx(z.x1), y1=sy(z.y1), x2=sx(z.x2), y2=sy(z.y2);
+    var w=x2-x1, h=y2-y1;
+    ctx.fillStyle = hexToRgba(levelColor[z.lvl], 0.05);
+    roundRect(x1,y1,w,h,18); ctx.fill();
+    ctx.strokeStyle = hexToRgba(levelColor[z.lvl], 0.20);
+    ctx.lineWidth = 1; roundRect(x1,y1,w,h,18); ctx.stroke();
+    ctx.font = '700 13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillStyle = levelColor[z.lvl];
+    ctx.fillText(levelName[z.lvl]+' · '+countByLevel(z.lvl)+' 个', x1+16, y1+13);
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,cv.width/DPR, cv.height/DPR);
+  // 背景
+  ctx.fillStyle='#f6f6f3'; ctx.fillRect(0,0,cv.width/DPR,cv.height/DPR);
+  // 点阵
+  ctx.fillStyle='rgba(0,0,0,0.035)';
+  var gs=42; var ox=(view.tx%gs), oy=(view.ty%gs);
+  for(var x=ox; x<cv.width/DPR; x+=gs) for(var y=oy; y<cv.height/DPR; y+=gs){ ctx.fillRect(x,y,1,1); }
+
+  if(mode==='force'){ drawZones(); }
+
+  ctx.save();
+  ctx.translate(view.tx, view.ty); ctx.scale(view.k, view.k);
+
+  // 边
+  ELINKS.forEach(function(ln){
+    var da = dimNode(ln.s), db = dimNode(ln.t);
+    var isHi = hoverNode && (ln.s===hoverNode || ln.t===hoverNode);
+    if(da||db){ if(!isHi){ return; } }
+    var a = isHi?0.95:(da||db?0.06:0.5);
+    ctx.strokeStyle = isHi? levelColor[ln.s.lvl] : '#b9b9b2';
+    ctx.globalAlpha = a;
+    ctx.lineWidth = isHi?2.2:1.2;
+    ctx.beginPath(); ctx.moveTo(ln.s.x, ln.s.y); ctx.lineTo(ln.t.x, ln.t.y); ctx.stroke();
+    if(ln.d===0){ // 箭头
+      var ang=Math.atan2(ln.t.y-ln.s.y, ln.t.x-ln.s.x);
+      var rx=ln.t.r+3;
+      var ex=ln.t.x-Math.cos(ang)*rx, ey=ln.t.y-Math.sin(ang)*rx;
+      ctx.fillStyle = isHi? levelColor[ln.s.lvl] : '#b9b9b2';
+      ctx.beginPath();
+      ctx.moveTo(ex,ey);
+      ctx.lineTo(ex-7*Math.cos(ang-0.4), ey-7*Math.sin(ang-0.4));
+      ctx.lineTo(ex-7*Math.cos(ang+0.4), ey-7*Math.sin(ang+0.4));
+      ctx.closePath(); ctx.fill();
+    }
+  });
+  ctx.globalAlpha=1;
+
+  // 节点
+  NODES.forEach(function(nd){
+    var a=nodeAlpha(nd);
+    if(a<0.2 && !hoverNode) return;
+    var isHi = (nd===hoverNode) || (hoverNode && neighborSet && neighborSet.indexOf(nd)>=0);
+    ctx.globalAlpha = a;
+    var r = nd.r;
+    var isRes = (nd.kind==='res');
+    if(isHi){
+      ctx.beginPath();
+      if(isRes){ roundRect(nd.x-r-7, nd.y-r-7, (r+7)*2, (r+7)*2, 9); }
+      else { ctx.arc(nd.x,nd.y,r+7,0,Math.PI*2); }
+      ctx.fillStyle='rgba(24,95,165,0.10)'; ctx.fill();
+    }
+    if(isRes){
+      // 资源/能力底座 → 方形虚线，区别于 Agent 圆点
+      var s=r*1.5;
+      roundRect(nd.x-s/2, nd.y-s/2, s, s, 7);
+      ctx.fillStyle='#f4f3ee';
+      ctx.fill();
+      ctx.lineWidth=(isHi?2.5:1.5);
+      ctx.strokeStyle='#8A8A86';
+      ctx.setLineDash(isHi?[]:[4,3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font=(s*0.52)+'px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle='#5b5b55';
+      ctx.fillText(nd.e, nd.x, nd.y+1);
+    } else {
+      ctx.beginPath(); ctx.arc(nd.x,nd.y,r,0,Math.PI*2);
+      ctx.fillStyle = levelColor[nd.lvl];
+      ctx.fill();
+      ctx.lineWidth = (isHi?2.5:1.5);
+      ctx.strokeStyle = isHi? levelColor[nd.lvl] : '#ffffff';
+      ctx.stroke();
+      // 触发类型圆点
+      var tc=typeColor[nd.type];
+      ctx.beginPath(); ctx.arc(nd.x+r*0.72, nd.y-r*0.72, 3.6, 0, Math.PI*2);
+      ctx.fillStyle=tc; ctx.fill(); ctx.lineWidth=1; ctx.strokeStyle='#fff'; ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  });
+  ctx.restore();
+
+  // 簇标题（浅色小胶囊，标识组名）
+  if(mode==='force'){
+    Object.keys(clusters).forEach(function(k){
+      var an=clusterAnchors[k]; var nd0=clusters[k][0];
+      var X=sx(an.x), Y=sy(an.y);
+      var label = zoneTitle(nd0)+' · '+clusters[k].length;
+      ctx.font='600 10.5px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif';
+      var tw = ctx.measureText(label).width;
+      var px=X-tw/2-9, py=Y-52, pw=tw+18, ph=20;
+      ctx.fillStyle='rgba(255,255,255,0.85)';
+      roundRect(px,py,pw,ph,10); ctx.fill();
+      ctx.strokeStyle=hexToRgba(levelColor[nd0.lvl],0.28); ctx.lineWidth=1;
+      roundRect(px,py,pw,ph,10); ctx.stroke();
+      ctx.fillStyle=levelColor[nd0.lvl];
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(label, X, py+ph/2+0.5);
+    });
+  }
+
+  // 标签（屏幕空间 + 多方位放置，尽量保证每个节点都标上名字）
+  ctx.font='11px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif';
+  var drawn=[];
+  var order=NODES.slice().sort(function(a,b){return b.deg-a.deg;});
+  order.forEach(function(nd){
+    var a=nodeAlpha(nd);
+    if(a<0.2) return;
+    var rr=nd.r*view.k;
+    var X0=sx(nd.x), Y0=sy(nd.y);
+    var txt=(nd.kind==='res')? nd.n : (nd.e+' '+nd.n);
+    var w=ctx.measureText(txt).width;
+    // 候选位置：下 / 上 / 右 / 左
+    var cand=[
+      {align:'center', base:'top',    x:X0,       y:Y0+rr+5,   rect:{x:X0-w/2-3,        y:Y0+rr+5,       w:w+6, h:15}},
+      {align:'center', base:'bottom', x:X0,       y:Y0-rr-5,   rect:{x:X0-w/2-3,        y:Y0-rr-5-15,    w:w+6, h:15}},
+      {align:'left',   base:'middle', x:X0+rr+5,  y:Y0,        rect:{x:X0+rr+5-3,       y:Y0-7,          w:w+6, h:15}},
+      {align:'right',  base:'middle', x:X0-rr-5,  y:Y0,        rect:{x:X0-rr-5-w-3,     y:Y0-7,          w:w+6, h:15}}
+    ];
+    var chosen=null;
+    for(var p=0;p<cand.length;p++){
+      var c=cand[p], overlap=false;
+      for(var i=0;i<drawn.length;i++){ var r2=drawn[i];
+        if(c.rect.x<r2.x+r2.w && c.rect.x+c.rect.w>r2.x && c.rect.y<r2.y+r2.h && c.rect.y+c.rect.h>r2.y){ overlap=true; break; }
+      }
+      if(!overlap){ chosen=c; break; }
+    }
+    if(!chosen) return;
+    drawn.push(chosen.rect);
+    var isHi = (nd===hoverNode);
+    ctx.globalAlpha = isHi?1:a;
+    ctx.fillStyle = (nd.kind==='res') ? '#5b5b55' : (isHi? levelColor[nd.lvl] : '#3a3a36');
+    ctx.font = isHi?'700 12px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif':'11px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif';
+    ctx.textAlign=chosen.align; ctx.textBaseline=chosen.base;
+    ctx.fillText(txt, chosen.x, chosen.y);
+    ctx.globalAlpha=1;
+  });
+}
+
+/* ================= 交互 ================= */
+var dragging=null, panning=false, downX=0, downY=0, moved=0, downNode=null;
+
+cv.addEventListener('mousedown', function(e){
+  var r=cv.getBoundingClientRect(); var mx=e.clientX-r.left, my=e.clientY-r.top;
+  var nd=hitNode(mx,my);
+  downX=mx; downY=my; moved=0; downNode=nd;
+  if(nd){ dragging=nd; nd.pin=true; cv.classList.add('pointer'); }
+  else { panning=true; cv.classList.add('grabbing'); }
+});
+window.addEventListener('mousemove', function(e){
+  var r=cv.getBoundingClientRect(); var mx=e.clientX-r.left, my=e.clientY-r.top;
+  if(dragging){
+    dragging.x=wx(mx); dragging.y=wy(my); heat(60); needsRender=true;
+    return;
+  }
+  if(panning){
+    var dx=mx-downX, dy=my-downY; moved+=Math.abs(dx)+Math.abs(dy);
+    view.tx+=dx; view.ty+=dy; downX=mx; downY=my; needsRender=true;
+    return;
+  }
+  var nd=hitNode(mx,my);
+  if(nd!==hoverNode){ hoverNode=nd; neighborSet = nd?nd.neighbors:null; cv.classList.toggle('pointer',!!nd); needsRender=true; }
+  if(nd){ showTip(e,nd); } else { hideTip(); }
+});
+window.addEventListener('mouseup', function(e){
+  if(dragging){ dragging.pin=false; dragging=null; heat(180); }
+  if(panning){ panning=false; cv.classList.remove('grabbing'); }
+  if(moved<5 && downNode){ openDrawer(downNode); }
+  downNode=null; needsRender=true;
+});
+cv.addEventListener('wheel', function(e){
+  e.preventDefault();
+  var r=cv.getBoundingClientRect(); var mx=e.clientX-r.left, my=e.clientY-r.top;
+  var factor = e.deltaY<0?1.1:0.9;
+  var k2=view.k*factor; k2=Math.max(0.25,Math.min(4,k2));
+  var wxx=wx(mx), wyy=wy(my);
+  view.tx=mx-wxx*k2; view.ty=my-wyy*k2; view.k=k2;
+  needsRender=true;
+},{passive:false});
+
+function hitNode(mx,my){
+  for(var i=0;i<NODES.length;i++){ var nd=NODES[i];
+    var X=sx(nd.x), Y=sy(nd.y); var rr=Math.max(nd.r*view.k+6, 10);
+    var dx=mx-X, dy=my-Y; if(dx*dx+dy*dy<=rr*rr) return nd;
+  }
+  return null;
+}
+
+/* ================= 工具提示 ================= */
+var tip=document.getElementById('tip');
+function showTip(e,nd){
+  tip.innerHTML='<span class="tt">'+nd.e+' '+nd.n+' · '+levelName[nd.lvl]+' · '+typeLabel[nd.type]+'</span>'+
+    '<ul>'+nd.resp.map(function(r){return '<li>'+r+'</li>';}).join('')+'</ul>';
+  tip.style.display='block';
+  var x=e.clientX+16,y=e.clientY+14,w=tip.offsetWidth,h=tip.offsetHeight;
+  if(x+w>window.innerWidth-8)x=e.clientX-w-16;
+  if(y+h>window.innerHeight-8)y=e.clientY-h-14;
+  tip.style.left=x+'px'; tip.style.top=y+'px';
+}
+function hideTip(){ tip.style.display='none'; }
+
+/* ================= 抽屉 ================= */
+var mask=document.getElementById('mask'), drawer=document.getElementById('drawer');
+function openDrawer(nd){
+  var tagHtml = nd.tag ? '<span class="d-tag" style="background:'+nd.tagC+'">'+nd.tag+'</span>' : '';
+  document.getElementById('dHead').innerHTML='<span class="d-emoji">'+nd.e+'</span><h2>'+nd.n+' '+tagHtml+'</h2>'+
+    '<div class="d-sub">'+nd.detail.定位+' · 引擎 '+nd.eng+(nd.engNote?' · '+nd.engNote:'')+'</div>';
+  var flowHtml=(nd.detail.交互||[]).map(function(f){
+    var cls=f.d==='up'?'dir-up':(f.d==='down'?'dir-down':(f.d==='both'?'dir-both':'dir-ext'));
+    var lb=f.d==='up'?'上游':(f.d==='down'?'下游':(f.d==='both'?'双向':'外部'));
+    return '<div class="flow-item"><span class="flow-dir '+cls+'">'+lb+'</span><div><b>'+f.who+'</b><div style="color:#8a8a86;font-size:12px">'+f.what+'</div></div></div>';
+  }).join('');
+  document.getElementById('dBody').innerHTML=
+    '<div class="d-sec"><h3>主要任务</h3><div style="font-size:13px;line-height:1.6">'+nd.task+'</div></div>'+
+    '<div class="d-sec"><h3>负责明细</h3><ol>'+nd.resp.map(function(r){return '<li>'+r+'</li>';}).join('')+'</ol></div>'+
+    '<div class="d-sec"><h3>工作明细</h3><ol>'+nd.detail.明细.map(function(w){return '<li>'+w+'</li>';}).join('')+'</ol></div>'+
+    '<div class="d-sec"><h3>与其他 Agent 的交互</h3>'+flowHtml+'</div>';
+  mask.style.display='block'; drawer.classList.add('open');
+}
+function closeDrawer(){ mask.style.display='none'; drawer.classList.remove('open'); }
+document.addEventListener('keydown',function(e){ if(e.key==='Escape')closeDrawer(); });
+
+/* ================= 控制 ================= */
+function setMode(m){
+  mode=m;
+  document.getElementById('btn-net').classList.toggle('active', m==='force');
+  document.getElementById('btn-tree').classList.toggle('active', m==='tree');
+  if(m==='tree'){ setTreeLayout(); }
+  else { initForce(); fit(); }
+  needsRender=true;
+}
+function setFilter(l){
+  filterLvl=l;
+  document.querySelectorAll('#topbar .seg')[1].querySelectorAll('button').forEach(function(b){
+    b.classList.toggle('active', String(b.getAttribute('data-lvl'))===String(l));
+  });
+  needsRender=true;
+}
+function setSearch(q){ searchQ=q.trim(); needsRender=true; }
+function resetLayout(){ if(mode==='force'){ initForce(); fit(); } else { setTreeLayout(); } }
+
+/* ================= 主循环 ================= */
+function loop(){
+  if(running && simTicks>0){ for(var t=0;t<3;t++) physics(); simTicks--; if(simTicks<=0) running=false; needsRender=true; }
+  if(needsRender){ draw(); needsRender=false; }
+  requestAnimationFrame(loop);
+}
+
+/* ================= 启动 ================= */
+NODES.forEach(function(nd){ nd.r = 8 + Math.min(nd.deg,10)*1.1; });
+initForce();
+resize();
+loop();
+</script>
+</body>
+</html>
