@@ -81,6 +81,10 @@ npm start
 ├── task-router.js          # 零依赖任务类型路由(ra 判断「派谁 + 挂哪些 skill」)
 ├── supervisor-core.js      # 零依赖监事核心(核心需求 / 漂移检测 / 纠偏)
 ├── orchestrator.js         # 调度中枢面板(渲染层:委派 + 技能挂载 + 预设 + ra 路由)
+├── agent-type-governor.js  # 零依赖类型治理官(四类触发类型的自动巡检/判定/修正 + 锁定豁免)
+├── agent-governance.js     # 零依赖 Agent 治理官(职责盘点 + 重叠检测 + 孤儿/空壳对账)
+├── agent-ops-governor.js   # 零依赖运营治理引擎(CFO 成本 + 模型调控 + Agent 总管三合一)
+├── ops-governor.js         # 运营治理面板(渲染层:CFO / 模型调控 / Agent 总管 三 tab)
 ├── supervisor.js           # 监事悬浮面板(渲染层:可拖拽浮层)
 ├── secretary-core.js       # 零依赖秘书核心(日程 / 邮件分类 / 想法 / 事件提取 / 简报)
 ├── secretary.js            # 秘书悬浮面板(渲染层:左侧浮层,与监事并排)
@@ -280,6 +284,35 @@ await __orchestrator.delegate({
 4. **选引擎**:每个任务类型带默认引擎(`review`→claude-code、`litreview`→deepseek、`coding`→codex、`transcribe`→funasr……),自动落到调度中枢。
 
 整个过程只依据给定的 Agent / Skill / 任务文字,**不臆造**,每一步都给出可解释的 reasons,你可以手动微调后再「开始委派」。注意:路由靠 Agent 的名字/简介关键词,建议给自己每个用途配一个名字贴切的 Agent,ra 才能派得准。
+
+## 治理层:类型治理官 + 运营治理官(三个自动治理 Agent)
+
+除了「ra 派活」,工作台还有一层**控制面(Control Plane)**治理 Agent,不面向具体业务、只负责「让所有 Agent 健康协作、成本可控」,全部默认自动、人工可「锁定」豁免:
+
+### 1. 类型治理官(原「智能路由 ra」升级)
+
+四类触发类型的自动巡检:每次变更 / 定时巡检时,给每个 Agent 判定所属类型并自动修正,除非你手动锁定:
+
+| 类型 | 角标 | 触发依据 | 典型 Agent |
+|---|---|---|---|
+| 🔶 主动型 | active | 时间驱动、定时(采集 / research / selfcheck) | 会议纪要官、音乐创作 |
+| ⬜ 链路驱动 | chain | 被动接续上游(洞察/玩法库/规划/执行/门禁) | 研究助手、软件工程 |
+| 🔴 缺口驱动 | gap | 事件触发、差什么才买什么 | 资产 agent |
+| 🟢 人工驱动 | manual | 人点 / 审批 / 对话 | 9 员工、工作台 3 聊天 |
+
+变更时发系统通知 + 变更报告,锁定即豁免。
+
+### 2. 运营治理官(三合一,`agent-ops-governor.js`)
+
+**借鉴 GitHub 范式**:RouteLLM / Louter(任务分类路由)、Route42 / UncommonRoute(成本加权选型)、LiteLLM(降级链 + 成本账单)、llm-manager(手动指定绕过)。核心思路 =「复杂度/任务类型评分 → 本地小模型优先(零成本)→ 云端兜底 + 降级链 → 成本账单 → 手动锁定绕过」。
+
+| 子 Agent | 职责 |
+|---|---|
+| 💰 CFO 成本官 | 实时聚合用量/费用(按 Agent / 引擎 / 日)+ 月度预算进度 + 超标告警;按「任务分类 + 成本加权」给每个 Agent 推荐最省/最合适的模型(编码→DeepSeek、深度推理→V4 Pro、翻译→Qwen、识图→本地视觉…) |
+| 🎚️ 模型调控官 | 本地优先(零成本);Ollama 离线或显存占满(≥3 模型 / >16GB)自动切 API 兜底;**手动「锁定」才固定**你选的引擎,否则全由它合理分配(`funasr` 等独立本地服务不因 Ollama 状态被误切) |
+| 🧭 Agent 总管 | 实时监控每个 Agent 的工作量(调用/token/成本)与职责域,动态鉴别:职责重叠→合并、空壳→合并/下线、过载→分割、职责真空→新增,并给出团队健康度 |
+
+入口:左侧导航「**运营治理**」→ 三 tab 面板;点任一 Agent 卡片齿轮 → 引擎下拉旁「**锁定**」按钮固定手动选择。
 
 ## 监事 Agent:防止 LLM 跑偏(借鉴 Steering Agent)
 

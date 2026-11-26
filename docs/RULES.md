@@ -53,13 +53,18 @@
 | 会议纪要官 🎙️ | `agents/meeting-audio/` | FunASR 本地语音转写 |
 | 知识库 | `agents/knowledge/` | 知识库管理界面 |
 | 电脑操作 | `agents/computer-use/` | 浏览器自动化 |
-| 界面设计师 🎨 / 音乐创作 🎵 / 灵感目录 📡 / 智能路由 🧭 | 主界面预设 | — |
+| 界面设计师 🎨 / 音乐创作 🎵 / 灵感目录 📡 | 主界面预设 | — |
+| 类型治理官 🧭（原智能路由 ra）/ CFO 成本官 💰 / 模型调控官 🎚️ / Agent 总管 🧭 | 主界面预设（控制面） | 自动巡检/修正，手动锁定豁免 |
 
 ### 关键文件
 - `main.js` — 主进程：IPC、工具执行（fs/db/web/computer）、流式聊天、文档生成、知识库引擎。
 - `preload.js` — 渲染进程桥（contextBridge），暴露 `window.ingrid.*`。
 - `agents-core.js` — 多 Agent 核心（引擎注册表、Agent Schema、成本记账、Orchestrator）。
 - `skills-core.js` — skill 扫描/归档/预设。
+- `agent-type-governor.js` — 类型治理官（四类触发类型自动巡检/判定/修正 + 锁定豁免）。
+- `agent-governance.js` — Agent 治理官（职责盘点 + 重叠检测 + 孤儿/空壳对账）。
+- `agent-ops-governor.js` — 运营治理引擎（CFO 成本 + 模型调控 + Agent 总管三合一）。
+- `ops-governor.js` — 运营治理面板（渲染层，CFO / 模型调控 / Agent 总管 三 tab）。
 - `kb-engine.js` — 知识库（Obsidian/Zotero/Notion/OneDrive 索引 + RAG 检索）。
 - `scripts/` — 本地辅助脚本（`pdf_extract.swift`、`doc_edit.py`、`bin_patch.py` 等）。
 
@@ -152,6 +157,7 @@
 
 ## 8. 历次关键修复记录（时间线，供追溯）
 
+- **2026-11-26**：**运营治理官三合一（CFO 成本 + 模型调控 + Agent 总管）**——把「成本/模型/Agent 协作」从调度中枢拆成独立控制面。先调研 GitHub 类似项目（RouteLLM / Louter 任务分类路由、Route42 / UncommonRoute 成本加权选型、LiteLLM 降级链+成本账单、llm-manager 手动指定绕过），核心范式 =「复杂度/任务类型评分 → 本地小模型优先(零成本) → 云端兜底 + 降级链 → 成本账单 → 手动锁定绕过」。落地：① `agent-ops-governor.js` 纯函数引擎承载三个治理 agent —— CFO 成本官 `analyzeCost`/`recommendEngine`（按 agent/引擎/日聚合成本+预算进度+按任务类型推荐最省模型）、模型调控官 `resolveModel`/`lockModel`（本地优先→Ollama 离线/占满自动切 API，**手动锁定才固定**）、Agent 总管 `auditWorkforce`（工作量监控 + worker 间职责重叠检测 + 增/分割/合并建议 + 团队健康度）；② `main.js` 接 `ops:*` IPC + 启动/15min 巡检 + 变更通知 + `agent:run` 执行前 `resolveEngineForRun` 动态解析模型（锁定豁免，非本地引擎不查 Ollama 省探测）；③ `preload.js` 暴露 `opsRun/opsReport/opsModelState/opsLocalStatus/opsLockModel/opsUnlockModel` + `onOpsChanged`；④ `ops-governor.js` 运营治理面板（CFO/模型调控/Agent 总管三 tab）；⑤ `index.html` 加三个 SEED agent + 导航「运营治理」入口 + 引擎选择处「锁定」按钮。**两个关键细节**：`funasr` 是独立本地服务，不因 Ollama 状态被误切；重叠检测只在「干活 worker」间做（治理官共享「调度治理」域不误报），`agent-type-governor.js` 把新治理官归入主动型避免被误判待确认。git push f8a5437。
 - **2026-11-26**：**任务引擎表指向不存在的引擎 —— 凡是编码任务全部当场失败**。现象：在「任务」面板选「自动分拣」贴一句带「代码/开发/重构/修 bug」的话，任务创建后立刻 `failed: 未知引擎：codex`。根因：`task-router.js` 的 `TASK_TYPES` 给 13 种任务类型各写了一个 `engine`，其中 8 种（`coding→codex`、`review/deai/present/writing→claude-code`、`transcribe→funasr`、`music/general→local-llm`）**根本不在后台执行器 `CHAT_ENDPOINTS` 里** —— `runBackgroundTask` 一查 `CHAT_ENDPOINTS[engine]` 就 fail。codex/claude-code 只有 `CLI_ADAPTERS` 通道（agent 对话用），后台循环调不到。用户以为在烧 codex 额度，实际一行 codex 都没跑过，活全白丢。修复：① `TASK_TYPES` 全部改成后台真有的 API 引擎（`coding` 由 `codex` → `deepseek`），`transcribe`/`music` 标 `noBackground: true` + `note` 指回「会议纪要官」「音乐创作 agent」；② `main.js` 的 `task:classify` 加**可用性兜底**：engine 不在 `CHAT_ENDPOINTS` 就降级 deepseek 并回 `downgradedFrom`，保证「表写错」最多退化成「用了次优引擎」而不是「任务白跑」；③ `runBackgroundTask` 的报错补 CLI 指引；④ `tasks.js` 拦下 `noBackground` 的任务并指路，降级的在 category 里留痕；⑤ `agents-core.js` 的 `TASK_DEFAULTS`（`defaultFor()` 零调用的声明表）同步对齐，避免以后有人接线时重蹈覆辙。**分流原则（写进 task-router 表头注释）**：默认 DeepSeek，codex 只在三条同时满足时用 —— 无人值守连续迭代 / 一次要读十几个文件 / 要跑白名单外命令。验证：13 类引擎可用性归零不可用；7 个样本句分拣结果全对（编码→deepseek、翻译→qwen、转写/音乐被拦）；6 个 JS 文件 `node --check` 全过。
 - **2026-11-26**：**通用助手接上「本机总控」——工作台第一次能指挥一个 24 小时常驻的外部调度进程**。背景：CityVerse 项目已有一个 launchd 常驻的总控（`tools/chief.py`，持有 PG 队列表 `agent_jobs`，派活给 codex / 流水线 / 素材 agent），但工作台里的 agent 只能读写文件、**没有任何执行入口**，用户要派活只能去终端敲命令 —— 等于「AI 平台」的最后一公里断在 shell 上。做法：不给通用助手 `run_shell`（那是任意命令的钥匙，破坏面太大），而是新增一个**窄工具 `chief`**：① `main.js` 新增 `toolChief()` + `ipcMain.handle('tool:chief')`，脚本路径 / 工作目录 / 命令名全部写死（`cwd=~/Dev/cityverse-ar`，可用 `CITYVERSE_REPO` 覆盖），模型只能填参数；动作白名单 `ls/show/log/doctor/board/tell_prompt/submit/cancel`，`id` 强制数字、`kind` 只能取 6 种、`title`≤120 字、`spec`≤20000 字、`codex` 无 spec 直接拒；② `preload.js` 暴露 `toolChief`；③ `assistant-chat/index.html` 接四环节（`agentCapabilities` 读 `tools` 含 `chief` / `toolSpecText` / `toolsDef` 原生 function calling / `executeTool` 分支），只读动作直接执行、`submit`/`cancel` 走既有的 `requestWriteApproval` 审批卡片；④ `buildSystemPrompt` 注入「总控指挥」角色段（指挥不执行 / spec 永不写提交 push / 不替用户拍板 / 问进度必须调 board+ls 拿真实数据）；⑤ 根 `index.html` 加 v10 迁移幂等给通用助手开 `chief`。为什么不是 `run_shell`：`execFileSync` 白名单只限命令名（`python3` 可跑任意脚本），对「软件工程」这种用户已授权的 agent 合适，对通用助手不合适 —— 窄工具让它的最大破坏面停留在「往队列投一条任务」，而投进去之后能干什么仍由总控自己的权限模型兜底。验证：`node --check` 全过；把 `toolChief` 抽出来单测 6 个分支（未知 action / 缺 id / 非法 kind / codex 缺 spec 全部正确拒绝）；端到端实测 `submit` 投了一条 shell 任务 → 总控 6 秒内接走 → exit=0。
 - **2026-11-25**：**Agent 跨会话记忆（memory）上线**——解决 agent「失忆」问题（`memory` 字段此前是空壳 `{}`，全项目无读写）。① 记忆文件 `docs/agent-memory/{agent}.md`（随 git 走），只记低频长期条目（约定/决策/踩坑/进度），高频会话日志仍由 session-log 负责；② 闭环：会话开始 `memory:load` 注入 system prompt、会话结束 `memory:refine` 用 LLM（deepseek→ollama 兜底）提炼关键条目追加，借鉴 sentiment 的 observe→distill→guidance 模式；③ main.js 加 `agentDirByName/readMemory/appendMemory/refineMemoryWithLLM` + `memory:load`/`memory:refine` IPC，preload 暴露 `memoryLoad`/`memoryRefine`；④ 4 个 chat agent（软件工程/研究助手/伦理/通用助手）接入：`refreshMemory()` 启动拉取 + `buildSystemPrompt` 注入 + `finish` 结束后异步提炼；会议纪要官（meeting-audio）非标准 chat agent 未接入。git push ed99cbf..d6af821。
