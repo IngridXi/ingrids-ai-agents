@@ -1782,20 +1782,68 @@ ipcMain.handle('settler:approve', (_e, id, opts) => {
 ipcMain.handle('settler:ignore', (_e, id) => getKnowledgeSettler().ignore(id));
 ipcMain.handle('settler:submit', (_e, item) => getKnowledgeSettler().submit(item));
 ipcMain.handle('settler:suggest', (_e, q) => getKnowledgeSettler().suggestFor(q));
-// 从后台任务队列的「已完成」任务复盘提炼候选经验（自动发现，仍停在待审批）
-ipcMain.handle('settler:run-once', () => {
-  try {
-    const done = getTaskQueue().list('done').map((t) => ({
-      source: 'task-queue',
-      rule: t.agent || t.title || '',
+/* ---------------- 知识沉淀官 · 自动发现（sleep-time 巡逻 + 重要性打分）----------------
+ * 把 runOnce 从「被动等人喂」升级为「定时自扫任务队列已解决项 → 启发式重要性打分 →
+ * 低于阈值跳过（防噪音）→ 带证据锚生成提案（仍停在 pending_approval，人工在环不变）。
+ * 打分零 LLM 成本：结果充实度 + 目标可追溯 + 多轮 + 方法论信号词命中。 */
+const METHOD_SIGNALS = ['根因', '修复', '诊断', '兜底', '降级', '对齐', '幂等', '重试', '超时', '缓存', '竞态', '校准', '错位', '偏移', '断点'];
+function extractRootCause(text) {
+  const s = String(text || '');
+  const m = s.match(/(?:根因|根本原因|原因|root\s*cause)\s*[:：]\s*([^\n。]{4,120})/i);
+  return m ? m[1].trim() : '';
+}
+function collectDiscoveryItems() {
+  const done = getTaskQueue().list('done');
+  const items = [];
+  let scanned = 0, scored = 0;
+  done.forEach((t) => {
+    scanned++;
+    const result = String(t.result || '').trim();
+    const goal = String(t.goal || '').trim();
+    let score = 0;
+    if (result.length >= 20) score += 2; else if (result.length > 0) score += 1;
+    if (goal.length >= 10) score += 1;
+    if ((t.round || 0) >= 2) score += 1;
+    const text = (t.title + ' ' + result + ' ' + (t.category || '')).toLowerCase();
+    const hits = METHOD_SIGNALS.filter((w) => text.indexOf(w) >= 0).length;
+    score += Math.min(hits, 2);
+    if (score < 4) return; // 低于阈值：当作噪音，不沉淀
+    scored++;
+    items.push({
+      source: 'auto-discovery',
+      rule: t.category || t.agent || t.title || '',
       title: t.title || '已完成任务',
-      evidence: t.goal || '',
-      rootCause: '',
-      fixApproach: t.result || '',
-    }));
-    return getKnowledgeSettler().runOnce(done);
-  } catch (e) { return { consumed: 0, created: 0, pending_approval: getKnowledgeSettler().report().pending_approval }; }
-});
+      evidence: 'task:' + (t.id || '') + ' @ ' + (t.updatedAt || t.createdAt || '') + (goal ? ' · ' + goal : ''),
+      rootCause: extractRootCause(result),
+      fixApproach: result,
+      _score: score,
+    });
+  });
+  return { items, scanned, scored };
+}
+function runSettlerDiscovery() {
+  try {
+    const { items, scanned, scored } = collectDiscoveryItems();
+    const r = getKnowledgeSettler().runOnce(items);
+    const report = { scanned, scored, consumed: r.consumed, created: r.created, pending_approval: r.pending_approval, generated_at: new Date().toISOString() };
+    writeJson('settler-discovery-report.json', report);
+    if (r.created > 0) {
+      try {
+        if (Notification.isSupported()) new Notification({ title: '知识沉淀官 · 自动发现 ' + r.created + ' 条新经验', body: '已生成待审批提案，去经验沉淀面板审阅' }).show();
+      } catch (e) { /* 通知失败不阻断 */ }
+      broadcast('settler:discovered', report);
+    }
+    return report;
+  } catch (e) {
+    const err = { error: String(e && e.message || e), generated_at: new Date().toISOString() };
+    writeJson('settler-discovery-report.json', err);
+    return err;
+  }
+}
+// 手动触发（面板按钮）与定时巡逻共用同一入口，保持打分/证据锚规则一致
+ipcMain.handle('settler:run-once', () => runSettlerDiscovery());
+ipcMain.handle('settler:discover', () => runSettlerDiscovery());
+ipcMain.handle('settler:discovery-report', () => readJson('settler-discovery-report.json', null));
 
 /* ---------------- IPC：情绪/偏好 Agent（侦测评价情绪 → 提炼偏好 → 联动经验沉淀）---------------- */
 ipcMain.handle('sentiment:report', () => getSentimentAgent().report());
@@ -2747,12 +2795,20 @@ function ensureEcoRadar() {
       tag: '生态雷达',
       soul: '你是「灵感目录」生态雷达：每天调研 DeepSeek Harness（DSH）插件生态，从 GitHub 的 dsh-plugin 话题里找新插件，并按用户的用途板块（学术研究 / 设计配色 / 写作 / 文档 / 浏览器 / 图像 / 代码 / 音乐）筛选出可能适合用户的功能，产出可解释的简报并推送。只依据真实抓到的仓库信息，不臆造插件名。',
       description: '每日调研 DSH 插件生态，按用途板块筛选新功能并推送简报。',
-      engine: 'local-llm', fallbacks: [], memory: {}, skills: [], routines: [],
-      tools: [], approvalMode: 'ask', computer: 'off', caps: {}, visibility: 'private',
+      engine: 'local-llm', fallbacks: [], memory: { file: 'data/eco-radar.json' }, skills: [], routines: [],
+      tools: [], approvalMode: 'ask', computer: 'off', caps: { web: true }, visibility: 'private',
       role: 'worker', canControl: false, status: 'active', href: '', engineLabel: '调研引擎 · GitHub API',
       detail: '无需 API Key，直接读 GitHub dsh-plugin 话题，本地关键词匹配，免费可解释。',
     });
     writeJson('agents.json', agents);
+  }
+  // 回填能力声明：老记录 caps/memory 为空时补齐（联网调研 + eco-radar.json 持久化），不覆盖已有
+  const radar = agents.find((a) => a.id === 'eco-radar' || a.tag === '生态雷达');
+  if (radar) {
+    let changed = false;
+    if (!radar.caps || (typeof radar.caps === 'object' && Object.keys(radar.caps).length === 0)) { radar.caps = { web: true }; changed = true; }
+    if (!radar.memory || Object.keys(radar.memory).length === 0) { radar.memory = { file: 'data/eco-radar.json' }; changed = true; }
+    if (changed) writeJson('agents.json', agents);
   }
   const q = getTaskQueue();
   const hasTask = q.list().some((t) => t.agent === 'eco-radar' && t.schedule);
@@ -5845,6 +5901,37 @@ function toolRunShell(p) {
   }
 }
 
+// 异步版 toolRunShell：不阻塞主进程，支持长任务（如 Zotero 批量入库，需几分钟）。
+// 同步版 toolRunShell 用 execFileSync，45s 超时一到就把长任务杀死（spawnSync ETIMEDOUT）；
+// 「立即入库」这类批量活必须走这里——给足超时，UI 也不卡。
+// p.timeout：毫秒，缺省 DEV_TIMEOUT，上限 30 分钟。
+function toolRunShellAsync(p) {
+  const cmd = String((p && p.cmd) || '').trim();
+  if (!DEV_SHELL_ALLOW.has(cmd)) return Promise.resolve({ ok: false, error: '命令不在白名单：' + cmd + '（仅允许编译 / 运行 / 分析类命令）' });
+  const args = Array.isArray(p && p.args) ? p.args.map(String) : [];
+  for (const a of args) if (/[`$;&|<>(){}\n]/.test(a)) return Promise.resolve({ ok: false, error: '参数含非法字符：' + a });
+  const home = app.getPath('home');
+  let cwd = path.resolve(String((p && p.cwd) || home));
+  if (cwd !== home && !cwd.startsWith(home + path.sep)) cwd = home;
+  const timeoutMs = Math.min(Math.max(Number(p && p.timeout) || DEV_TIMEOUT, 1000), 30 * 60 * 1000);
+  return new Promise(function (resolve) {
+    try {
+      execFile(cmd, args, { encoding: 'utf8', maxBuffer: DEV_MAXBUF, timeout: timeoutMs, cwd: cwd }, function (err, stdout, stderr) {
+        if (err) {
+          if (err && err.code === 'ENOENT') return resolve({ ok: false, error: '命令未安装：' + cmd });
+          if (err && (err.killed || err.signal === 'SIGTERM')) {
+            return resolve({ ok: false, error: '执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）被中止。脚本可能仍在后台运行，请稍后重试或查看日志。', stdout: String(stdout || '').slice(0, 80000), stderr: String(stderr || '').slice(0, 80000) });
+          }
+          return resolve({ ok: false, error: String((err && err.message) || err), stdout: String(stdout || '').slice(0, 80000), stderr: String(stderr || '').slice(0, 80000) });
+        }
+        resolve({ ok: true, cmd: cmd, output: String(stdout || '').slice(0, 300000) });
+      });
+    } catch (e) {
+      resolve({ ok: false, error: String((e && e.message) || e) });
+    }
+  });
+}
+
 // ---------- CityVerse 总控（tools/chief.py）----------
 // 为什么不直接给通用助手 run_shell：通用助手的职责是「指挥」不是「执行」。
 // 这里只暴露总控自己的动作，脚本路径 / 工作目录 / 命令名全部写死，模型只能填参数。
@@ -5949,6 +6036,7 @@ ipcMain.handle('tool:bin:disasm', (_e, p) => toolBinDisasm(p));
 ipcMain.handle('tool:bin:deps', (_e, p) => toolBinDeps(p));
 ipcMain.handle('tool:bin:hex', (_e, p) => toolBinHex(p));
 ipcMain.handle('tool:run:shell', (_e, p) => toolRunShell(p));
+ipcMain.handle('tool:run:shell:async', (_e, p) => toolRunShellAsync(p));
 ipcMain.handle('tool:chief', (e, p) => {
   const result = toolChief(p);
   if (result?.ok && activitySender(e.sender) === 'assistant-chat') {
@@ -6808,6 +6896,9 @@ if (gotSingleInstanceLock) {
     // 每 24 小时深度巡检团队健康。本地模型状态（Ollama 显存占用）是动态的，需更频繁地刷新供面板实时展示。
     setTimeout(() => { runOpsGovernance().catch(() => {}); }, 1500);
     setInterval(() => { runOpsGovernance().catch(() => {}); }, 15 * 60 * 1000);
+    // 知识沉淀官自动发现：启动延时一次 + 每 6 小时定时复盘任务队列已解决项（启发式打分 → 待审批提案，人工在环不变）
+    setTimeout(() => { runSettlerDiscovery(); }, 8000);
+    setInterval(() => { runSettlerDiscovery(); }, 6 * 60 * 60 * 1000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });

@@ -249,6 +249,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolBinDeps: (payload) => ipcRenderer.invoke('tool:bin:deps', payload),
   toolBinHex: (payload) => ipcRenderer.invoke('tool:bin:hex', payload),
   toolRunShell: (payload) => ipcRenderer.invoke('tool:run:shell', payload),
+  toolRunShellAsync: (payload) => ipcRenderer.invoke('tool:run:shell:async', payload),
   toolChief: (payload) => ipcRenderer.invoke('tool:chief', payload),
   toolBinPatch: (payload) => ipcRenderer.invoke('tool:bin:patch', payload),
   toolPyDecompile: (payload) => ipcRenderer.invoke('tool:py:decompile', payload),
@@ -292,6 +293,8 @@ contextBridge.exposeInMainWorld('ingrid', {
   settlerSubmit: (item) => ipcRenderer.invoke('settler:submit', item),
   settlerSuggest: (q) => ipcRenderer.invoke('settler:suggest', q),
   settlerRunOnce: () => ipcRenderer.invoke('settler:run-once'),
+  settlerDiscover: () => ipcRenderer.invoke('settler:discover'),
+  settlerDiscoveryReport: () => ipcRenderer.invoke('settler:discovery-report'),
 
   // Agent 治理官（只读盘点 + 重叠检测 + 对账）
   governanceReport: () => ipcRenderer.invoke('governance:report'),
