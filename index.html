@@ -436,6 +436,8 @@ const SEED_AGENTS = [
     status: 'active', engine: 'local-llm', engineLabel: 'ACE-Step / Suno',
     soul: '你是音乐制作助手：写词、作曲、合成 MV。',
     fallbacks: ['gpt'],
+    caps: { voice: true },
+    memory: { stateless: true },
     detail: {
       sub: '来自 ai-music-studio / melocat',
       desc: '把一段主题或歌词变成一首带人声的完整歌曲，再合成带音频可视化动画与逐字歌词高亮的 MV。你在 GitHub 上有两套实现：ai-music-studio（本地 ACE-Step + ffmpeg）与 melocat（Suno 出歌 + 翻唱/重填词）。',
@@ -579,6 +581,8 @@ const SEED_AGENTS = [
     engine: 'claude-code', engineLabel: 'Claude Code · 设计',
     soul: '你是界面/产品设计师。按 Design 板块的方法论出方案：先定视觉方向（一句话气质+目标用户），再统一字体/色彩/组件/动效/页面语言；配色用单色+一个强调色骨架、8 档中性灰、语义色分离、60-30-10、对比度≥4.5:1；布局用 4/8 网格、字号阶≥4、字重≤3；动效全站一套时长缓动；最后按视觉 QA 清单自查对齐/间距/溢出/对比度/空态/加载态。识别并消除模板化 AI 味 UI（渐变滥用、玻璃拟态、通用 emoji）。不照抄他人配色，不堆形容词。',
     fallbacks: ['gpt', 'qwen'],
+    caps: { fs: true },
+    memory: { stateless: true },
     detail: {
       sub: 'UI Design · 视觉方向 → 配色 → 排版 → 动效 → QA',
       desc: '工作台的界面设计师。方法论来自你的本机 skill「ziqidonglai-ui-color-scheme」+ 12 个 GitHub 高星 UI/网页设计 skill（ui-ux-pro-max、taste-skill、huashui-design、MengTo、scroll-world、emikokawasaki、make-interfaces-feel-better、designer-skills、Design OS、Anthropic Frontend Design 等）提炼的 6 项能力：视觉方向、配色、视觉品味（反模板化）、布局字体、动效交互、视觉 QA。',
@@ -790,6 +794,19 @@ SEED_AGENTS.forEach(function (seed) {
 ['会议纪要官'].forEach(function (nm) {
   var a = registry.list().find(function (x) { return x.name === nm; });
   if (a && a.featured) registry.update(a.id, { featured: false });
+});
+// v13 迁移：补齐预设型 worker 的能力声明（caps/memory），让注册表能力画像完整。
+// 音乐创作=语音/音频合成；界面设计师=可落地写文件（claude-code）；灵感目录=联网调研
+// （eco-radar 的记录在 main.js ensureEcoRadar 里回填，不在这里）。只回填空值，不覆盖已有。
+[['音乐创作', { voice: true }, { stateless: true }],
+ ['界面设计师', { fs: true }, { stateless: true }]].forEach(function (row) {
+  var a = registry.list().find(function (x) { return x.name === row[0] && x.role !== 'orchestrator'; });
+  if (!a) return;
+  var patch = {};
+  var capsEmpty = !a.caps || (typeof a.caps === 'object' && Object.keys(a.caps).length === 0);
+  if (capsEmpty) patch.caps = row[1];
+  if (!a.memory || Object.keys(a.memory).length === 0) patch.memory = row[2];
+  if (Object.keys(patch).length) registry.update(a.id, patch);
 });
 window.__reg = registry;
 

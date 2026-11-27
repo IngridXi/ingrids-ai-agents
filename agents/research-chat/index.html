@@ -2893,16 +2893,21 @@
 
   // 立即入库：手动触发 Zotero 文献自动入库与整理（auto_ingest.py 全流程）
   el('ingestBtn').addEventListener('click', function () {
-    if (!IS_DESKTOP || !window.ingrid || !window.ingrid.toolRunShell) { alert('请在桌面应用中执行此操作'); return; }
+    if (!IS_DESKTOP || !window.ingrid || !window.ingrid.toolRunShellAsync) { alert('请在桌面应用中执行此操作'); return; }
     var INGEST_SCRIPT = '/Users/ingridxi/.workbuddy/plugins/marketplaces/my-experts/plugins/literature-curator/skills/zotero-literature/scripts/auto_ingest.py';
     var btn = el('ingestBtn');
     btn.disabled = true; btn.textContent = '📥 入库中…';
     addBubble('user', '📥 立即入库：导入新 PDF 并整理未处理条目');
-    var bubble = addBubble('assistant', '<div class="status-line">正在扫描 Downloads 并处理文献条目…<span class="dots"><i></i><i></i><i></i></span></div>');
-    window.ingrid.toolRunShell({ cmd: 'python3', args: [INGEST_SCRIPT], cwd: '/Users/ingridxi' }).then(function (r) {
+    // 入库是批量任务：Zotero 识别每本 PDF 最多等 45s + CrossRef 补元数据 + 条目写入，
+    // 常要几分钟。走异步版（不卡 UI）+ 20 分钟超时，别再被 45s 杀掉（ETIMEDOUT）。
+    var bubble = addBubble('assistant', '<div class="status-line">正在扫描 Downloads 并处理文献条目（批量入库可能需要几分钟，请稍候）…<span class="dots"><i></i><i></i><i></i></span></div>');
+    window.ingrid.toolRunShellAsync({ cmd: 'python3', args: [INGEST_SCRIPT], cwd: '/Users/ingridxi', timeout: 1200000 }).then(function (r) {
       btn.disabled = false; btn.textContent = '📥 立即入库';
       if (!r || !r.ok) {
-        bubble.innerHTML = '入库执行失败：' + esc((r && r.error) || '未知错误') + ((r && r.stderr) ? ('<br><br><pre>' + esc(String(r.stderr).slice(0, 2000)) + '</pre>') : '');
+        var detail = '';
+        if (r && r.stdout && String(r.stdout).trim()) detail += '<br><br><pre>' + esc(String(r.stdout).slice(0, 2000)) + '</pre>';
+        if (r && r.stderr && String(r.stderr).trim()) detail += '<br><br><pre>' + esc(String(r.stderr).slice(0, 2000)) + '</pre>';
+        bubble.innerHTML = '入库执行失败：' + esc((r && r.error) || '未知错误') + detail;
         return;
       }
       var out = String(r.output || '').trim();
