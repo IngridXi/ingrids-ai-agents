@@ -163,6 +163,7 @@
       schedule: t.schedule || null,   // 定时任务："HH:MM" 每天 / "YYYY-MM-DD HH:MM" 一次性；null = 立即跑
       weekdays: Array.isArray(t.weekdays) ? t.weekdays.slice() : null, // 周约束（0=周日..6=周六），null=每天
       category: t.category || '',     // 自动分拣出的任务类型标签（如「文献综述」）
+      pendingId: t.pendingId || null, // 关联的来源待办 id（点击待办派发时传入，收尾据此回写待办状态）
       lastRunDate: t.lastRunDate || '', // 定时任务上次触发的日期（YYYY-MM-DD），避免同日重复触发
       createdAt: now,
       updatedAt: now,

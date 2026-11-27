@@ -209,19 +209,11 @@ function settlerPendingList() {
 // 解析所有「- [ ]」未完成/存疑项，作为「研究待办」接入统一待办中心。
 function researchTodoSummary() {
   try {
-    const vp = vaultPath();
-    if (!vp) return [];
-    const file = path.join(vp, '写作参考', '00-研究待办清单.md');
-    if (!fs.existsSync(file)) return [];
-    const content = fs.readFileSync(file, 'utf8');
-    const items = [];
-    content.split(/\r?\n/).forEach(function (line, i) {
-      const m = line.match(/^\s*-\s*\[ \]\s*(.+)$/);
-      if (!m) return;
-      const title = m[1].trim();
-      if (title) items.push({ id: 'rt-' + i, kind: 'research', title: title });
-    });
-    return items;
+    // 研究待办 = todos.json 里「研究助手」的「显式 + 未完成」项（正则建议项不计入正式待办计数）
+    const t = getPendingTracker();
+    return t.open('研究助手')
+      .filter((x) => x.source === 'explicit')
+      .map((x) => ({ id: x.id || '', kind: 'research', title: x.title }));
   } catch { return []; }
 }
 
@@ -229,9 +221,7 @@ function researchTodoSummary() {
 // 与研究督导的 researchTodoSummary（只取未完成项供任务中心计数）互补：这里要全文，让研究助手看到完整三区状态。
 function researchTodoLoad() {
   try {
-    const vp = vaultPath();
-    if (!vp) return { ok: false, text: '', reason: 'no_vault' };
-    const file = path.join(vp, '写作参考', '00-研究待办清单.md');
+    const file = explicitTodoFile();
     if (!fs.existsSync(file)) return { ok: true, text: '', missing: true, path: file };
     return { ok: true, text: fs.readFileSync(file, 'utf8').slice(0, 8000), path: file };
   } catch (e) { return { ok: false, text: '', reason: String(e && e.message || e) }; }
@@ -2237,8 +2227,14 @@ ipcMain.handle('chat:history:save', (_e, name, data) => {
   try {
     // 支持多会话结构 { v, sessions, activeId }，也兼容旧的扁平数组
     fs.writeFileSync(chatHistoryFile(name), JSON.stringify(data == null ? [] : data, null, 2), 'utf8');
-    // 待办捕获官：保存后异步扫描该 agent，捕获「未完成/失败」工作并广播刷新
-    setImmediate(() => { try { scanAgentPending(name); broadcast('pending:changed', {}); } catch { /* 扫描失败不阻断 */ } });
+    // 待办捕获官：保存后异步同步该 agent（正则扫历史=建议来源）；研究助手额外解析显式清单（显式来源）
+    setImmediate(() => {
+      try {
+        scanAgentPending(name);
+        if (name === '研究助手') { parseExplicitTodoFile(); scheduleApprovalsRefresh(); }
+        broadcast('pending:changed', {});
+      } catch { /* 同步失败不阻断 */ }
+    });
     return true;
   } catch { return false; }
 });
@@ -2254,25 +2250,32 @@ let _pendingTracker = null;
 function getPendingTracker() {
   if (_pendingTracker) return _pendingTracker;
   _pendingTracker = new PendingTrackerCore.PendingTracker({
-    load: () => readJson('pending-work.json', null),
-    save: (state) => writeJson('pending-work.json', state),
+    load: () => readJson('todos.json', null),
+    save: (state) => writeJson('todos.json', state),
   });
   return _pendingTracker;
 }
 
-// 扫描某个 agent 的聊天历史，把「未完成/未开始/未查到」提炼进清单（幂等，可反复全量扫）
+// 扫描某个 agent 的聊天历史，把「未完成/未开始/未查到」提炼进清单（幂等，可反复全量扫）。
+// 整条对话历史全量扫（所有 session × 所有 assistant 消息），按「会话创建时间 + 消息序号」构造稳定时间锚点，
+// 让清单按对话真实先后「按时间顺序」排列（消息本身无 ts，用 session.createdAt 兜底）。
 function scanAgentPending(agentName) {
   const tracker = getPendingTracker();
   let raw = null;
   try { raw = JSON.parse(fs.readFileSync(chatHistoryFile(agentName), 'utf8')); } catch { raw = null; }
   // 兼容 { v, sessions, activeId } 与旧的扁平数组
-  const sessions = Array.isArray(raw) ? [{ messages: raw }] : ((raw && raw.sessions) || []);
+  const sessions = Array.isArray(raw) ? [{ createdAt: 0, messages: raw }] : ((raw && raw.sessions) || []);
+  // 按会话创建时间升序扫描（会话数组本身是「最近活跃」序，须重排保证时间正序）
+  const ordered = sessions.slice().sort((a, b) => ((a && a.createdAt) || 0) - ((b && b.createdAt) || 0));
   let added = 0, reopened = 0, resolved = 0;
-  sessions.forEach((s) => {
+  ordered.forEach((s) => {
+    const base = Number(s && s.createdAt) || 0;
     const msgs = (s && s.messages) || [];
-    msgs.forEach((m) => {
+    msgs.forEach((m, idx) => {
       if (m && m.role === 'assistant' && m.content) {
-        const r = tracker.ingest(agentName, m.content);
+        // 消息时间锚点：base + idx（同会话内严格有序；base 为 0 的老数据回落 now + idx）
+        const msgTime = base ? (base + idx) : (Date.now() + idx);
+        const r = tracker.ingest(agentName, m.content, { source: 'suggested', time: msgTime });
         added += r.added; reopened += r.reopened; resolved += r.resolved;
       }
     });
@@ -2288,6 +2291,24 @@ function scanAllPending() {
   return names.map(scanAgentPending);
 }
 
+// 显式清单：研究助手收工显式写「~/Documents/研究待办清单.md」（- [ ]/- [x]），是待办的「单一真相源」。
+// 放 Documents 而非 Obsidian（任务不进知识库）、也非 ~/Library（fs_write 受保护写不进）。
+function explicitTodoFile() {
+  return path.join(app.getPath('home'), 'Documents', '研究待办清单.md');
+}
+// 解析显式清单，以「显式」来源 ingest 进 todos.json（可信度 > 正则建议，同款任务升级为显式）。
+// 时间锚点用文件 mtime（最后写入时刻），保证全量重扫幂等。
+function parseExplicitTodoFile() {
+  const tracker = getPendingTracker();
+  const file = explicitTodoFile();
+  let text = null, t = Date.now();
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return { ok: false, missing: true, path: file }; }
+  try { t = fs.statSync(file).mtimeMs || t; } catch { /* 忽略 */ }
+  const agent = '研究助手';
+  const r = tracker.ingest(agent, text, { source: 'explicit', time: t });
+  return { ok: true, path: file, agent, added: r.added, reopened: r.reopened, resolved: r.resolved };
+}
+
 ipcMain.handle('pending:list', (_e, agent) => {
   const t = getPendingTracker();
   const a = agent || '';
@@ -2296,9 +2317,34 @@ ipcMain.handle('pending:list', (_e, agent) => {
 ipcMain.handle('pending:summary', (_e, agent) => getPendingTracker().summary(agent || ''));
 ipcMain.handle('pending:complete', (_e, id) => { const r = getPendingTracker().complete(id); broadcast('pending:changed', {}); return r; });
 ipcMain.handle('pending:reopen', (_e, id) => { const r = getPendingTracker().reopen(id); broadcast('pending:changed', {}); return r; });
+ipcMain.handle('pending:confirm', (_e, id) => { const r = getPendingTracker().confirm(id); broadcast('pending:changed', {}); return r; });
 ipcMain.handle('pending:remove', (_e, id) => { const r = getPendingTracker().remove(id); broadcast('pending:changed', {}); return r; });
 ipcMain.handle('pending:clear-done', (_e, agent) => { const t = getPendingTracker(); t.done(agent || '').forEach((x) => t.remove(x.id)); broadcast('pending:changed', {}); return true; });
 ipcMain.handle('pending:scan', (_e, agent) => { const r = agent ? scanAgentPending(agent) : scanAllPending(); broadcast('pending:changed', {}); return r; });
+// 点击待办 → 派发给对应 agent 后台自主执行（全自动闭环：跑完自动判断做完/卡住并回写）
+ipcMain.handle('pending:dispatch', async (_e, id) => {
+  const tracker = getPendingTracker();
+  const item = tracker.find(id);
+  if (!item) return { ok: false, error: '待办不存在（可能已处理）' };
+  if (item.running) return { ok: false, error: '该待办正在执行中，请稍候' };
+  const engine = agentEngineByName(item.agent) || 'deepseek';
+  const ticket = getTaskQueue().enqueue({
+    title: item.title,
+    goal: buildPendingGoal(item),
+    agent: item.agent,
+    engine: engine,
+    pendingId: item.id,
+  });
+  tracker.markRunning(item.id);
+  broadcast('pending:changed', {});
+  broadcastTasks();
+  runBackgroundTask(ticket).catch((e) => {
+    getTaskQueue().fail(ticket.id, String((e && e.message) || e));
+    settlePendingAfterBgTask(ticket, 'failed', String((e && e.message) || e));
+    broadcastTasks();
+  });
+  return { ok: true, ticketId: ticket.id };
+});
 // 一键备份：把 chat-history 目录下所有 agent 会话导出为一个 JSON 文件
 ipcMain.handle('chat:backup', () => {
   try {
@@ -2682,6 +2728,7 @@ function buildBgSystemPrompt(ticket) {
     '4. 完成前核对结果；没做完就继续做。',
     '',
     '输出要求：最终交付用 Markdown，结构清晰、结论明确。',
+    '最后一行必须用固定格式标注完成状态：任务做完了写「【完成】」；没做完或卡住写「【未完成】原因：xxx」（说明缺什么/卡在哪）。',
     '',
     '本次任务目标：' + String(ticket.goal || ticket.title || ''),
   ].join('\n');
@@ -2886,7 +2933,9 @@ async function runBackgroundTask(ticket) {
     // 要跑 CLI 就回工作台对话，或者投 CityVerse 总控的 kind=codex。
     const cliHint = CLI_ADAPTERS[engine] ? '（它是本机 CLI 引擎，后台任务调不到；请回工作台对话，或投总控的 kind=codex）' : '';
     const msg = '未知引擎：' + engine + cliHint;
-    q.fail(ticket.id, msg); broadcastTasks(); return { ok: false, error: msg };
+    q.fail(ticket.id, msg); broadcastTasks();
+    await settlePendingAfterBgTask(ticket, 'failed', msg);
+    return { ok: false, error: msg };
   }
 
   q.start(ticket.id);
@@ -2908,7 +2957,7 @@ async function runBackgroundTask(ticket) {
     const r = await callBgChat(engine, model, msgs, BG_TOOLS);
     if (!r.ok) {
       failStreak++;
-      if (failStreak >= 3) { q.fail(ticket.id, r.error); broadcastTasks(); return r; }
+      if (failStreak >= 3) { q.fail(ticket.id, r.error); broadcastTasks(); await settlePendingAfterBgTask(ticket, 'failed', r.error); return r; }
       msgs.push({ role: 'user', content: '【系统提示】上一轮调用失败：' + r.error + '。请重试或换一种方式继续。' });
       continue;
     }
@@ -2949,7 +2998,7 @@ async function runBackgroundTask(ticket) {
     const stripped = stripBgToolMarkers(raw).replace(/^\s+|\s+$/g, '');
     if (!stripped) {
       emptyStreak++;
-      if (emptyStreak >= 4) { q.fail(ticket.id, '连续多次空回复，模型可能暂时异常'); broadcastTasks(); return { ok: false, error: '空回复' }; }
+      if (emptyStreak >= 4) { q.fail(ticket.id, '连续多次空回复，模型可能暂时异常'); broadcastTasks(); await settlePendingAfterBgTask(ticket, 'failed', '连续多次空回复'); return { ok: false, error: '空回复' }; }
       msgs.push({ role: 'assistant', content: raw });
       msgs.push({ role: 'user', content: '你上一条只有思考没有正文，请直接输出完整回答（需要就调用工具继续推进），不要只写思考过程。' });
       continue;
@@ -2959,12 +3008,93 @@ async function runBackgroundTask(ticket) {
     failStreak = 0;
     q.complete(ticket.id, stripBgToolMarkers(raw));
     broadcastTasks();
+    await settlePendingAfterBgTask(ticket, 'done', stripBgToolMarkers(raw));
     return { ok: true, result: q.get(ticket.id).result };
   }
 
   q.fail(ticket.id, '超过 ' + MAX_ROUNDS + ' 轮仍未完成，请人工介入');
   broadcastTasks();
+  await settlePendingAfterBgTask(ticket, 'failed', '超过 ' + MAX_ROUNDS + ' 轮仍未完成');
   return { ok: false, error: '超过最大轮次' };
+}
+
+/* ---------------- 待办派发闭环：执行完自动判断做完/卡住并回写待办 ---------------- */
+
+// 从 agents.json 反查某 agent 的引擎（待办派发用，缺省回落 deepseek）
+function agentEngineByName(name) {
+  const agents = readJson('agents.json', []);
+  if (!Array.isArray(agents)) return null;
+  const a = agents.find((x) => x && x.name === name);
+  return a && a.engine ? a.engine : null;
+}
+
+// 把待办项转成清晰的任务目标（标题 + 背景线索）
+function buildPendingGoal(item) {
+  const t = String(item.title || '').trim();
+  const ev = String(item.evidence || '').trim();
+  const parts = ['请完成下面这条待办：', t];
+  if (ev) parts.push('', '背景/线索：' + ev.slice(0, 400));
+  parts.push('', '做完后在结尾标注完成状态（【完成】或【未完成】原因）。');
+  return parts.join('\n');
+}
+
+// 解析任务自报的完成标记（零成本；LLM 未遵守时返回 null）
+function parseDoneMarker(text) {
+  const s = String(text || '');
+  if (/【完成】|\[完成\]|\[\[DONE\]\]/i.test(s)) return { verdict: 'done', reason: '' };
+  if (/【未完成】|\[未完成\]|\[\[BLOCKED\]\]/i.test(s)) {
+    const m = s.match(/【未完成】\s*原因[:：]?\s*([^\n]{0,160})/);
+    return { verdict: 'blocked', reason: (m && m[1]) ? m[1].trim() : '未完成（未说明原因）' };
+  }
+  return null;
+}
+
+// 从 LLM 输出里提取 JSON 对象（直接 JSON / ```json 包裹 / 首个 {...} 块）
+function extractJsonText(s) {
+  const str = String(s || '').trim();
+  try { return JSON.parse(str); } catch { /* 继续 */ }
+  const fence = str.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) { try { return JSON.parse(fence[1].trim()); } catch { /* 继续 */ } }
+  const brace = str.match(/\{[\s\S]*\}/);
+  if (brace) { try { return JSON.parse(brace[0]); } catch { /* 继续 */ } }
+  return null;
+}
+
+// 完成度判定：先看自报标记（零成本），无标记才用一次 cheap LLM 兜底（仅待办派发任务，单次 flash 调用）
+async function judgePendingDone(ticket, resultText) {
+  const marker = parseDoneMarker(resultText);
+  if (marker) return marker;
+  try {
+    const goal = String(ticket.goal || ticket.title || '').slice(0, 600);
+    const out = String(resultText || '').slice(0, 2000);
+    const msgs = [
+      { role: 'system', content: '你是任务完成度判定员。根据「任务目标」和「执行结果」，判断任务是否真正完成。只输出一个 JSON：{"verdict":"done|blocked|partial","reason":"一句话说明"}。done=已完成；blocked=卡住/缺信息无法继续；partial=做了部分但没做完。' },
+      { role: 'user', content: '任务目标：\n' + goal + '\n\n执行结果：\n' + out },
+    ];
+    const r = await callBgChat('deepseek', '', msgs, null);
+    if (!r || !r.ok || !r.text) return { verdict: 'blocked', reason: '无法判定完成度（判定调用失败）' };
+    const j = extractJsonText(r.text) || {};
+    const v = j.verdict;
+    const verdict = (v === 'done' || v === 'blocked' || v === 'partial') ? v : 'blocked';
+    return { verdict: verdict, reason: String(j.reason || '') };
+  } catch (e) {
+    return { verdict: 'blocked', reason: '完成度判定异常：' + String((e && e.message) || e) };
+  }
+}
+
+// 后台任务跑完后回写来源待办：done → 自动打勾；failed/blocked → 保留并记录原因
+async function settlePendingAfterBgTask(ticket, outcome, payload) {
+  if (!ticket || !ticket.pendingId) return;   // 非待办派发的任务不回写
+  const tracker = getPendingTracker();
+  const item = tracker.find(ticket.pendingId);
+  if (!item) return;                          // 待办已被删除，跳过
+  if (outcome === 'failed') {
+    tracker.settle(ticket.pendingId, 'blocked', '执行失败：' + String(payload || ''));
+  } else {
+    const verdict = await judgePendingDone(ticket, payload);
+    tracker.settle(ticket.pendingId, verdict.verdict, verdict.reason);
+  }
+  broadcast('pending:changed', {});
 }
 
 /* ---------------- 后台任务 Watchdog：定时巡检卡死任务（吸收 dsh 自愈思想） ---------------- */
@@ -7254,6 +7384,15 @@ if (gotSingleInstanceLock) {
     // 知识沉淀官自动发现：启动延时一次 + 每 6 小时定时复盘任务队列已解决项（启发式打分 → 待审批提案，人工在环不变）
     setTimeout(() => { runSettlerDiscovery(); }, 8000);
     setInterval(() => { runSettlerDiscovery(); }, 6 * 60 * 60 * 1000);
+    // 待办捕获官：启动延时一次全量同步（正则建议=所有 agent + 显式清单=研究助手），每次对话保存后还会增量触发
+    setTimeout(() => {
+      try {
+        scanAllPending();
+        parseExplicitTodoFile();
+        broadcast('pending:changed', {});
+        scheduleApprovalsRefresh();
+      } catch { /* 忽略 */ }
+    }, 6000);
     // 统一待办中心：启动延时汇总一次 + 每 60 秒轮询（兜底捕获 CityVerse 控制台新增待审批，
     // 本地任务/经验提案变化由 broadcastTasks / settler 变更点即时触发）
     setTimeout(() => { refreshApprovals(); }, 5000);

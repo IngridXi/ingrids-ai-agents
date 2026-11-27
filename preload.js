@@ -309,9 +309,11 @@ contextBridge.exposeInMainWorld('ingrid', {
   pendingSummary: (agent) => ipcRenderer.invoke('pending:summary', agent),
   pendingComplete: (id) => ipcRenderer.invoke('pending:complete', id),
   pendingReopen: (id) => ipcRenderer.invoke('pending:reopen', id),
+  pendingConfirm: (id) => ipcRenderer.invoke('pending:confirm', id),
   pendingRemove: (id) => ipcRenderer.invoke('pending:remove', id),
   pendingClearDone: (agent) => ipcRenderer.invoke('pending:clear-done', agent),
   pendingScan: (agent) => ipcRenderer.invoke('pending:scan', agent),
+  pendingDispatch: (id) => ipcRenderer.invoke('pending:dispatch', id),
   onPendingChanged: (cb) => ipcRenderer.on('pending:changed', (_e, d) => { if (cb) cb(d || {}); }),
 
   // Agent 治理官（只读盘点 + 重叠检测 + 对账）
