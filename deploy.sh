@@ -23,7 +23,7 @@ get_pid() {
   [ -L "$LOCK" ] || return 1
   local t
   t="$(readlink "$LOCK" 2>/dev/null)" || return 1
-  echo "${t##*.}"
+  echo "${t##*-}"   # 软链目标形如 hostname.local-PID，PID 在最后一个 '-' 后（旧版脚本误按 '.' 分割）
 }
 is_running() { [ -L "$LOCK" ]; }
 

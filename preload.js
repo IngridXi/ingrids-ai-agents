@@ -304,6 +304,16 @@ contextBridge.exposeInMainWorld('ingrid', {
   settlerDiscover: () => ipcRenderer.invoke('settler:discover'),
   settlerDiscoveryReport: () => ipcRenderer.invoke('settler:discovery-report'),
 
+  // 待办捕获官（捕获 agent「未完成/失败」工作 → 各助手独立待做清单）
+  pendingList: (agent) => ipcRenderer.invoke('pending:list', agent),
+  pendingSummary: (agent) => ipcRenderer.invoke('pending:summary', agent),
+  pendingComplete: (id) => ipcRenderer.invoke('pending:complete', id),
+  pendingReopen: (id) => ipcRenderer.invoke('pending:reopen', id),
+  pendingRemove: (id) => ipcRenderer.invoke('pending:remove', id),
+  pendingClearDone: (agent) => ipcRenderer.invoke('pending:clear-done', agent),
+  pendingScan: (agent) => ipcRenderer.invoke('pending:scan', agent),
+  onPendingChanged: (cb) => ipcRenderer.on('pending:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
   // Agent 治理官（只读盘点 + 重叠检测 + 对账）
   governanceReport: () => ipcRenderer.invoke('governance:report'),
   governanceRun: () => ipcRenderer.invoke('governance:run'),
@@ -338,6 +348,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   // Agent 跨会话记忆（load 注入 system prompt / refine 自动沉淀）
   memoryLoad: (name) => ipcRenderer.invoke('memory:load', name),
   memoryRefine: (name, payload) => ipcRenderer.invoke('memory:refine', name, payload),
+  researchTodoLoad: () => ipcRenderer.invoke('researchTodo:load'),
 
   // 灵感目录（生态雷达：每日调研 DSH 插件生态）
   ecoRadarRun: () => ipcRenderer.invoke('eco:radar:run'),

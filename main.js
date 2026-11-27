@@ -54,6 +54,7 @@ const agentGovernance = require('./agent-governance.js');
 const agentTypeGovernor = require('./agent-type-governor.js');
 const agentOpsGovernor = require('./agent-ops-governor.js');
 const SentimentAgentCore = require('./sentiment-agent-core.js');
+const PendingTrackerCore = require('./pending-tracker-core.js');
 require('./myos-core.js');
 const MyOS = globalThis.MyOS;
 
@@ -222,6 +223,18 @@ function researchTodoSummary() {
     });
     return items;
   } catch { return []; }
+}
+
+// 返回研究待办清单「全文」，供研究助手页面注入 system prompt（开工对齐清单，不靠记忆）。
+// 与研究督导的 researchTodoSummary（只取未完成项供任务中心计数）互补：这里要全文，让研究助手看到完整三区状态。
+function researchTodoLoad() {
+  try {
+    const vp = vaultPath();
+    if (!vp) return { ok: false, text: '', reason: 'no_vault' };
+    const file = path.join(vp, '写作参考', '00-研究待办清单.md');
+    if (!fs.existsSync(file)) return { ok: true, text: '', missing: true, path: file };
+    return { ok: true, text: fs.readFileSync(file, 'utf8').slice(0, 8000), path: file };
+  } catch (e) { return { ok: false, text: '', reason: String(e && e.message || e) }; }
 }
 
 async function approvalsSummary() {
@@ -1975,6 +1988,7 @@ ipcMain.handle('sentiment:remove-preference', (_e, id, opts) => getSentimentAgen
 
 /* ---------------- IPC：Agent 跨会话记忆（load 注入 / refine 自动沉淀）---------------- */
 ipcMain.handle('memory:load', (_e, name) => readMemory(String(name || '')));
+ipcMain.handle('researchTodo:load', () => researchTodoLoad());
 ipcMain.handle('memory:refine', async (_e, name, payload) => {
   const p = payload || {};
   const userText = String(p.user || '');
@@ -2180,6 +2194,8 @@ ipcMain.handle('chat:history:save', (_e, name, data) => {
   try {
     // 支持多会话结构 { v, sessions, activeId }，也兼容旧的扁平数组
     fs.writeFileSync(chatHistoryFile(name), JSON.stringify(data == null ? [] : data, null, 2), 'utf8');
+    // 待办捕获官：保存后异步扫描该 agent，捕获「未完成/失败」工作并广播刷新
+    setImmediate(() => { try { scanAgentPending(name); broadcast('pending:changed', {}); } catch { /* 扫描失败不阻断 */ } });
     return true;
   } catch { return false; }
 });
@@ -2187,6 +2203,59 @@ ipcMain.handle('chat:history:clear', (_e, name) => {
   try { fs.unlinkSync(chatHistoryFile(name)); } catch { /* 不存在则忽略 */ }
   return true;
 });
+
+/* ---------------- 待办捕获官（后台常驻）：捕获 agent「未完成/失败」工作 → 各助手独立待做清单 ---------------- */
+// 与知识沉淀官互补：沉淀官管「已解决」的经验，捕获官管「未完成/失败」的待做。
+// 每个助手（研究助手/软件工程/通用助手/伦理agent）各自独立一份记忆，靠 agent 字段隔离。
+let _pendingTracker = null;
+function getPendingTracker() {
+  if (_pendingTracker) return _pendingTracker;
+  _pendingTracker = new PendingTrackerCore.PendingTracker({
+    load: () => readJson('pending-work.json', null),
+    save: (state) => writeJson('pending-work.json', state),
+  });
+  return _pendingTracker;
+}
+
+// 扫描某个 agent 的聊天历史，把「未完成/未开始/未查到」提炼进清单（幂等，可反复全量扫）
+function scanAgentPending(agentName) {
+  const tracker = getPendingTracker();
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(chatHistoryFile(agentName), 'utf8')); } catch { raw = null; }
+  // 兼容 { v, sessions, activeId } 与旧的扁平数组
+  const sessions = Array.isArray(raw) ? [{ messages: raw }] : ((raw && raw.sessions) || []);
+  let added = 0, reopened = 0, resolved = 0;
+  sessions.forEach((s) => {
+    const msgs = (s && s.messages) || [];
+    msgs.forEach((m) => {
+      if (m && m.role === 'assistant' && m.content) {
+        const r = tracker.ingest(agentName, m.content);
+        added += r.added; reopened += r.reopened; resolved += r.resolved;
+      }
+    });
+  });
+  return { agent: agentName, added, reopened, resolved };
+}
+
+// 扫描所有有聊天记录的 agent（打开面板/手动刷新时用）
+function scanAllPending() {
+  const dir = path.join(dataDir(), 'chat-history');
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)); } catch { /* 无聊天记录 */ }
+  return names.map(scanAgentPending);
+}
+
+ipcMain.handle('pending:list', (_e, agent) => {
+  const t = getPendingTracker();
+  const a = agent || '';
+  return { open: t.open(a), done: t.done(a), agents: t.agents(), summary: t.summary(a) };
+});
+ipcMain.handle('pending:summary', (_e, agent) => getPendingTracker().summary(agent || ''));
+ipcMain.handle('pending:complete', (_e, id) => { const r = getPendingTracker().complete(id); broadcast('pending:changed', {}); return r; });
+ipcMain.handle('pending:reopen', (_e, id) => { const r = getPendingTracker().reopen(id); broadcast('pending:changed', {}); return r; });
+ipcMain.handle('pending:remove', (_e, id) => { const r = getPendingTracker().remove(id); broadcast('pending:changed', {}); return r; });
+ipcMain.handle('pending:clear-done', (_e, agent) => { const t = getPendingTracker(); t.done(agent || '').forEach((x) => t.remove(x.id)); broadcast('pending:changed', {}); return true; });
+ipcMain.handle('pending:scan', (_e, agent) => { const r = agent ? scanAgentPending(agent) : scanAllPending(); broadcast('pending:changed', {}); return r; });
 // 一键备份：把 chat-history 目录下所有 agent 会话导出为一个 JSON 文件
 ipcMain.handle('chat:backup', () => {
   try {
