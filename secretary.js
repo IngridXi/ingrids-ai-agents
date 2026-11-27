@@ -130,9 +130,6 @@
     '.sec-modal .shot-ev .acts .add.merge{opacity:1;cursor:pointer;background:var(--accent-soft,#eef3ff);border-color:var(--accent);color:var(--accent);}',
     '.sec-panel.drag-over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft);}',
     '.sec-modal.drag-over{outline:3px dashed var(--accent);outline-offset:-4px;}',
-    '.sec-todo-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);font-size:11.5px;color:var(--ink-soft);cursor:pointer;transition:border-color .15s,color .15s;}',
-    '.sec-todo-row:hover{border-color:var(--accent);color:var(--accent);}',
-    '.sec-todo-row .tag{flex:none;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--danger-soft);color:var(--danger);}',
   ].join('\n');
   document.head.appendChild(style);
 
@@ -148,7 +145,6 @@
       '</span>' +
     '</div>' +
     '<div class="sec-body" id="secBody">' +
-      '<div class="sec-sec"><label>待办 · 需要你处理</label><div class="sec-list" id="secTodos"><div class="sec-empty">秘书正在检查…</div></div></div>' +
       '<div class="sec-sec"><label>随时告诉秘书你的想法</label>' +
         '<textarea id="secThought" placeholder="例如：下周有个报告要交，帮我盯着点"></textarea>' +
         '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
@@ -257,42 +253,7 @@
       return '<div><span class="m">你：</span>' + esc(t.text) + st + '</div>';
     }).join('');
   }
-  function renderAll() { renderEvents(); renderEmails(); renderChat(); renderTodos(); }
-
-  /* 待办 · 需要你处理：秘书汇总三类待审批，供你一键跳转处理 */
-  function renderTodos() {
-    var box = document.getElementById('secTodos');
-    if (!box) return;
-    if (!DESKTOP || !window.ingrid || !window.ingrid.approvalsSummary) {
-      box.innerHTML = '<div class="sec-empty">仅桌面版显示待办。</div>';
-      return;
-    }
-    window.ingrid.approvalsSummary().then(function (a) {
-      a = a || { total: 0, waiting: [], experience: [], cityverse: [] };
-      if (!a.total) {
-        box.innerHTML = '<div class="sec-empty">暂无待办。秘书会盯着，有需要你处理的事会提醒你。</div>';
-        return;
-      }
-      var html = '';
-      if (a.waiting.length) html += todoRow('tasks', a.waiting.length + ' 个任务需决策');
-      if (a.experience.length) html += todoRow('console', a.experience.length + ' 条经验提案待审批');
-      if (a.cityverse.length) html += todoRow('console', a.cityverse.length + ' 条 CityVerse 规划待审批');
-      box.innerHTML = html;
-      box.querySelectorAll('[data-jump]').forEach(function (r) {
-        r.addEventListener('click', function () {
-          var j = r.getAttribute('data-jump');
-          if (j === 'tasks') {
-            if (typeof window.__setActiveNav === 'function') window.__setActiveNav('navTasks');
-          } else if (j === 'console') {
-            if (window.ingrid.openAgent) window.ingrid.openAgent('agents/agent-console/index.html');
-          }
-        });
-      });
-    }).catch(function () { box.innerHTML = '<div class="sec-empty">待办加载失败。</div>'; });
-  }
-  function todoRow(jump, text) {
-    return '<div class="sec-todo-row" data-jump="' + jump + '"><span>' + esc(text) + '</span><span class="tag">待你处理</span></div>';
-  }
+  function renderAll() { renderEvents(); renderEmails(); renderChat(); }
 
   /* ---------- 事件 ---------- */
   document.getElementById('secMin').addEventListener('click', function () {
@@ -1764,11 +1725,6 @@
     if (due.length) renderEvents();
   }
   setInterval(checkReminders, 30000);
-
-  /* ---------- 秘书实时刷新待办（待办广播驱动，无需手动刷新） ---------- */
-  if (DESKTOP && window.ingrid.onApprovalsChanged) {
-    window.ingrid.onApprovalsChanged(function () { renderTodos(); });
-  }
 
   /* ---------- 暴露 ---------- */
   window.__secretary = { events: events, emails: emails, thoughts: thoughts, addChat: addChat };
