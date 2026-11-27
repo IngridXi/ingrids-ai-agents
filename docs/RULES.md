@@ -26,6 +26,22 @@
 - **板块（Board）= 用户的一个用途**，skill 按板块归档、可跨板块复用；不要把每个 skill 做成独立 agent。
 - **预设 = 板块 + agent + skills + 任务的一键组合**，是首页快捷方块，不是新 agent。
 
+### Agent 建设准则（四大支柱 · 治理依据）
+
+工作台 agent 建设遵循「四大核心支柱 + 动态闭环」准则。**完整版在 Obsidian 库 `Agent建设准则/`（00–08 篇）**，本节只放工作台对齐结论——两份是同一套准则，Obsidian 是完整知识与真实经验，本节是工作台内可执行映射。
+
+- **四大支柱 → 三层解耦映射**（治理引擎据此判定每个 agent 是否"四柱俱全"）：
+  - **大脑（Brain）** = `Agent.soul`（角色）+ `Engine`（模型）两层解耦；
+  - **手脚（Tools）** = `Skill`（能力，挂 `.md`、用完即卸）+ `caps`（声明式能力）；
+  - **记忆（Memory）** = `memory` 字段 + session-log（高频会话日志）+ `docs/agent-memory/{agent}.md`（低频长期条目）；
+  - **边界（Rules）** = `approvalMode`（ask/full/custom）+ `isSafeWritePath` + 审批卡 + `dangerLevel` 分级。
+- **万能公式**：通用底座（Engine）+ 领域规则（soul + Rules）+ 场景工具（Skill/caps）= 专属 Agent，无需重训模型。
+- **动态闭环**：思考→行动→观察→纠偏；工作台里由 chat 循环 + 审稿闭环 + `verify.sh` 机器验收落地。
+- **边界是第一等设计对象**（区分"演示品"与"生产品"）：硬边界写代码里、不写 prompt 里（模型能绕过 prompt 规则，绕不过运行时检查）；让 Agent「能做事、但做不了大事」（最小代理权）。
+- **双向沉淀约定（不可丢失）**：工作台独有的实战经验——反幻觉确定性机制（`chief report`/toolCache/progress detector）、成本治理（思考模式默认关/混合思考/结果截断）、四类触发类型、双层记忆分工等——已沉淀在 Obsidian `Agent建设准则/08-工作台实战经验.md`，与通用准则互相印证。**改工作台时先读那一篇，别把更先进的本机经验改退回通用准则。**
+
+> 治理引擎（`agent-governance.js` 四大支柱体检 / `agent-type-governor.js` 四类触发 / `agent-ops-governor.js` 成本+模型+总管）以本节为判定标准。
+
 ---
 
 ## 2. 项目约定

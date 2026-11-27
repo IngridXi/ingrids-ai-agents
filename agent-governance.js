@@ -136,7 +136,20 @@ function scanRegistry(dataDir) {
     const list = JSON.parse(readText(p));
     if (!Array.isArray(list)) return [];
     return list.map(function (a) {
-      return { id: a.id || '', name: cleanName(a.name || a.title || ''), role: a.role || 'worker' };
+      return {
+        id: a.id || '',
+        name: cleanName(a.name || a.title || ''),
+        role: a.role || 'worker',
+        soul: a.soul || '',
+        engine: a.engine || '',
+        caps: a.caps || {},
+        tools: Array.isArray(a.tools) ? a.tools : [],
+        computer: a.computer || 'off',
+        memory: a.memory || {},
+        approvalMode: a.approvalMode || 'ask',
+        href: a.href || '',
+        canControl: !!a.canControl,
+      };
     });
   } catch (e) { return []; }
 }
@@ -155,6 +168,52 @@ function detectOverlaps(records) {
     }
   }
   return pairs;
+}
+
+/* ---------- 6.5 四大支柱体检：大脑/手脚/记忆/边界（对齐 Agent 建设准则） ---------- */
+// 依据 docs/RULES.md §1「Agent 建设准则」：每个 agent 应当四柱俱全。
+// 只产出「提示级」缺失，不阻塞、不改动（去留仍由人拍板）。
+function _hasCaps(a) {
+  if (a.caps && typeof a.caps === 'object') {
+    for (var k in a.caps) if (a.caps[k]) return true;
+  }
+  if (a.tools && a.tools.length) return true;
+  if (a.computer === 'on' || a.computer === true) return true;
+  return false;
+}
+
+// 危险等级：'high'（电脑操作）> 'write'（文件/DB 写）> 'none'
+function _capDanger(a) {
+  var caps = a.caps || {};
+  if (caps.computer) return 'high';
+  if (caps.fs || caps.db || caps.rollback || a.computer === 'on') return 'write';
+  return 'none';
+}
+
+function checkFourPillars(registry, frontends) {
+  // 有独立页面的 chat agent = 能力在页面里声明、有 session-log + agent-memory 记忆机制（平台级兜底）。
+  // 判据用 href 而非 name 匹配（name 带 emoji/空格会失配）。
+  var issues = [];
+  (registry || []).forEach(function (a) {
+    if (!a || !a.name) return;
+    var isOrchestrator = a.role === 'orchestrator';
+    var hasFrontend = /agents\/[a-z0-9-]+\/index\.html/.test(a.href || '');
+    var missing = [];
+    // 大脑：worker（chat agent）必须有 soul 角色定义；控制面用规则引擎，豁免
+    if (!isOrchestrator && !a.soul) missing.push('大脑(无 soul 角色定义)');
+    // 手脚：无独立页且没声明能力 = 只会说不会做（能力在页面里则不算缺失）
+    if (!isOrchestrator && !hasFrontend && !_hasCaps(a)) missing.push('手脚(无 caps/tools 能力声明)');
+    // 记忆：无独立页且无 memory 持久化 = 无状态
+    if (!isOrchestrator && !hasFrontend && (!a.memory || Object.keys(a.memory).length === 0)) {
+      missing.push('记忆(无持久化机制)');
+    }
+    // 边界：全自动(approvalMode=full) 且带高危险能力 = 违反最小代理权（对所有 agent 都查）
+    if (a.approvalMode === 'full' && _capDanger(a) !== 'none') {
+      missing.push('边界(全自动 + 高危险能力，缺人工确认)');
+    }
+    if (missing.length) issues.push({ name: a.name, role: a.role, missing: missing });
+  });
+  return issues;
 }
 
 /* ---------- 7. 编排：三来源对账 + 报告 ---------- */
@@ -217,9 +276,12 @@ function run(repoRoot, dataDir) {
     return CONTROL_PLANE_HINTS.some(function (h) { return r.name.indexOf(h) >= 0; });
   });
 
+  // 四大支柱体检（对齐 docs/RULES.md §1 Agent 建设准则）
+  const pillarIssues = checkFourPillars(registry, frontends);
+
   return {
     agent: 'Agent 治理官',
-    mode: '只读盘点 · 职责归类 · 重叠检测 · 前后端对账',
+    mode: '只读盘点 · 职责归类 · 重叠检测 · 前后端对账 · 四大支柱体检',
     generated_at: new Date().toISOString(),
     summary: {
       frontend_count: frontends.length,
@@ -229,11 +291,13 @@ function run(repoRoot, dataDir) {
       orphan_count: orphans.length,
       shell_count: shells.length,
       control_plane_count: controlPlane.length,
+      pillar_issue_count: pillarIssues.length,
     },
     records: records,
     overlaps: overlaps,
     orphans: orphans,
     shells: shells,
+    pillar_issues: pillarIssues,
     registry: registry,
     strict_issues: (shells.length + orphans.length) > 0,
   };

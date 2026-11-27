@@ -462,7 +462,8 @@ async function loadGovernance() {
       kpi('前端页面', s.frontend_count) + kpi('首页注册', s.portal_count) +
       kpi('职责重叠', s.overlap_count, s.overlap_count ? 'bad' : 'ok') +
       kpi('孤儿前端', s.orphan_count, s.orphan_count ? 'bad' : 'ok') +
-      kpi('空壳', s.shell_count, s.shell_count ? 'bad' : 'ok');
+      kpi('空壳', s.shell_count, s.shell_count ? 'bad' : 'ok') +
+      kpi('支柱缺失', s.pillar_issue_count, s.pillar_issue_count ? 'bad' : 'ok');
     $('#govTime').textContent = '上次巡检：' + (r.generated_at || '').slice(0, 16).replace('T', ' ');
     // 清单表
     let html = '<table><tr><th>Agent</th><th>状态</th><th>职责域</th></tr>';
@@ -475,6 +476,12 @@ async function loadGovernance() {
     html += '</table>';
     if ((r.orphans || []).length) html += '<div class="hint" style="margin-top:8px">⚠ 孤儿前端（有页面但首页未注册）：' + esc(r.orphans.join('、')) + '</div>';
     if ((r.overlaps || []).length) html += '<div class="hint" style="margin-top:8px">⚠ 职责重叠（建议划清边界）：' + esc(r.overlaps.map(o => o.a + ' vs ' + o.b).join('；')) + '</div>';
+    if ((r.pillar_issues || []).length) {
+      html += '<div class="hint" style="margin-top:8px">⚠ 四大支柱缺失（大脑/手脚/记忆/边界）：</div>';
+      (r.pillar_issues || []).forEach(p => {
+        html += '<div class="hint" style="margin-top:4px;padding-left:12px">· ' + esc(p.name) + '（' + esc(p.role) + '）缺 ' + esc(p.missing.join('、')) + '</div>';
+      });
+    }
     $('#govTable').innerHTML = html;
   } catch (e) { $('#govKpis').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 }
