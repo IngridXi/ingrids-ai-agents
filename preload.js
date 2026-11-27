@@ -253,6 +253,9 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolChief: (payload) => ipcRenderer.invoke('tool:chief', payload),
   toolBinPatch: (payload) => ipcRenderer.invoke('tool:bin:patch', payload),
   toolPyDecompile: (payload) => ipcRenderer.invoke('tool:py:decompile', payload),
+  toolLedger: (payload) => ipcRenderer.invoke('tool:ledger', payload),
+  toolInbox: (payload) => ipcRenderer.invoke('tool:inbox', payload),
+  toolWeekly: () => ipcRenderer.invoke('tool:weekly'),
 
   // 聊天记忆持久化（按 Agent 名隔离）
   chatHistoryLoad: (name) => ipcRenderer.invoke('chat:history:load', name),

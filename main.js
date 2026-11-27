@@ -54,6 +54,8 @@ const agentGovernance = require('./agent-governance.js');
 const agentTypeGovernor = require('./agent-type-governor.js');
 const agentOpsGovernor = require('./agent-ops-governor.js');
 const SentimentAgentCore = require('./sentiment-agent-core.js');
+require('./myos-core.js');
+const MyOS = globalThis.MyOS;
 
 /* ---------------- 应用名（决定 userData 目录，须在单实例锁之前设定，确保锁与数据同目录） ---------------- */
 app.setName("Ingrid's AI Agents");
@@ -5875,6 +5877,76 @@ function toolBrainIndex(payload) {
   const SB = require('./second-brain-core.js');
   return SB.rebuildIndex(vault);
 }
+
+/* ---------------- 个人运营底座（My-OS）：全局台账 + 惯例收件箱 ----------------
+ * 借鉴小红书「个人 Harness / My-OS」的轻量机制：台账只记位置、收件箱 AI 只提议人点头才落笔。
+ * 三个窄工具：tool:ledger（读/记台账）、tool:inbox（惯例收件箱）、tool:weekly（周体检）。
+ * 落笔铁律：inbox accept 才写 memory / RULES，且 accept 是「人」的动作（通过对话触发）。
+ */
+function appendInboxToMemory(entry) {
+  const agent = String((entry && entry.agent) || '').trim();
+  const dir = agent ? (agentDirByName(agent) || '_shared') : '_shared';
+  const p = memoryPath(dir);
+  try {
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const line = '- [' + stamp + '] 【' + (entry.kind || '约定') + '】' + (entry.content || '');
+    let body = '';
+    if (!fs.existsSync(p)) body = '# ' + (agent || '共享') + ' · 跨会话记忆\n\n## 记忆条目\n\n';
+    fs.appendFileSync(p, body + line + '\n', 'utf8');
+    return { ok: true, desc: (agent || '共享') + ' 记忆（docs/agent-memory/' + dir + '.md）' };
+  } catch (e) {
+    return { ok: false, error: '写记忆失败：' + String((e && e.message) || e) };
+  }
+}
+function appendInboxToRules(entry) {
+  const p = path.join(__dirname, 'docs', 'RULES.md');
+  try {
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const line = '- [' + stamp + '] 【' + (entry.kind || '规则') + '】' + (entry.content || '') + '（惯例收件箱 ' + entry.id + '，' + (entry.agent || '未署名') + ' 提议）';
+    let text = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+    if (text.indexOf('## 已采纳惯例') < 0) {
+      text = text.replace(/\s*$/, '\n\n---\n\n## 已采纳惯例（个人运营底座）\n\n> 由惯例收件箱 accept 后落笔，待人工归位到对应章节。\n\n');
+    }
+    fs.writeFileSync(p, text + line + '\n', 'utf8');
+    return { ok: true, desc: 'RULES.md（已采纳惯例区）' };
+  } catch (e) {
+    return { ok: false, error: '写 RULES.md 失败：' + String((e && e.message) || e) };
+  }
+}
+
+function toolLedger(p) {
+  const action = String((p && p.action) || '').trim();
+  if (action === 'read') return MyOS.readLedger(__dirname);
+  if (action === 'note') return MyOS.ledgerNote(__dirname, { name: p.name, location: p.location, status: p.status, next: p.next });
+  return { ok: false, error: '未知 action：' + (action || '(空)') + '，可用：read / note' };
+}
+function toolInbox(p) {
+  const action = String((p && p.action) || '').trim();
+  const id = String((p && p.id) || '').trim();
+  if (action === 'add') return MyOS.inboxAdd(__dirname, { kind: p.kind, content: p.content, agent: p.agent });
+  if (action === 'list') return MyOS.readInbox(__dirname);
+  if (action === 'accept') {
+    if (!id) return { ok: false, error: 'accept 需要条目 id' };
+    const box = MyOS.readInbox(__dirname);
+    const entry = box.pending.find((e) => e.id === id);
+    if (!entry) return { ok: false, error: '找不到待确认条目 id=' + id + '（可能已处理）' };
+    const target = String((p && p.target) || 'memory').trim();
+    const landed = (target === 'rules') ? appendInboxToRules(entry) : appendInboxToMemory(entry);
+    if (!landed.ok) return landed;
+    return MyOS.inboxAccept(__dirname, id, { landedTo: landed.desc });
+  }
+  if (action === 'reject') {
+    if (!id) return { ok: false, error: 'reject 需要条目 id' };
+    return MyOS.inboxReject(__dirname, id, { reason: p.reason });
+  }
+  return { ok: false, error: '未知 action：' + (action || '(空)') + '，可用：add / list / accept / reject' };
+}
+function toolWeekly() {
+  return MyOS.weekly(__dirname);
+}
+
 function toolFsMove(payload) {
   const from = path.resolve(String((payload && payload.from) || ''));
   const to = path.resolve(String((payload && payload.to) || ''));
@@ -6139,6 +6211,9 @@ ipcMain.handle('tool:chief', (e, p) => {
 });
 ipcMain.handle('tool:bin:patch', (_e, p) => toolBinPatch(p));
 ipcMain.handle('tool:py:decompile', (_e, p) => toolPyDecompile(p));
+ipcMain.handle('tool:ledger', (_e, p) => toolLedger(p));
+ipcMain.handle('tool:inbox', (_e, p) => toolInbox(p));
+ipcMain.handle('tool:weekly', () => toolWeekly());
 
 ipcMain.handle('tool:fs:list', (_e, p) => toolFsList(p));
 ipcMain.handle('tool:fs:search', (_e, p) => toolFsSearch(p));
