@@ -15,28 +15,89 @@
   };
 
   // 显示名仅用于架构图。注册名仍可用来匹配旧记录、任务与模型锁。
+  // resp = 负责明细（主要领域）；work = 工作明细（具体动作/产出）；trigger = 触发类型（与治理官四类一致）。
   const definitions = [
-    ['research-chat', 'work', '学术研究助手', '研究设计、文献核查、论文写作与审稿返修', '研究助手'],
-    ['ethics-chat', 'work', 'AI 对齐与伦理教学助手', '对齐模型对照演示、商业案例教学与归档', '伦理agent'],
-    ['dev-chat', 'work', '软件开发与维护助手', '编写代码、排查故障与审查改动', '软件工程'],
-    ['assistant-chat', 'work', '日常问答与文档助手', '问答、网页资料整理、文档生成与项目协调', '通用助手'],
-    ['meeting-audio', 'production', '会议转写与纪要助手', '实时转写、说话人识别、会议纪要与 PPT', '会议纪要官'],
-    ['design', 'production', '界面视觉设计助手', '配色、排版、界面动效与视觉检查', '界面设计师'],
-    ['music', 'production', '歌曲与 MV 制作助手', '根据主题或歌词制作歌曲与 MV', '音乐创作'],
-    ['type-governor', 'governance', '触发类型治理与任务路由', '巡检触发方式，支持审批、委派与流水线', '智能路由 ra'],
-    ['cost', 'governance', '用量与预算监控', '汇总用量账本、监控预算与推荐模型', 'CFO 成本官'],
-    ['model', 'governance', '模型切换与锁定', '处理本地模型可用性、降级与手动锁定', '模型调控官'],
-    ['workforce', 'governance', 'Agent 职责与负载审计', '检查工作量与职责覆盖，提出增、分、合建议', 'Agent 总管'],
-    ['supervisor', 'governance', '目标偏离监测', '对照核心需求检查目标漂移并提醒纠偏'],
-    ['settler', 'support', '经验提案与入库', '从已完成工作提炼经验，等待人工审核'],
-    ['sentiment', 'support', '反馈与偏好提炼', '从显式反馈提炼偏好并提交经验提案'],
-    ['secretary', 'support', '日程与邮件跟进', '汇总日程、提醒会议和跟进待回复邮件'],
-    ['radar', 'support', '生态资讯雷达', '追踪生态动态，整理可用作灵感的资讯', '灵感目录'],
-    ['agent-console', 'services', 'Agent 总控台', '查看经验提案、治理巡检与架构', 'Agent 总控台'],
-    ['knowledge', 'services', '共享知识库', '索引与检索本地文献和资料'],
-    ['task-queue', 'services', '后台任务队列', '执行独立后台任务并记录等待与完成状态'],
-    ['cityverse', 'services', 'CityVerse 项目', '查看社区情报、建设计划、执行与门禁'],
-  ].map(([key, group, name, duty, registeredName]) => ({ key, group, name, duty, registeredName }));
+    { key: 'research-chat', group: 'work', name: '学术研究助手', registeredName: '研究助手', trigger: 'human',
+      duty: '研究设计、文献核查、论文写作与审稿返修',
+      resp: ['研究设计与方法', '文献核查与引证', '论文写作', '审稿返修'],
+      work: ['检索筛选文献', '搭建研究框架', '核对引用与数据', '撰写润色论文、回复审稿意见'] },
+    { key: 'ethics-chat', group: 'work', name: 'AI 对齐与伦理教学助手', registeredName: '伦理agent', trigger: 'human',
+      duty: '对齐模型对照演示、商业案例教学与归档',
+      resp: ['对齐模型对照演示', '商业伦理案例教学', '伦理案例归档'],
+      work: ['模型对齐对比演示', '案例讲解与讨论', '归档伦理教学材料'] },
+    { key: 'dev-chat', group: 'work', name: '软件开发与维护助手', registeredName: '软件工程', trigger: 'human',
+      duty: '编写代码、排查故障与审查改动',
+      resp: ['编写代码', '排查故障', '审查改动'],
+      work: ['实现功能与脚本', '定位并修复 bug', '代码审查与重构建议'] },
+    { key: 'assistant-chat', group: 'work', name: '日常问答与文档助手', registeredName: '通用助手', trigger: 'human',
+      duty: '问答、网页资料整理、文档生成与项目协调',
+      resp: ['日常问答', '网页资料整理', '文档生成', '项目协调'],
+      work: ['回答日常问题', '整理网页资料', '生成文档', '协调项目任务（含 CityVerse 总控）'] },
+    { key: 'meeting-audio', group: 'production', name: '会议转写与纪要助手', registeredName: '会议纪要官', trigger: 'human',
+      duty: '实时转写、说话人识别、会议纪要与 PPT',
+      resp: ['实时转写', '说话人识别', '会议纪要', '导出 PPT'],
+      work: ['实时/录音转写', '登记说话人声纹', '生成纪要', '导出会议 PPT'] },
+    { key: 'design', group: 'production', name: '界面视觉设计助手', registeredName: '界面设计师', trigger: 'human',
+      duty: '配色、排版、界面动效与视觉检查',
+      resp: ['配色方案', '排版布局', '界面动效', '视觉检查'],
+      work: ['配色与排版', '界面动效', '视觉走查'] },
+    { key: 'music', group: 'production', name: '歌曲与 MV 制作助手', registeredName: '音乐创作', trigger: 'human',
+      duty: '根据主题或歌词制作歌曲与 MV',
+      resp: ['歌词/主题创作', '歌曲制作', 'MV 制作'],
+      work: ['根据主题或歌词作曲', '编曲与混音', '制作 MV'] },
+    { key: 'type-governor', group: 'governance', name: '触发类型治理与任务路由', registeredName: '智能路由 ra', trigger: 'active',
+      duty: '巡检触发方式，支持审批、委派与流水线',
+      resp: ['触发方式巡检', '任务路由', '审批与委派'],
+      work: ['巡检各 agent 触发类型', '路由委派任务', '编排流水线、支持审批'] },
+    { key: 'cost', group: 'governance', name: '用量与预算监控', registeredName: 'CFO 成本官', trigger: 'active',
+      duty: '汇总用量账本、监控预算与推荐模型',
+      resp: ['用量账本汇总', '预算监控', '模型推荐'],
+      work: ['汇总用量账本', '监控预算', '推荐性价比模型'] },
+    { key: 'model', group: 'governance', name: '模型切换与锁定', registeredName: '模型调控官', trigger: 'active',
+      duty: '处理本地模型可用性、降级与手动锁定',
+      resp: ['模型可用性', '降级处理', '手动锁定'],
+      work: ['检测本地模型可用性', '降级切换', '手动锁定模型'] },
+    { key: 'workforce', group: 'governance', name: 'Agent 职责与负载审计', registeredName: 'Agent 总管', trigger: 'active',
+      duty: '检查工作量与职责覆盖，提出增、分、合建议',
+      resp: ['负载审计', '职责覆盖检查', '增减合建议'],
+      work: ['检查工作量', '核对职责覆盖', '提出增/分/合建议'] },
+    { key: 'supervisor', group: 'governance', name: '目标偏离监测', trigger: 'pipeline',
+      duty: '对照核心需求检查目标漂移并提醒纠偏',
+      resp: ['目标对照', '漂移检测', '纠偏提醒'],
+      work: ['对照核心需求', '检测目标漂移', '提醒纠偏'] },
+    { key: 'settler', group: 'support', name: '经验提案与入库', trigger: 'pipeline',
+      duty: '从已完成工作提炼经验，等待人工审核',
+      resp: ['经验提炼', '提案入库'],
+      work: ['从已完成工作提炼经验', '提交提案、等待人工审核'] },
+    { key: 'sentiment', group: 'support', name: '反馈与偏好提炼', trigger: 'pipeline',
+      duty: '从显式反馈提炼偏好并提交经验提案',
+      resp: ['反馈提炼', '偏好沉淀', '经验提案'],
+      work: ['从显式反馈提炼偏好', '沉淀偏好', '提交经验提案'] },
+    { key: 'secretary', group: 'support', name: '日程与邮件跟进', trigger: 'active',
+      duty: '汇总日程、提醒会议和跟进待回复邮件',
+      resp: ['日程汇总', '会议提醒', '邮件跟进'],
+      work: ['汇总日程', '提醒会议', '跟进待回复邮件'] },
+    { key: 'radar', group: 'support', name: '生态资讯雷达', registeredName: '灵感目录', trigger: 'active',
+      duty: '追踪生态动态，整理可用作灵感的资讯',
+      resp: ['生态追踪', '灵感整理'],
+      work: ['追踪生态动态', '整理可用作灵感的资讯'] },
+    { key: 'agent-console', group: 'services', name: 'Agent 总控台', registeredName: 'Agent 总控台', trigger: 'human',
+      duty: '查看经验提案、治理巡检与架构',
+      resp: ['经验提案查看', '治理巡检', '架构总览'],
+      work: ['查看经验提案', '查看治理巡检', '查看架构图'] },
+    { key: 'knowledge', group: 'services', name: '共享知识库', trigger: 'human',
+      duty: '索引与检索本地文献和资料',
+      resp: ['文献索引', '全文检索', '术语图谱'],
+      work: ['索引本地文献资料', '跨库检索', '维护术语图谱'] },
+    { key: 'task-queue', group: 'services', name: '后台任务队列', trigger: 'pipeline',
+      duty: '执行独立后台任务并记录等待与完成状态',
+      resp: ['任务排队', '独立执行', '状态记录'],
+      work: ['执行独立后台任务', '记录等待与完成状态'] },
+    { key: 'cityverse', group: 'services', name: 'CityVerse 项目', trigger: 'human',
+      duty: '查看社区情报、建设计划、执行与门禁',
+      resp: ['社区情报', '建设计划', '执行与门禁'],
+      work: ['查看社区情报', '查看建设计划', '查看执行与门禁'] },
+  ];
 
   // CityVerse 的阶段清单取自工作台已有项目控制台接口；阶段聚合状态不代表节点之间发生了交接。
   const projectStages = [
@@ -68,6 +129,16 @@
       ['ip-guardian', '知识产权登记与巡查', '管理版权留痕、商标监测与授权记录。'],
     ],
   };
+  // 触发类型（与 agent-type-governor.js 四类一致：active/pipeline/gap/human）
+  const triggerColors = { active: '#f59e0b', pipeline: '#0ea5e9', gap: '#dc2626', human: '#16a34a' };
+  const triggerLabels = { active: '主动', pipeline: '链路', gap: '缺口', human: '人工' };
+  const stageTriggers = { collect: 'active', insight: 'pipeline', playbook: 'pipeline', plan: 'pipeline', approval: 'human', execute: 'pipeline', gate: 'pipeline' };
+  const roleTriggers = {
+    selfcheck: 'active', competitor: 'pipeline', research: 'active', analyze: 'pipeline', feed: 'gap',
+    'content-planner': 'human', 'poi-operator': 'human', 'content-executor': 'human', 'quality-gate': 'human',
+    'merchant-advisor': 'human', 'risk-inspector': 'human', 'data-governor': 'human', 'exp-settler': 'human', 'ip-guardian': 'human',
+  };
+
   const layers = [
     { name: '工作台底座', color: '#23665b', groups },
     { name: '项目调度', color: '#994b3b', groups: { dispatch: 'CityVerse 本机总控' } },
@@ -80,14 +151,14 @@
       ...node, kind: node.group === 'services' ? 'resource' : 'agent',
     })).concat(
       { ...cityverse, group: 'cv-intel', kind: 'resource' },
-      { key: 'cv:chief', group: 'dispatch', name: '项目任务调度', kind: 'resource',
+      { key: 'cv:chief', group: 'dispatch', name: '项目任务调度', kind: 'resource', trigger: 'pipeline',
         duty: '从 CityVerse 总控队列领取任务并交给项目执行程序，记录进度与结果。' },
       projectStages.map(([stage, name, duty, metric, unit]) => ({
         key: 'cv:' + stage, group: 'cv-intel', name, duty, stage, metric, unit,
-        kind: stage === 'approval' ? 'resource' : 'agent',
+        kind: stage === 'approval' ? 'resource' : 'agent', trigger: stageTriggers[stage],
       })),
       Object.entries(projectRoles).flatMap(([group, roles]) => roles.map(([key, name, duty, availability]) => ({
-        key: 'cv:' + key, group, name, duty, availability, kind: 'agent',
+        key: 'cv:' + key, group, name, duty, availability, kind: 'agent', trigger: roleTriggers[key],
       }))),
     );
   }
@@ -139,9 +210,11 @@
         duty: d ? d.duty : agent.tag,
         registeredName: agent.name,
         availability: agent.status,
-        trigger: agent.triggerType,
+        trigger: agent.triggerType || (d && d.trigger),
         engine: agent.engineLabel || agent.engine,
         id: agent.id,
+        resp: d ? d.resp : undefined,
+        work: d ? d.work : undefined,
       };
     });
     return nodes.concat(definitions.filter(d => !d.registeredName));
@@ -176,5 +249,5 @@
     return Array.from(edges.values());
   }
 
-  return { layers, relations, graphNodes, graphEdges, interactions, inventory, knownKey };
+  return { layers, relations, graphNodes, graphEdges, interactions, inventory, knownKey, triggerColors, triggerLabels };
 });

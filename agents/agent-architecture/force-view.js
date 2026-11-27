@@ -14,6 +14,8 @@
     recent: { color: '#137c72', width: 2, dash: [] },
     simulation: { color: '#7650ad', width: 1.7, dash: [5, 4] },
   };
+  // 触发类型四类（取自 core.js 单一真相源）
+  const { triggerColors, triggerLabels } = window.AgentArchitecture;
 
   function createGraph(viewport, layers, onSelect) {
     const canvas = viewport.querySelector('canvas');
@@ -272,8 +274,11 @@
         button.querySelector('span').textContent = item.name;
         button.dataset.kind = item.kind;
         button.dataset.state = item.graphState || '';
+        button.dataset.trigger = item.trigger || '';
+        button.style.setProperty('--trigger-color', triggerColors[item.trigger] || 'transparent');
         button.setAttribute('aria-pressed', String(selection === item.key));
-        button.title = [item.name, item.duty, item.graphLabel].filter(Boolean).join('\n');
+        button.title = [item.name, item.duty, item.graphLabel,
+          triggerLabels[item.trigger] && '触发类型：' + triggerLabels[item.trigger]].filter(Boolean).join('\n');
       }
       const nextEdgesKey = JSON.stringify(nextEdges.map(({ from, to, state }) => [from, to, state]));
       const edgeChanged = nextEdgesKey !== JSON.stringify(edges.map(({ from, to, state }) => [from, to, state]));

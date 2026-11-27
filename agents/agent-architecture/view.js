@@ -3,12 +3,16 @@
 
   const root = document.getElementById('agentArchitecture');
   if (!root) return;
-  const { layers, inventory, relations, graphNodes, graphEdges, interactions } = window.AgentArchitecture;
+  const { layers, inventory, relations, graphNodes, graphEdges, interactions, triggerColors, triggerLabels } = window.AgentArchitecture;
   const api = window.ingrid;
   root.innerHTML = `
     <div class="map-header">
       <div><h2>Agent 分层架构图</h2><p id="mapConnection" role="status">正在读取工作台…</p></div>
       <div class="map-controls">
+        <div class="map-views" role="tablist" aria-label="视图切换">
+          <button type="button" id="mapViewForce" role="tab" aria-selected="true">关系图</button>
+          <button type="button" id="mapViewTree" role="tab" aria-selected="false">树状图</button>
+        </div>
         <select id="mapLayer" aria-label="架构层级"><option value="-1">全部层级</option></select>
         <input id="mapSearch" type="search" placeholder="搜索名称或职责" aria-label="搜索名称或职责">
         <label><input id="mapActive" type="checkbox"> 仅进行中</label>
@@ -17,6 +21,10 @@
     <div class="map-legend">
       <span><i></i>固定协作</span><span><i class="map-running-line"></i>正在协作</span>
       <span><i class="map-recent-line"></i>最近 5 分钟完成</span><span><i class="map-simulation-line"></i>演练</span>
+      <span class="map-trigger"><i class="tg tg-active"></i>主动</span>
+      <span class="map-trigger"><i class="tg tg-pipeline"></i>链路</span>
+      <span class="map-trigger"><i class="tg tg-gap"></i>缺口</span>
+      <span class="map-trigger"><i class="tg tg-human"></i>人工</span>
       <span class="map-gesture">拖拽节点或背景，滚轮缩放</span>
     </div>
     <div class="map-layout">
@@ -30,6 +38,7 @@
         <button type="button" id="mapFit">适配</button>
         <button type="button" id="mapReset">重新布局</button>
       </div>
+      <div id="mapTree" class="map-tree" aria-label="树状视图" hidden></div>
       <aside id="mapDetail" class="map-detail" aria-label="节点详情" hidden></aside>
     </div>`;
 
@@ -39,6 +48,11 @@
   const connection = root.querySelector('#mapConnection');
   const detail = root.querySelector('#mapDetail');
   const empty = root.querySelector('#mapEmpty');
+  const tree = root.querySelector('#mapTree');
+  const viewport = root.querySelector('#mapViewport');
+  const navigation = root.querySelector('.map-navigation');
+  const viewForceBtn = root.querySelector('#mapViewForce');
+  const viewTreeBtn = root.querySelector('#mapViewTree');
   const graph = window.createLayeredAgentGraph(root.querySelector('#mapViewport'), layers, key => select(key, true));
   layers.forEach((layer, index) => {
     const option = new Option((index + 1) + ' · ' + layer.name, index);
@@ -46,7 +60,7 @@
   });
 
   const statuses = { running: '运行中', waiting: '待确认', queued: '排队中', done: '已完成', failed: '失败', stopped: '已停止' };
-  const triggers = { active: '定时／主动触发', chain: '链路接续', gap: '缺口触发', manual: '人工触发' };
+  const triggers = { active: '主动（定时）', pipeline: '链路（接续上游）', gap: '缺口（事件触发）', human: '人工（点击/审批）' };
 
   let snapshot = { nodes: inventory(), active: [], recent: [] };
   let nodes = graphNodes(snapshot.nodes);
@@ -112,6 +126,56 @@
     add(row, 'small', summary);
   }
 
+  let viewMode = 'force';
+  function setView(mode) {
+    viewMode = mode;
+    const isTree = mode === 'tree';
+    tree.hidden = !isTree;
+    viewport.hidden = isTree;
+    navigation.hidden = isTree;
+    viewForceBtn.setAttribute('aria-selected', String(!isTree));
+    viewTreeBtn.setAttribute('aria-selected', String(isTree));
+    render();
+    if (!isTree) graph.fit();
+  }
+  viewForceBtn.onclick = () => setView('force');
+  viewTreeBtn.onclick = () => setView('tree');
+
+  function renderTree(items, matches, layer) {
+    if (tree.hidden) return;
+    tree.replaceChildren();
+    layers.forEach((layerDef, li) => {
+      if (layer >= 0 && layer !== li) return;
+      const section = add(tree, 'section', '', 'tree-layer');
+      section.style.setProperty('--layer-color', layerDef.color);
+      add(section, 'h3', (li + 1) + ' · ' + layerDef.name, 'tree-layer-title');
+      Object.entries(layerDef.groups).forEach(([gkey, gtitle]) => {
+        const groupNodes = items.filter(n => n.group === gkey && matches(n));
+        if (!groupNodes.length) return;
+        const group = add(section, 'div', '', 'tree-group');
+        add(group, 'h4', gtitle + ' · ' + groupNodes.length, 'tree-group-title');
+        const ul = add(group, 'ul', '', 'tree-list');
+        groupNodes.forEach(n => {
+          const li = add(ul, 'li', '', 'tree-item');
+          li.style.setProperty('--node-color', layerDef.color);
+          li.classList.toggle('is-selected', n.key === selected);
+          li.classList.toggle('is-resource', n.kind === 'resource');
+          add(li, 'i', '', 'tree-dot');
+          if (n.kind === 'agent' && n.trigger) {
+            const tg = add(li, 'i', '', 'tree-trigger');
+            tg.style.background = triggerColors[n.trigger] || 'transparent';
+            tg.title = '触发类型：' + (triggerLabels[n.trigger] || n.trigger);
+          }
+          const nameBtn = add(li, 'button', n.name, 'tree-name');
+          nameBtn.type = 'button';
+          nameBtn.onclick = () => select(n.key, false);
+          add(li, 'span', n.duty, 'tree-duty');
+          if (n.graphLabel) add(li, 'em', n.graphLabel, 'tree-state');
+        });
+      });
+    });
+  }
+
   function renderDetail(node, active, recent) {
     detail.replaceChildren();
     detail.hidden = !node;
@@ -128,6 +192,16 @@
       triggers[node.trigger], node.engine,
       node.availability === 'soon' && '规划中',
     ].filter(Boolean).join(' · '), 'map-meta');
+    if (node.resp?.length) {
+      add(detail, 'h4', '负责明细');
+      const list = add(detail, 'ul', '', 'map-list');
+      node.resp.forEach(item => add(list, 'li', item));
+    }
+    if (node.work?.length) {
+      add(detail, 'h4', '工作明细');
+      const list = add(detail, 'ul', '', 'map-list');
+      node.work.forEach(item => add(list, 'li', item));
+    }
     if (node.key === 'cityverse' || node.key.startsWith('cv:')) renderProjectDetail(node);
 
     if (!node.stage && (active.length || !node.key.startsWith('cv:'))) add(detail, 'h4', '当前任务');
@@ -259,6 +333,7 @@
     });
     graph.setData(items, graphEdges(items, snapshot.active, snapshot.recent, Date.now()), matches, selected, layer);
     empty.hidden = items.some(node => matches(node) && (layer < 0 || node.group in layers[layer].groups));
+    renderTree(items, matches, layer);
 
     const node = nodes.find(n => n.key === selected);
     const active = snapshot.active.filter(run => touches(run, selected));
