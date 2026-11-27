@@ -237,13 +237,19 @@ async function refreshApprovals() {
   if (s.total === 0) { lastApprovalFingerprint = fp; return; }
   if (fp === lastApprovalFingerprint) return;
   lastApprovalFingerprint = fp;
+  // 待办提醒由「秘书」agent 承担：以秘书身份发通知，而非裸系统弹窗。
+  notifyTodosAsSecretary(s);
+}
+
+/** 秘书 agent：汇总工作台待办后，以秘书身份发系统通知（提醒归口到秘书，不再是裸弹窗） */
+function notifyTodosAsSecretary(s) {
   const parts = [];
   if (s.waiting.length) parts.push(s.waiting.length + ' 个任务需决策');
   if (s.experience.length) parts.push(s.experience.length + ' 条经验提案待审批');
   if (s.cityverse.length) parts.push(s.cityverse.length + ' 条 CityVerse 规划待审批');
   try {
     if (Notification.isSupported()) {
-      new Notification({ title: '你有 ' + s.total + ' 件待办需要处理', body: parts.join(' · ') }).show();
+      new Notification({ title: '📋 秘书 · 你有 ' + s.total + ' 件待办需要处理', body: parts.join(' · ') || '打开工作台查看详情' }).show();
     }
   } catch { /* 通知失败不阻断 */ }
 }
