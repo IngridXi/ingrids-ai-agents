@@ -185,8 +185,11 @@ contextBridge.exposeInMainWorld('ingrid', {
   computerStop: () => ipcRenderer.invoke('computer:stop'),
   onComputerEvent: (cb) => ipcRenderer.on('computer:event', (_e, d) => { if (cb) cb(d || {}); }),
 
-  // Agent 架构图：实时协作状态（Ollama 活跃模型 + 归档进度 + 知识库规模）
+  // Agent 架构图：注册表、实际执行记录与后台队列
   archStatus: () => ipcRenderer.invoke('arch:status'),
+  archDelegation: (event) => ipcRenderer.send('arch:delegation', event),
+  archMeeting: (event) => ipcRenderer.send('arch:meeting', event),
+  cityverseStage: (stage) => ipcRenderer.invoke('arch:cityverse-stage', stage),
   // CityVerse 后台控制台实时概览（采集/洞察/玩法库/建设规划/执行门禁）
   cityverseOverview: () => ipcRenderer.invoke('arch:cityverse-overview'),
   // CityVerse 待审批规划列表 + 审批动作（供架构图「人工审批」节点就地审批）

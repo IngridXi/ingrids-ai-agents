@@ -132,38 +132,18 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 .tabbar{display:flex;gap:8px;margin-top:16px}
 .tabbar button{font-size:13px;font-weight:600;padding:8px 18px}
 .tabbar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
-/* Agent 架构图（深色主题） */
-.arch-statbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}
-.arch-stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-.arch-stat .k{font-size:11px;color:var(--dim)}
-.arch-stat .v{font-size:17px;font-weight:650;margin-top:4px;font-family:var(--mono)}
-.arch-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
-.arch-dot.on{background:var(--ok)}.arch-dot.off{background:var(--err)}
-.arch-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
-.arch-chip{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
-.arch-chip.live{background:var(--warn);color:#0d1117;border-color:var(--warn);font-weight:600}
-.arch-svg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;overflow-x:auto;margin-top:12px}
-.arch-svg svg{display:block}
-.arch-legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--dim);margin-top:12px}
-.arch-legend span{display:flex;align-items:center;gap:6px}
-/* 项目二级架构（可扩展 tab：加项目 = 加 tab + 一张图） */
-.proj-tabbar{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
-.proj-tabbar .lbl{font-size:12px;color:var(--dim);margin-right:2px}
-.proj-tabbar button{font-size:13px;font-weight:600;padding:7px 16px}
-.proj-tabbar button.on{background:var(--purple);border-color:var(--purple);color:#fff}
-.proj-view{margin-top:12px}
-.proj-view .arch-svg{margin-top:0}
-.edge-data{fill:none;stroke:var(--accent);stroke-width:1.2;stroke-dasharray:6 6}
-.edge-own{fill:none;stroke:var(--purple);stroke-width:1.2;stroke-dasharray:2 4}
-.arch-flow{animation:dashflow 1.1s linear infinite}
-.arch-flow-fast{animation:dashflow .45s linear infinite}
-@keyframes dashflow{to{stroke-dashoffset:-12}}
-.arch-node-active{animation:archpulse 1.4s ease-in-out infinite}
-.arch-node-active rect{stroke:var(--warn) !important;stroke-width:2.5}
-.arch-node-recent rect{stroke:var(--warn) !important;stroke-width:2}
-@keyframes archpulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){.arch-flow,.arch-flow-fast,.arch-node-active{animation:none}}
+.cv-flow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:14px 0; }
+.cv-flow button { text-align:left; padding:8px 10px; }
+.cv-flow button[aria-pressed=true] { border-color:var(--accent); }
+.cv-flow button small { display:block; color:var(--dim); margin-top:3px; }
+.cv-flow button small[data-active=true] { color:var(--warn); font-weight:700; }
+.cv-detail { border:1px solid var(--line); background:var(--panel2); border-radius:9px; padding:12px; }
+.cv-detail ul { margin:6px 0; padding-inline-start:22px; }
+.cv-detail li { margin-top:4px; overflow-wrap:anywhere; }
+.cv-reference { margin-top:12px; }
+.cv-reference > summary { cursor:pointer; color:var(--dim); font-size:13px; }
 </style>
+<link rel="stylesheet" href="../agent-architecture/view.css">
 </head>
 <body>
 <header class="topbar">
@@ -280,134 +260,21 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 
   <!-- Agent 架构图：功能 agent 与后台子 agent 的归属关系 + 实时协作状态 -->
   <div id="viewArch" hidden>
-    <section class="panel">
-      <h2>Agent 架构图 · 实时协作状态 <span class="tag" id="archLastRefresh">—</span></h2>
-      <p class="hint">功能 agent 与其后台子 agent（流水线、后端、沉淀官）的归属关系一目了然；每 3 秒读真实状态（Ollama 正在跑哪个模型、伦理归档进度、知识库规模），正在工作的 agent 会琥珀描边 + 呼吸高亮、数据链路加速流动。</p>
-      <div class="arch-statbar">
-        <div class="arch-stat"><div class="k">Ollama 服务</div><div class="v"><span class="arch-dot off" id="archOllamaDot"></span><span id="archOllamaState">检测中…</span></div></div>
-        <div class="arch-stat"><div class="k">伦理归档进度</div><div class="v" id="archEthicsProg">—</div></div>
-        <div class="arch-stat"><div class="k">法务知识库</div><div class="v" id="archLegalCount">—</div></div>
-        <div class="arch-stat"><div class="k">伦理场景库</div><div class="v" id="archSceneCount">—</div></div>
-      </div>
-      <div class="arch-chips" id="archModelChips"></div>
-      <div class="arch-svg" style="padding:0;overflow:hidden;background:#f6f6f3">
-        <iframe src="../agent-architecture/index.html" title="Agent 架构图（动态）" style="width:100%;height:700px;border:0;border-radius:12px;display:block;background:#f6f6f3"></iframe>
-      </div>
-      <div class="arch-legend">
-        <span>🖱️ 悬停 → 高亮邻居 + 职责</span>
-        <span>👆 点击 → 任务 / 明细 / 交互</span>
-        <span>🖐️ 拖拽 · 滚轮缩放</span>
-        <span>🔀 右上角切 网络图 / 树状图</span>
-      </div>
-      <div class="hint" id="archFoot">正在连接工作台…</div>
-    </section>
+    <section id="agentArchitecture" class="panel"></section>
 
-    <!-- 项目二级架构（可扩展：加项目 = 加 tab + 一张二级架构图） -->
-    <section class="panel">
-      <h2>项目二级架构 <span class="tag">工作台 = 一级底座 · 项目 = 二级架构</span></h2>
-      <p class="hint">工作台承载多个项目/用途，每个项目有自己的二级 agent 架构。CityVerse 是第一个项目 tab；未来加新项目，只需在下方 tab 栏加一条、再挂一张架构图。</p>
-      <div class="proj-tabbar" id="projTabbar">
-        <span class="lbl">项目：</span>
-        <button class="on" data-proj="cityverse">CityVerse</button>
-        <!-- 未来新项目：<button data-proj="xxx">新项目</button> -->
-      </div>
-      <div class="proj-view">
-        <div class="arch-svg" id="projView-cityverse">
-          <svg viewBox="0 0 760 1180" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
-            <title>CityVerse 二级架构</title>
-            <desc>CityVerse 项目 = intel 建设流水线（舆情驱动）+ intel/strategy 战略参谋（战略驱动）+ ops 运营 Agent 组 + 串联关系</desc>
-
-            <!-- ============ intel 建设流水线（舆情驱动） ============ -->
-            <rect x="30" y="24" width="700" height="300" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="44" font-size="12" font-weight="600" fill="#8b949e">intel/ 建设流水线 · 舆情驱动闭环 · Python + PostgreSQL（每日 07:30 自动 → 停在待审批）</text><text id="cv-status" x="716" y="44" text-anchor="end" font-size="11" font-weight="600" fill="#8b949e">连接中…</text>
-
-            <g id="cv-n-collect"><rect x="44" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="116" y="80" text-anchor="end" font-size="9" fill="#e3b341">主动</text><text x="82" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">采集</text><text id="cv-findings" x="82" y="110" text-anchor="middle" font-size="10" fill="#8b949e">舆情·情感</text></g>
-            <line x1="120" y1="99" x2="140" y2="99" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-insight"><rect x="140" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="212" y="80" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="178" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">洞察</text><text id="cv-insights" x="178" y="110" text-anchor="middle" font-size="10" fill="#8b949e">教训/功能</text></g>
-            <line x1="216" y1="99" x2="236" y2="99" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-playbook"><rect x="236" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="308" y="80" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="274" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">玩法库</text><text id="cv-playbook" x="274" y="110" text-anchor="middle" font-size="10" fill="#8b949e">AR 化</text></g>
-            <line x1="312" y1="99" x2="332" y2="99" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-plan"><rect x="332" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="404" y="80" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="370" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">规划</text><text id="cv-plans" x="370" y="110" text-anchor="middle" font-size="10" fill="#8b949e">ITAgent</text></g>
-            <line x1="408" y1="99" x2="428" y2="99" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-exec"><rect x="428" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="500" y="80" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="466" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">执行</text><text id="cv-exec" x="466" y="110" text-anchor="middle" font-size="10" fill="#8b949e">patch</text></g>
-            <line x1="504" y1="99" x2="524" y2="99" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-gate"><rect x="524" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="596" y="80" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="562" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">门禁</text><text id="cv-gate" x="562" y="110" text-anchor="middle" font-size="10" fill="#8b949e">审查</text></g>
-            <line x1="600" y1="99" x2="620" y2="99" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-land"><rect x="620" y="68" width="76" height="62" rx="8" fill="#14243c" stroke="#58a6ff"/><text x="692" y="80" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="658" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="#79b8ff">落地</text><text x="658" y="110" text-anchor="middle" font-size="10" fill="#8b949e">apply</text></g>
-
-            <g id="cv-n-approve" style="cursor:pointer" onclick="openCvApprove()"><rect x="236" y="156" width="188" height="54" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="420" y="168" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text id="cv-approve" x="330" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">人工审批</text><text id="cv-approve-sub" x="330" y="198" text-anchor="middle" font-size="10" fill="#8b949e">dashboard.py · 127.0.0.1:8756</text></g>
-            <g><rect x="470" y="156" width="220" height="54" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="686" y="168" text-anchor="end" font-size="9" fill="#e3b341">定时</text><text x="580" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">调度</text><text x="580" y="198" text-anchor="middle" font-size="10" fill="#8b949e">WorkBuddy automation 07:30</text></g>
-
-            <g><rect x="44" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="194" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">PostgreSQL cityverse 库</text><text x="194" y="282" text-anchor="middle" font-size="10" fill="#8b949e">community / insights / playbook / build 等 10 表</text></g>
-            <g><rect x="380" y="240" width="300" height="56" rx="8" fill="#1c2129" stroke="#30363d"/><text x="530" y="264" text-anchor="middle" font-size="12" font-weight="600" fill="#e6edf3">intel/daily 简报</text><text x="530" y="282" text-anchor="middle" font-size="10" fill="#8b949e">竞品/技术/素材（research 产出 → 喂规划）</text></g>
-
-            <!-- ============ intel/strategy 战略参谋（战略驱动） ============ -->
-            <rect x="30" y="340" width="700" height="236" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="360" font-size="12" font-weight="600" fill="#8b949e">intel/strategy/ 战略参谋 Agent 组 · 战略驱动闭环（每日 08:00 自动 · launchd 常驻）</text>
-
-            <g id="cv-n-selfcheck"><rect x="44" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="160" y="392" text-anchor="end" font-size="9" fill="#e3b341">主动</text><text x="104" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">自我检测</text><text x="104" y="422" text-anchor="middle" font-size="10" fill="#8b949e">盘点能力·短板</text></g>
-            <line x1="164" y1="408" x2="182" y2="408" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-competitor"><rect x="182" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="298" y="392" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="242" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">竞品对标</text><text x="242" y="422" text-anchor="middle" font-size="10" fill="#8b949e">vs 竞品·差距</text></g>
-            <line x1="302" y1="408" x2="320" y2="408" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-research"><rect x="320" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="436" y="392" text-anchor="end" font-size="9" fill="#e3b341">主动</text><text x="380" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">路线资讯</text><text x="380" y="422" text-anchor="middle" font-size="10" fill="#8b949e">检索动态·简报</text></g>
-            <line x1="440" y1="408" x2="458" y2="408" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-analyze"><rect x="458" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="574" y="392" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="518" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">差距分析</text><text x="518" y="422" text-anchor="middle" font-size="10" fill="#8b949e">优先级清单</text></g>
-            <line x1="578" y1="408" x2="596" y2="408" class="edge-data arch-flow cv-link"/>
-            <g id="cv-n-feed"><rect x="596" y="380" width="120" height="56" rx="8" fill="#0f2424" stroke="#39d2c0"/><text x="712" y="392" text-anchor="end" font-size="9" fill="#8b949e">链路</text><text x="656" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee7d8">转建设任务</text><text x="656" y="422" text-anchor="middle" font-size="10" fill="#8b949e">→ build_plans</text></g>
-
-            <!-- 差距分析判出「素材缺口」→ 缺口驱动触发素材采购（asset_agent，也可由 chief 派发） -->
-            <line x1="518" y1="436" x2="518" y2="452" stroke="#ff7b72" stroke-width="1.2" stroke-dasharray="4 4"/>
-            <g id="cv-n-asset"><rect x="458" y="456" width="120" height="56" rx="8" fill="#2a1610" stroke="#ff7b72"/><text x="574" y="468" text-anchor="end" font-size="9" fill="#ff7b72">缺口</text><text x="518" y="480" text-anchor="middle" font-size="12" font-weight="600" fill="#ffb0a8">素材采购</text><text x="518" y="498" text-anchor="middle" font-size="10" fill="#8b949e">asset_agent·chief</text></g>
-
-            <text x="44" y="532" font-size="10.5" fill="#6e7681">feed 产出 build_plans（停待审批）→ 汇入上方主链；差距分析判出「素材缺口」→ 缺口驱动触发素材采购（也可由 chief 派发）</text>
-
-            <!-- ============ ops 运营 Agent 组 ============ -->
-            <rect x="30" y="592" width="700" height="246" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="612" font-size="12" font-weight="600" fill="#8b949e">ops/ 运营 Agent 组 · 浏览器 JS · localStorage + 云数据库（人工驱动 · 人在浏览器里点）</text>
-
-            <g><rect x="44" y="636" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="116" y="648" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="82" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容策划</text></g>
-            <line x1="120" y1="664" x2="140" y2="664" class="edge-data arch-flow cv-link"/>
-            <g><rect x="140" y="636" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="212" y="648" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="178" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">点位运营</text></g>
-            <line x1="216" y1="664" x2="236" y2="664" class="edge-data arch-flow cv-link"/>
-            <g><rect x="236" y="636" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="308" y="648" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="274" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">内容执行</text></g>
-            <line x1="312" y1="664" x2="332" y2="664" class="edge-data arch-flow cv-link"/>
-            <g><rect x="332" y="636" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="404" y="648" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="370" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">质量门禁</text></g>
-            <line x1="408" y1="664" x2="428" y2="664" class="edge-data arch-flow cv-link"/>
-            <g><rect x="428" y="636" width="76" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="500" y="648" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="466" y="668" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">经验沉淀</text></g>
-
-            <g><rect x="44" y="716" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="128" y="728" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="88" y="740" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">商户顾问</text><text x="88" y="758" text-anchor="middle" font-size="10" fill="#8b949e">soon</text></g>
-            <g><rect x="140" y="716" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="224" y="728" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="184" y="748" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">风控巡检</text></g>
-            <g><rect x="236" y="716" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="320" y="728" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="280" y="748" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">数据治理</text></g>
-            <g><rect x="332" y="716" width="88" height="56" rx="8" fill="#1f1a3a" stroke="#a371f7"/><text x="416" y="728" text-anchor="end" font-size="9" fill="#7ee787">人工</text><text x="376" y="748" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">IP 保护</text></g>
-            <g><rect x="470" y="716" width="220" height="56" rx="8" fill="#142a1f" stroke="#3fb950"/><text x="580" y="740" text-anchor="middle" font-size="12" font-weight="600" fill="#7ee787">云数据库</text><text x="580" y="758" text-anchor="middle" font-size="10" fill="#8b949e">tasks/merchants/coupons → 玩家客户端</text></g>
-
-            <!-- ============ 串联关系 ============ -->
-            <rect x="30" y="854" width="700" height="300" rx="8" fill="none" stroke="#30363d"/>
-            <text x="44" y="878" font-size="12" font-weight="600" fill="#8b949e">串联关系 · 调度源（舆情 07:30 + 战略 08:00）+ chief 总控派发 + 控制台互链</text>
-
-            <g><rect x="44" y="900" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="204" y="924" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">WorkBuddy automation 07:30</text><text x="204" y="942" text-anchor="middle" font-size="10" fill="#8b949e">→ 触发采集（舆情驱动调度源）</text></g>
-            <g><rect x="396" y="900" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="924" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">战略参谋 scheduler 08:00</text><text x="556" y="942" text-anchor="middle" font-size="10" fill="#8b949e">→ research/selfcheck 自主 → 差距 → build_plans</text></g>
-            <g><rect x="44" y="988" width="320" height="56" rx="8" fill="#241a2e" stroke="#a371f7"/><text x="204" y="1012" text-anchor="middle" font-size="12" font-weight="600" fill="#c9b3ff">chief 总控（常驻调度）</text><text x="204" y="1030" text-anchor="middle" font-size="10" fill="#8b949e">agent_jobs → codex/ingrids/intel/strategy/asset/shell</text></g>
-            <g><rect x="396" y="988" width="320" height="56" rx="8" fill="#2a1a12" stroke="#d29922"/><text x="556" y="1012" text-anchor="middle" font-size="12" font-weight="600" fill="#e3b341">两控制台互链</text><text x="556" y="1030" text-anchor="middle" font-size="10" fill="#8b949e">ops/index.html ↔ dashboard.py</text></g>
-
-            <text x="44" y="1082" font-size="10.5" fill="#6e7681">触发类型：主动(琥珀·每日定时·仅采集/research/selfcheck) / 链路(灰·被动接续上游) / 缺口(珊瑚·事件触发·仅asset_agent) / 人工(绿·人等点)</text>
-            <text x="44" y="1100" font-size="10.5" fill="#6e7681">人工驱动还含工作台 3 聊天 agent（软件工程/研究/伦理，人等对话）——见一级架构图「功能 agent」区</text>
-            <text x="44" y="1118" font-size="10.5" fill="#6e7681">权威名册：docs/41-agent-orchestration.md + docs/42-chief-orchestration.md · 未来新项目 = 加 tab + 复用该结构</text>
-          </svg>
-        </div>
-        <div class="arch-legend" style="margin-top:10px">
-          <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="6 6"/></svg>数据流（流动虚线 · 常驻在线）</span>
-          <span><svg width="34" height="8"><rect x="0" y="0" width="34" height="8" rx="4" fill="#14243c" stroke="#d29922" stroke-width="1.5"/></svg>琥珀描边 + 呼吸 = 正在工作</span>
-        </div>
-        <div class="arch-legend" style="margin-top:6px">
-          <span>触发类型：</span>
-          <span style="color:#e3b341">● 主动</span><span style="color:#6e7681">时间驱动·每日定时</span>
-          <span style="color:#8b949e">● 链路</span><span style="color:#6e7681">被动接续上游</span>
-          <span style="color:#ff7b72">● 缺口</span><span style="color:#6e7681">事件触发·按需</span>
-          <span style="color:#7ee787">● 人工</span><span style="color:#6e7681">人等点/审批</span>
-        </div>
-        <div class="hint" style="margin-top:10px">ops/ 运营总控台（浏览器打开 ops/index.html）· intel/ 建设控制台（python3 intel/dashboard.py → 127.0.0.1:8756）</div>
-      </div>
+    <section class="panel" id="projView-cityverse">
+      <h2>CityVerse 项目架构</h2>
+      <p class="hint" id="cv-status" role="status">等待连接本机 CityVerse 控制台</p>
+      <div class="cv-flow" id="cv-flow" aria-label="社区情报建设流程"></div>
+      <div id="cv-detail" class="cv-detail"></div>
+      <details class="cv-reference">
+        <summary>战略研究与项目调度</summary>
+        <div class="cv-flow" id="cv-strategy"></div>
+      </details>
+      <details class="cv-reference">
+        <summary>运营与内容管理</summary>
+        <div class="cv-flow" id="cv-operations"></div>
+      </details>
     </section>
   </div>
 </main>
@@ -777,155 +644,149 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   $('#tabConsole').onclick = function () { switchView('console'); };
   $('#tabArch').onclick = function () { switchView('arch'); };
 
-  // 项目二级架构 tab 切换（配置数组驱动，可扩展）
-  // 加新项目：① 往 PROJ_TABS 加 id；② 在 HTML 的 #projTabbar 加一个 <button data-proj="id">；③ 加一个 <div id="projView-id">。
-  var PROJ_TABS = ['cityverse'];
-  function switchProj(pid) {
-    PROJ_TABS.forEach(function (id) {
-      var v = document.getElementById('projView-' + id);
-      if (v) v.style.display = (id === pid) ? '' : 'none';
-    });
-  }
-  var projBar = document.getElementById('projTabbar');
-  if (projBar) projBar.addEventListener('click', function (ev) {
-    var btn = ev.target.closest('[data-proj]');
-    if (!btn) return;
-    projBar.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b === btn); });
-    switchProj(btn.getAttribute('data-proj'));
-  });
-
-  var IS_ARCH = !!(window.ingrid && window.ingrid.archStatus);
-  var MODEL_AGENT_MAP = [
-    { re: /uncensored/i,     nodes: ['n-ethics', 'p1'] },                                   // 伦理生成 qwen3-uncensored-16k / qwen3:32b-uncensored
-    { re: /bge-m3/i,         nodes: ['p3'] },                                               // 伦理去重
-    { re: /qwen2\.5vl/i,     nodes: ['n-computer', 'n-cubackend'] },                        // 电脑操作员
-    { re: /deepseek-r1/i,    nodes: ['n-dev'] },                                            // 软件工程审稿
-    { re: /qwen3\.8-16k/i,   nodes: ['p2'] },                                               // 伦理审查（注意与 27b 区分）
-    { re: /qwen3\.8:27b/i,   nodes: ['n-assistant', 'n-meeting', 'n-mtbackend'] },          // 通用助手/会议纪要官
-    { re: /qwen3:32b(?!-)/i, nodes: ['n-knowledge'] }                                       // 知识库 digest（排除 -uncensored）
-  ];
   function aid(id) { return document.getElementById(id); }
-  function fmtClock(ts) {
-    var d = new Date(ts), p = function (x) { return String(x).padStart(2, '0'); };
-    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
-  }
-  function clearArchActive() {
-    document.querySelectorAll('.arch-node-active').forEach(function (n) { n.classList.remove('arch-node-active'); });
-    document.querySelectorAll('.arch-flow-fast').forEach(function (n) { n.classList.remove('arch-flow-fast'); });
-  }
-  function setArchActive(id) { var n = aid(id); if (n) n.classList.add('arch-node-active'); }
+  const stages = [
+    ['collect', '社区舆情采集', '读取社区来源并保存采集结果，供洞察提炼使用。', 'findings', '条采集结果'],
+    ['insight', '社区洞察提炼', '汇总采集结果，将洞察交给玩法整理与建设规划。', 'insights', '条洞察'],
+    ['playbook', '玩法整理', '维护玩法点子，供建设规划引用。', 'playbook', '条玩法'],
+    ['plan', '建设规划', '汇总洞察与玩法，生成待人工审核的建设计划。', 'plans', '条计划'],
+    ['approval', '人工审批', '查看待审计划。经人工批准后才能从控制台启动执行。', 'plansPending', '条待审'],
+    ['execute', '批准计划执行', '根据已批准的计划执行建设，执行结果进入质量门禁。', 'runs', '次执行'],
+    ['gate', '执行质量门禁', '审查执行结果并记录通过或驳回。', 'gates', '次门禁'],
+  ];
+  const projectRoles = {
+    'cv-strategy': [
+      ['selfcheck', '项目能力盘点', '盘点仓库现状，将能力快照与短板交给路线差距分析。'],
+      ['competitor', '竞品对标', '比较参考项目，把维度差异交给路线差距分析。'],
+      ['research', '路线资讯研究', '围绕路线图收集资讯，将简报交给路线差距分析。'],
+      ['analyze', '路线差距分析', '汇总项目能力、竞品与资讯，并给出优先级。'],
+      ['feed', '建设任务提案', '将差距分析转为待审批的建设规划。'],
+      ['chief', '项目任务调度', '从任务队列领取任务并交给项目执行程序，记录进度与结果。'],
+    ],
+    'cv-operations': [
+      ['content-planner', '运营内容策划', '将活动需求整理成待审批的任务说明。'],
+      ['poi-operator', '点位数据诊断', '检查商圈点位、街景路线和 AR 锚点，给出修复建议。'],
+      ['content-executor', '运营内容上架', '处理已获批准的活动、折扣和内容更新。'],
+      ['quality-gate', '运营内容质检', '审查运营内容的数值、文案和预算。'],
+      ['merchant-advisor', '商户折扣建议（规划中）', '为商户折扣方案提供审批建议。'],
+      ['risk-inspector', '游戏异常巡检', '检查异常用券、坐标漂移等风险信号。'],
+      ['data-governor', '运营数据对账', '核对点位、商户、券和玩家数据。'],
+      ['exp-settler', '运营经验提案', '从已解决的运营事项整理可复用的经验。'],
+      ['ip-guardian', '知识产权登记与巡查', '管理版权留痕、商标监测与授权记录。'],
+    ],
+  };
+  let selectedStage = 'collect';
+  let projectStatus = null;
+  let polling = false;
+  let detailGeneration = 0;
 
-  function renderArch(s) {
-    if (!s) { aid('archFoot').textContent = '无法获取状态（非桌面环境，请在工作台内打开）'; return; }
-    aid('archLastRefresh').textContent = '更新于 ' + fmtClock(s.now);
-    var dot = aid('archOllamaDot');
-    if (s.ollamaOnline) { dot.className = 'arch-dot on'; aid('archOllamaState').textContent = '在线'; }
-    else { dot.className = 'arch-dot off'; aid('archOllamaState').textContent = '离线'; }
-    aid('archEthicsProg').textContent = s.ethics.total ? (s.ethics.done + ' / ' + s.ethics.total + (s.ethics.running ? ' · 运行中' : '')) : '—';
-    aid('archLegalCount').textContent = s.legal.laws ? (s.legal.laws + ' 条') : '—';
-    aid('archSceneCount').textContent = s.sceneFiles ? (s.sceneFiles + ' 个') : '—';
+  const flow = aid('cv-flow');
+  const stageButtons = new Map();
+  function addStage(container, key, title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = title;
+    button.append(document.createElement('small'));
+    button.onclick = () => {
+      selectedStage = key;
+      renderCityverse();
+      renderStage();
+      if (container !== flow) aid('cv-detail').scrollIntoView({ block: 'nearest' });
+    };
+    stageButtons.set(key, button);
+    container.append(button);
+  }
 
-    var chips = aid('archModelChips'); chips.innerHTML = '';
-    if (s.ollamaOnline && s.activeModels.length) {
-      s.activeModels.forEach(function (m) {
-        var c = document.createElement('span'); c.className = 'arch-chip live'; c.textContent = 'GPU 活跃 · ' + m.name; chips.appendChild(c);
-      });
-    } else if (s.ollamaOnline) {
-      var c = document.createElement('span'); c.className = 'arch-chip'; c.textContent = '无模型加载（空闲）'; chips.appendChild(c);
-    } else {
-      var c2 = document.createElement('span'); c2.className = 'arch-chip'; c2.textContent = 'Ollama 离线'; chips.appendChild(c2);
+  stages.forEach(([key, title], index) => {
+    if (index) {
+      const arrow = document.createElement('span');
+      arrow.textContent = '→';
+      arrow.setAttribute('aria-hidden', 'true');
+      flow.append(arrow);
     }
+    addStage(flow, key, title);
+  });
+  for (const [id, roles] of Object.entries(projectRoles)) {
+    for (const [key, title] of roles) addStage(aid(id), key, title);
+  }
 
-    clearArchActive();
-    if (s.ollamaOnline) {
-      var hit = {};
-      s.activeModels.forEach(function (m) {
-        MODEL_AGENT_MAP.forEach(function (rule) { if (rule.re.test(m.name)) rule.nodes.forEach(function (id) { hit[id] = true; }); });
-      });
-      Object.keys(hit).forEach(function (id) { setArchActive(id); });
-      if (Object.keys(hit).length) {
-        ['wf-ethics', 'wf-p1', 'wf-p2', 'wf-p3', 'wf-write'].forEach(function (id) { var e = aid(id); if (e) e.classList.add('arch-flow-fast'); });
+  function renderCityverse() {
+    const online = projectStatus?.online;
+    aid('cv-status').textContent = online
+      ? '控制台已连接 · ' + new Date(projectStatus.now).toLocaleTimeString('zh-CN')
+      : projectStatus?.error || '桌面工作台连接本机 CityVerse 控制台后显示实时记录';
+    const states = projectStatus?.active || {};
+    const active = {
+      approval: states.pendingApproval ? states.pendingApproval + ' 条待审批' : '',
+      execute: states.plansExecuting ? states.plansExecuting + ' 条执行中' : '',
+      gate: states.gatesReviewing ? states.gatesReviewing + ' 条审查中' : '',
+    };
+    for (const [key, button] of stageButtons) button.setAttribute('aria-pressed', String(selectedStage === key));
+    for (const [key, , , field, unit] of stages) {
+      const button = stageButtons.get(key);
+      const line = button.querySelector('small');
+      line.textContent = online ? active[key] || projectStatus[field] + ' ' + unit : '';
+      line.dataset.active = String(!!online && !!active[key]);
+    }
+  }
+
+  async function renderStage() {
+    const pane = aid('cv-detail');
+    if (pane.contains(document.activeElement)) return;
+    const generation = ++detailGeneration;
+    const stage = stages.find(item => item[0] === selectedStage);
+    const [key, title, duty] = stage || Object.values(projectRoles).flat().find(item => item[0] === selectedStage);
+    pane.innerHTML = '<strong>' + esc(title) + '</strong><p class="hint">' + esc(duty) + '</p>';
+    if (!stage) {
+      pane.insertAdjacentHTML('beforeend', '<p class="hint">这个角色的执行与协作记录由 CityVerse 自己的面板管理，工作台尚未接入。</p>');
+      return;
+    }
+    if (key === 'approval' && API.cityversePendingPlans) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = '打开待审批清单';
+      button.onclick = openCvApprove;
+      pane.append(button);
+    }
+    const status = document.createElement('div');
+    status.className = 'hint';
+    pane.append(status);
+    if (!projectStatus?.online || !API.cityverseStage) {
+      status.textContent = '当前无法读取阶段记录。';
+      return;
+    }
+    try {
+      const result = await API.cityverseStage(key);
+      if (generation !== detailGeneration) return;
+      if (result.error) {
+        status.textContent = result.error;
+        return;
       }
-    }
-    var activeCount = document.querySelectorAll('.arch-node-active').length;
-    aid('archFoot').textContent = s.ollamaOnline
-      ? (activeCount ? ('检测到 ' + activeCount + ' 个 agent 正在工作（模型活跃）') : 'Ollama 在线 · 所有 agent 待机')
-      : 'Ollama 离线 · 本地模型 agent 待机';
-  }
-
-  function pollArch() {
-    if (!IS_ARCH) return;
-    window.ingrid.archStatus().then(renderArch).catch(function (e) { aid('archFoot').textContent = '状态获取失败：' + (e && e.message || e); });
-  }
-
-  // CityVerse 二级架构实时状态：主进程探测 intel/dashboard.py /api/overview
-  var IS_CV_LIVE = !!(window.ingrid && window.ingrid.cityverseOverview);
-  function setCvTxt(id, txt) { var e = aid(id); if (e) e.textContent = txt; }
-  function cvNode(id) { var t = aid(id); return t ? t.parentNode : null; }
-  function cvSetActive(id, on) { var g = cvNode(id); if (g) g.classList.toggle('arch-node-active', !!on); }
-  function cvSetRecent(id, on) { var g = cvNode(id); if (g) g.classList.toggle('arch-node-recent', !!on); }
-  function recentlyActive(isoStr, minutes) { return !!isoStr && (Date.now() - Date.parse(isoStr)) < minutes * 60000; }
-  function agoText(isoStr) {
-    if (!isoStr) return '';
-    var m = Math.round((Date.now() - Date.parse(isoStr)) / 60000);
-    return m < 1 ? '刚刚' : (m + ' 分钟前');
-  }
-  function cvClearActive() {
-    document.querySelectorAll('#projView-cityverse .arch-node-active').forEach(function (n) { n.classList.remove('arch-node-active'); });
-    document.querySelectorAll('#projView-cityverse .arch-node-recent').forEach(function (n) { n.classList.remove('arch-node-recent'); });
-    document.querySelectorAll('#projView-cityverse .cv-link.arch-flow-fast').forEach(function (l) { l.classList.remove('arch-flow-fast'); });
-  }
-  function cvSetFlow(on) {
-    document.querySelectorAll('#projView-cityverse .cv-link').forEach(function (l) { l.classList.toggle('arch-flow-fast', !!on); });
-  }
-  function renderCityverse(s) {
-    var st = aid('cv-status');
-    if (!st) return;
-    if (!s) { st.textContent = '不可用'; return; }
-    cvClearActive();
-    if (s.online) {
-      st.setAttribute('fill', '#3fb950');
-      st.textContent = '在线 · 更新于 ' + fmtClock(s.now);
-      setCvTxt('cv-findings', '采集 ' + s.findings + ' 条');
-      setCvTxt('cv-insights', '洞察 ' + s.insights + ' 条');
-      setCvTxt('cv-playbook', '玩法 ' + s.playbook + ' 条');
-      setCvTxt('cv-plans', '规划 ' + s.plans + ' · 待批 ' + s.plansPending);
-      setCvTxt('cv-exec', '执行 ' + s.runs + ' 次');
-      setCvTxt('cv-gate', '门禁 ' + s.gates + ' 次');
-      // 「正在工作」动态高亮：执行中→执行节点琥珀呼吸；审查中→门禁；待审批→人工审批
-      var a = s.active || {};
-      var executing = (a.tasksRunning > 0) || (a.plansExecuting > 0);
-      var reviewing = a.gatesReviewing > 0;
-      var waiting = a.pendingApproval > 0;
-      cvSetActive('cv-exec', executing);
-      cvSetActive('cv-gate', reviewing);
-      cvSetActive('cv-approve', waiting);
-      var approveSub = aid('cv-approve-sub');
-      if (approveSub) approveSub.textContent = waiting ? ('点击审批 · ' + s.plansPending + ' 条待批') : 'dashboard.py · 127.0.0.1:8756';
-      cvSetFlow(executing || reviewing);
-      // 「最近活跃」：任务跑得比轮询快，完成后保持琥珀描边 + 副文字标注（10 分钟窗）
-      var recentRun = recentlyActive(a.lastRunAt, 10);
-      var recentGate = recentlyActive(a.lastGateAt, 10);
-      cvSetRecent('cv-exec', !executing && recentRun);
-      cvSetRecent('cv-gate', !reviewing && recentGate);
-      if (recentRun) setCvTxt('cv-exec', '执行 ' + s.runs + ' 次 · ' + agoText(a.lastRunAt));
-      if (recentGate) setCvTxt('cv-gate', '门禁 ' + s.gates + ' 次 · ' + agoText(a.lastGateAt));
-    } else {
-      st.setAttribute('fill', '#d29922');
-      st.textContent = '控制台未启动';
-      setCvTxt('cv-findings', '舆情·情感');
-      setCvTxt('cv-insights', '教训/功能');
-      setCvTxt('cv-playbook', 'AR 化');
-      setCvTxt('cv-plans', 'ITAgent');
-      setCvTxt('cv-exec', 'patch');
-      setCvTxt('cv-gate', '审查');
+      status.textContent = result.items.length ? '控制台近期记录' : '暂无记录';
+      const list = document.createElement('ul');
+      result.items.forEach(item => {
+        const row = document.createElement('li');
+        row.textContent = [item.title, item.status].filter(Boolean).join(' · ');
+        list.append(row);
+      });
+      if (list.childNodes.length) pane.append(list);
+    } catch {
+      if (generation === detailGeneration) status.textContent = '阶段记录暂时无法读取。';
     }
   }
-  function pollCityverse() {
-    if (!IS_CV_LIVE) return;
-    window.ingrid.cityverseOverview().then(renderCityverse).catch(function (e) {
-      renderCityverse({ online: false, error: String((e && e.message) || e), now: Date.now(), findings: 0, insights: 0, playbook: 0, plans: 0, plansPending: 0, runs: 0, gates: 0 });
-    });
+
+  async function pollCityverse() {
+    if (!API.cityverseOverview || polling) return;
+    polling = true;
+    try {
+      projectStatus = await API.cityverseOverview();
+    } catch {
+      projectStatus = { online: false, error: '无法读取 CityVerse 控制台' };
+    } finally {
+      polling = false;
+      renderCityverse();
+      renderStage();
+    }
   }
 
   // —— CityVerse 就地审批：点击「人工审批」节点弹出待审批列表，直接批准并执行 / 拒绝 ——
@@ -955,7 +816,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     if (!(window.ingrid && window.ingrid.cityversePendingPlans)) { body.innerHTML = '<div style="color:#f85149">当前页面未连接工作台主进程，无法就地审批。</div>'; return; }
     window.ingrid.cityversePendingPlans().then(function (res) {
       res = res || {};
-      if (!res.online) {
+      if (!res.online || res.error) {
         body.innerHTML = '<div style="color:#f85149">' + cvEsc(res.error || '控制台未启动') + '</div><div style="margin-top:6px;color:#8b949e">请先在终端启动：python3 ~/Dev/cityverse-ar/intel/dashboard.py</div>';
         if (cnt) cnt.textContent = '';
         return;
@@ -988,7 +849,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     }).catch(function (e) { cvApErr('操作失败：' + ((e && e.message) || e)); });
   }
   function doCvReject(planId) {
-    var reason = window.prompt('拒绝理由（可留空）：') || '';
+    var reason = window.prompt('拒绝理由（可留空）：');
     if (reason === null) return;
     var body = aid('cv-ap-body'); if (body) body.innerHTML = '<div style="color:#8b949e">拒绝 #' + planId + '…</div>';
     window.ingrid.cityversePlanAction(planId, 'reject', reason).then(function (r) {
@@ -1003,12 +864,13 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   window.doCvApprove = doCvApprove;
   window.doCvReject = doCvReject;
 
-  if (IS_ARCH) {
-    document.querySelectorAll('#viewArch .edge-data').forEach(function (e) { e.classList.add('arch-flow'); });
-    pollArch(); setInterval(pollArch, 3000);
-    pollCityverse(); setInterval(pollCityverse, 2000);
-  } else {
-    renderArch(null);
+  renderCityverse();
+  renderStage();
+  if (API.cityverseOverview) {
+    $('#tabArch').addEventListener('click', pollCityverse);
+    setInterval(function () {
+      if (!$('#viewArch').hidden) pollCityverse();
+    }, 5000);
   }
 })();
 
@@ -1022,5 +884,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   loadOverview(); loadProposals(); loadLibrary(); loadGovernance(); loadSentiment();
 })();
 </script>
+<script src="../../agent-architecture-core.js"></script>
+<script src="../agent-architecture/view.js"></script>
 </body>
 </html>

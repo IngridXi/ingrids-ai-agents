@@ -164,6 +164,9 @@
     registry: registry, router: router, ledger: ledger, executor: executor,
     providers: providers,
     onEvent: log, onApproval: askApproval,
+    onActivity: function (event) {
+      if (window.ingrid && window.ingrid.archDelegation) window.ingrid.archDelegation(event);
+    },
   });
   window.__orchestrator = orch;
   window.__ledger = ledger;

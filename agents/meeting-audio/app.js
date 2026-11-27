@@ -91,7 +91,11 @@
   function openWs() {
     try { ws = new WebSocket(WS_URL); } catch (e) { ws = null; setStatus(el('status'), '无法连接实时服务（' + WS_URL + '）', 'err'); return; }
     ws.binaryType = 'arraybuffer';
-    ws.onopen = function () { setStatus(el('status'), '实时服务已连接，开始说话吧', 'ok'); };
+    var finishActivity;
+    ws.onopen = function () {
+      finishActivity = startActivity('live');
+      setStatus(el('status'), '实时服务已连接，开始说话吧', 'ok');
+    };
     ws.onmessage = function (ev) {
       var msg = JSON.parse(ev.data);
       if (msg.type === 'ready') { setStatus(el('status'), '实时转写就绪，开始说话吧', 'ok'); }
@@ -99,7 +103,7 @@
       else if (msg.type === 'done') { setStatus(el('status'), '实时转写结束', 'ok'); }
     };
     ws.onerror = function () { setStatus(el('status'), '实时服务连接出错', 'err'); };
-    ws.onclose = function () { /* 静默 */ };
+    ws.onclose = function () { if (finishActivity) finishActivity(recording ? 'failed' : 'done'); };
   }
 
   function onTurn(turn) {
@@ -191,15 +195,30 @@
   }
 
   /* ============ 通用上传/请求 ============ */
-  function postAudio(path, blob) {
-    return fetch(API + path, { method: 'POST', body: blob }).then(function (r) {
+  function startActivity(stage) {
+    if (!window.ingrid || !window.ingrid.archMeeting) return function () {};
+    var id = crypto.randomUUID();
+    window.ingrid.archMeeting({ id: id, stage: stage, status: 'running' });
+    return function (status) { window.ingrid.archMeeting({ id: id, status: status }); };
+  }
+
+  function postRequest(path, options) {
+    var finish = startActivity(path.split('?')[0].slice(1));
+    return fetch(API + path, options).then(function (r) {
       return r.json().then(function (j) { if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    }).then(function (j) {
+      finish('done');
+      return j;
+    }, function (e) {
+      finish('failed');
+      throw e;
     });
   }
+  function postAudio(path, blob) {
+    return postRequest(path, { method: 'POST', body: blob });
+  }
   function postJson(path, data) {
-    return fetch(API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(function (r) {
-      return r.json().then(function (j) { if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
-    });
+    return postRequest(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   }
 
   function healthCheck(attempt) {

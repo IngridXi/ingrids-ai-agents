@@ -21,6 +21,17 @@ const os = require('os');
 const net = require('net');
 const http = require('http');
 const crypto = require('crypto');
+const Architecture = require('./agent-architecture-core.js');
+const activity = require('./agent-activity.js').createActivity();
+
+function activityTitle(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+}
+
+function activitySender(sender) {
+  const file = sender.getURL();
+  return /^file:.*\/agents\/(assistant-chat|dev-chat|research-chat|ethics-chat)\/index\.html$/.exec(file)?.[1];
+}
 require('./skills-core.js');
 const SkillsCore = globalThis.SkillsCore;
 const { KbEngine, detectObsidianVaults, detectZoteroDir, isWorkspaceVault } = require('./kb-engine.js');
@@ -212,7 +223,14 @@ function getSentimentAgent() {
       save: (state) => writeJson('sentiment-library.json', state),
     }, function (item) {
       // 联动：把新提炼的用户偏好作为一条经验提交给经验沉淀官（去重 + 待审批）
-      return getKnowledgeSettler().submit(item);
+      const result = getKnowledgeSettler().submit(item);
+      if (result?.id) {
+        const run = activity.start({
+          agent: 'settler', from: 'sentiment', source: '偏好提案', title: '提交用户偏好供人工审核',
+        });
+        activity.finish(run);
+      }
+      return result;
     });
     // 注入 LLM「做法提炼器」：把「被评价回复 + 用户评价」提炼成一句可执行做法
     sentimentAgent.setDistiller(distillActionWithLLM);
@@ -2246,6 +2264,13 @@ ipcMain.handle('chat:start', (e, payload) => {
   (async () => {
     const send = (ch, data) => { if (!e.sender.isDestroyed()) e.sender.send(ch, data); };
     let ctrl = null;
+    const agent = p.activityTask === true && activitySender(e.sender);
+    const userMessage = agent && messages.findLast(m => m?.role === 'user');
+    const run = agent && activity.start({
+      agent, source: '对话', title: activityTitle(userMessage?.content) || '处理对话请求',
+      phase: '模型生成', engine: model,
+    });
+    let outcome = 'failed';
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (key) headers.Authorization = 'Bearer ' + key;
@@ -2331,10 +2356,12 @@ ipcMain.handle('chat:start', (e, payload) => {
           costSource: 'estimated', status: 'ok', dryRun: false,
         });
       } catch (e) { /* 记账失败不阻断聊天 */ }
+      outcome = 'done';
       send('chat:done', { ok: true, truncated: truncated, tool_calls: assembledCalls, reasoning: reasoning, requestId });
     } catch (err) {
       send('chat:done', { ok: false, error: '请求失败：' + String(err && err.message || err), requestId });
     } finally {
+      if (run) activity.finish(run, { status: ctrl?.signal.aborted ? 'stopped' : outcome });
       const s2 = activeChatAborts.get(sessionId);
       if (s2) { s2.delete(ctrl); if (!s2.size) activeChatAborts.delete(sessionId); }
     }
@@ -2675,6 +2702,8 @@ function startTaskWatchdog() {
 function runEcoRadar() {
   const prev = readJson('eco-radar.json', { seen: [], lastRun: 0, entries: [] });
   const seen = Array.isArray(prev.seen) ? prev.seen : [];
+  const run = activity.start({ agent: 'radar', source: '生态资讯', title: '扫描生态更新并整理资讯' });
+  let status = 'failed';
   return EcoRadar.runEcoRadar({ seen: seen }).then((result) => {
     if (!result.ok) return { ok: false, error: result.error };
     const entry = { at: Date.now(), newCount: result.newCount, newPlugins: result.newPlugins, report: result.report };
@@ -2690,8 +2719,9 @@ function runEcoRadar() {
       : '打开工作台查看调研详情';
     try { if (Notification.isSupported()) new Notification({ title: summary, body: body }).show(); } catch { /* 通知失败不阻断 */ }
     broadcast('eco-radar:updated', { entry: entry, summary: summary });
+    status = 'done';
     return { ok: true, newCount: result.newCount, summary: summary, report: result.report };
-  });
+  }).finally(() => activity.finish(run, { status }));
 }
 
 // 首次启动：确保「灵感目录」Agent 与每日调研计划存在（幂等）
@@ -2931,6 +2961,9 @@ function execOne(step, cwd, timeoutMs) {
 function runScheduledCommand(t) {
   // 直跑本地脚本；脚本/命令自身负责幂等与降级，此处只记录结果到主进程日志。
   // 支持两种形态：单命令（bin+args）或多步顺序（steps 数组，某步失败即中止）。
+  const agent = t.key === 'cityverse-intel' ? 'cityverse' : 'knowledge';
+  const run = activity.start({ agent, source: '工作台定时任务', title: t.label });
+  let status = 'failed';
   let p;
   if (Array.isArray(t.steps) && t.steps.length) {
     p = t.steps.reduce((chain, step) => {
@@ -2947,8 +2980,9 @@ function runScheduledCommand(t) {
       if (r && r.ok) console.log('[' + t.key + '] 完成\n' + String(r.output || ''));
       else console.log('[' + t.key + '] ' + String((r && r.error) || '执行失败') + (r && r.output ? '\n' + String(r.output) : ''));
     } catch {}
+    status = r?.ok ? 'done' : 'failed';
     return r;
-  });
+  }).finally(() => activity.finish(run, { status }));
 }
 
 function startScheduledCommands() {
@@ -3384,6 +3418,8 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
 
   (async () => {
     let st = null;
+    let run;
+    let outcome = 'failed';
     try {
       if (p.resume) {
         // 续跑：从磁盘 checkpoint 恢复状态，从断点阶段继续
@@ -3415,9 +3451,23 @@ ipcMain.handle('chat:review-loop', (e, payload) => {
         };
         saveReviewCheckpoint(st.agent, st);
       }
-      await runReviewLoop(st, send);
+      const agent = activitySender(e.sender);
+      if (agent) run = activity.start({ agent, source: '审稿闭环', title: activityTitle(st.question) || '审稿闭环' });
+      await runReviewLoop(st, (channel, event) => {
+        if (channel === 'review:phase' && run) {
+          const phase = { draft: '撰写初稿', review: '独立审稿', revise: '按意见返修' }[event.phase];
+          activity.update(run, {
+            phase: phase + (event.round ? ' · 第 ' + event.round + ' 轮' : ''),
+            engine: event.phase === 'review' ? event.reviewer : event.engine,
+          });
+        }
+        send(channel, event);
+      });
+      outcome = 'done';
     } catch (err) {
       send('review:done', { ok: false, error: String(err && err.message || err), finalText: st ? st.finalText : '', engine: st && st.engine, reviewer: st && st.reviewerEngine });
+    } finally {
+      if (run) activity.finish(run, { status: outcome });
     }
   })();
   return true;
@@ -5887,7 +5937,17 @@ ipcMain.handle('tool:bin:disasm', (_e, p) => toolBinDisasm(p));
 ipcMain.handle('tool:bin:deps', (_e, p) => toolBinDeps(p));
 ipcMain.handle('tool:bin:hex', (_e, p) => toolBinHex(p));
 ipcMain.handle('tool:run:shell', (_e, p) => toolRunShell(p));
-ipcMain.handle('tool:chief', (_e, p) => toolChief(p));
+ipcMain.handle('tool:chief', (e, p) => {
+  const result = toolChief(p);
+  if (result?.ok && activitySender(e.sender) === 'assistant-chat') {
+    const run = activity.start({
+      agent: 'cityverse', from: 'assistant-chat', source: 'CityVerse 本机总控',
+      title: p.action === 'submit' ? activityTitle(p.title) : '总控操作 · ' + activityTitle(p.action),
+    });
+    activity.finish(run);
+  }
+  return result;
+});
 ipcMain.handle('tool:bin:patch', (_e, p) => toolBinPatch(p));
 ipcMain.handle('tool:py:decompile', (_e, p) => toolPyDecompile(p));
 
@@ -6428,62 +6488,117 @@ ipcMain.handle('tool:db:obsidian:report', () => toolDbObsidianReport());
 ipcMain.handle('ethics:sync', (_e, p) => ethicsSync(p));
 ipcMain.handle('legal:search', (_e, p) => legalSearch(p));
 
-/* ---------------- Agent 架构图：实时状态 ----------------
- * 供「Agent 架构图」页轮询，返回各功能/后台 agent 的真实协作状态：
- *   - Ollama 是否在线 + 当前加载到显存的模型（谁在用哪个模型）
- *   - 伦理归档流水线进度（run-progress.json 已完成 / 场景总数）
- *   - 法务知识库法条数 + 场景库文件数
- */
-async function archStatus() {
-  const out = { now: Date.now(), ollamaOnline: false, activeModels: [], ethics: { done: 0, total: 0, running: false }, legal: { laws: 0 }, sceneFiles: 0 };
-
-  // 1) Ollama 在线状态 + 活跃模型（/api/ps 返回当前加载到显存的模型）
-  out.ollamaOnline = await isPortOpen(11434);
-  if (out.ollamaOnline) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 2000);
-      const r = await fetch('http://127.0.0.1:11434/api/ps', { signal: ctrl.signal });
-      clearTimeout(t);
-      if (r.ok) {
-        const j = await r.json();
-        out.activeModels = (j.models || []).map(function (m) {
-          return { name: String(m.name || m.model || ''), size: Number(m.size || 0), vram: Number(m.size_vram || 0), expiresAt: m.expires_at || null };
-        });
-      }
-    } catch (e) { out.activeModels = []; }
+/* ---------------- Agent 架构图：工作台实际执行状态 ---------------- */
+const rendererActivity = new WeakMap();
+function rendererJobsFor(sender) {
+  let jobs = rendererActivity.get(sender);
+  if (!jobs) {
+    jobs = new Map();
+    rendererActivity.set(sender, jobs);
+    const stopJobs = () => {
+      for (const id of jobs.values()) activity.finish(id, { status: 'stopped' });
+      jobs.clear();
+    };
+    sender.once('destroyed', stopJobs);
+    sender.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+      if (mainFrame && !inPlace) stopJobs();
+    });
   }
-
-  // 2) 伦理归档进度
-  try {
-    const pj = path.join(__dirname, 'agents', 'ethics-chat', 'run-progress.json');
-    const sj = path.join(__dirname, 'agents', 'ethics-chat', 'scenes.json');
-    if (fs.existsSync(sj)) out.ethics.total = JSON.parse(fs.readFileSync(sj, 'utf8')).length;
-    if (fs.existsSync(pj)) out.ethics.done = Object.keys(JSON.parse(fs.readFileSync(pj, 'utf8'))).length;
-    out.ethics.running = out.activeModels.some(function (m) { return /uncensored|bge-m3/i.test(m.name); });
-  } catch (e) {}
-
-  // 3) 法务知识库法条数 + 伦理场景库文件数（Obsidian 主库）
-  try {
-    const vp = vaultPath();
-    if (vp) {
-      const legalDir = path.join(vp, '法务知识库');
-      if (fs.existsSync(legalDir)) {
-        let n = 0;
-        for (const c of fs.readdirSync(legalDir)) {
-          const d = path.join(legalDir, c);
-          if (fs.statSync(d).isDirectory()) n += fs.readdirSync(d).filter(function (f) { return f.endsWith('.md'); }).length;
-        }
-        out.legal.laws = n;
-      }
-      const sceneDir = path.join(vp, '伦理场景库');
-      if (fs.existsSync(sceneDir)) out.sceneFiles = fs.readdirSync(sceneDir).filter(function (f) { return f.endsWith('.md'); }).length;
-    }
-  } catch (e) {}
-
-  return out;
+  return jobs;
 }
-ipcMain.handle('arch:status', () => archStatus());
+
+ipcMain.on('arch:meeting', (e, payload) => {
+  const sender = e.sender;
+  if (e.senderFrame !== sender.mainFrame || !/^file:.*\/agents\/meeting-audio\/index\.html$/.test(sender.getURL())) return;
+  const p = payload || {};
+  if (typeof p.id !== 'string' || p.id.length > 60) return;
+  const jobs = rendererJobsFor(sender);
+  const id = jobs.get(p.id);
+  if (p.status === 'done' || p.status === 'failed') {
+    if (id) activity.finish(id, { status: p.status });
+    jobs.delete(p.id);
+    return;
+  }
+  const title = {
+    live: '实时会议转写', transcribe: '录音精确转写', summary: '生成会议总结', minutes: '生成会议纪要',
+    ppt: '导出会议 PPT', enroll: '登记说话人声纹',
+  }[p.stage];
+  if (p.status === 'running' && typeof title === 'string' && !id) {
+    jobs.set(p.id, activity.start({ agent: 'meeting-audio', source: '会议处理', title }));
+  }
+});
+
+ipcMain.on('arch:delegation', (e, payload) => {
+  const sender = e.sender;
+  if (sender !== mainWindow?.webContents || e.senderFrame !== sender.mainFrame) return;
+  const p = payload || {};
+  if (typeof p.id !== 'string' || p.id.length > 60) return;
+  const jobs = rendererJobsFor(sender);
+  const id = jobs.get(p.id);
+  if (p.stage === 'finish') {
+    if (id) {
+      activity.finish(id, { status: p.status === 'ok' ? 'done' : p.status === 'skipped' ? 'stopped' : 'failed',
+        simulated: p.simulated === true });
+      jobs.delete(p.id);
+    }
+    return;
+  }
+  if (p.stage !== 'running' && p.stage !== 'waiting') return;
+  const nodes = Architecture.inventory(readJson('agents.json', []));
+  const key = id => id && nodes.find(node => node.id === id)?.key;
+  const agent = key(p.targetId);
+  const from = key(p.commanderId);
+  if (!agent || !from) return;
+  const details = {
+    agent, from, handoff: p.stage === 'running' ? key(p.previousId) : undefined,
+    source: '工作台委派', title: activityTitle(p.task) || '委派任务',
+    status: p.stage, phase: p.stage === 'waiting' ? '等待委派审批' : '执行委派任务',
+    engine: activityTitle(p.engine), simulated: p.simulated === true,
+  };
+  if (id) activity.update(id, details);
+  else jobs.set(p.id, activity.start(details));
+});
+
+ipcMain.handle('arch:status', (e) => {
+  if (e.senderFrame !== e.sender.mainFrame || !/^file:.*\/agents\/(agent-console|agent-architecture)\/index\.html$/.test(e.senderFrame.url)) {
+    throw new Error('执行记录仅在工作台架构页显示');
+  }
+  const registry = readJson('agents.json', []);
+  const ops = readJson('ops-governor.json', null);
+  const types = readJson('agent-types-report.json', null);
+  const radar = readJson('eco-radar.json', null);
+  const queue = getTaskQueue().list();
+  const tickets = queue.filter(t => t.status === 'running' || t.status === 'waiting' || (t.status === 'queued' && !t.schedule))
+    .map(t => ({
+      id: t.id, agent: 'task-queue', source: '后台队列', title: activityTitle(t.title),
+      phase: activityTitle(t.category), status: t.status, engine: t.model || t.engine,
+      startedAt: Date.parse(t.updatedAt || t.createdAt),
+    }));
+  const readings = [
+    ...['cost', 'model', 'workforce'].map(agent => [agent, '运营治理巡检', ops?.generated_at, ops?.error]),
+    ['type-governor', '触发类型巡检', types?.generated_at, types?.error],
+    ['radar', '生态资讯扫描', radar?.lastRun],
+  ].filter(item => item[2]).map(([agent, title, time, error]) => ({
+    agent, title, source: '本地报告', status: error ? 'failed' : 'done',
+    endedAt: typeof time === 'number' ? time : Date.parse(time),
+  }));
+  const completed = queue.filter(t => ['done', 'failed', 'cancelled'].includes(t.status))
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 20).map(t => ({
+      agent: 'task-queue', title: activityTitle(t.title), source: '后台队列',
+      status: t.status === 'cancelled' ? 'stopped' : t.status, endedAt: Date.parse(t.updatedAt),
+    }));
+  const pendingExperience = getKnowledgeSettler().report().pending_approval;
+  if (pendingExperience) tickets.push({
+    agent: 'settler', status: 'waiting', source: '经验库',
+    title: pendingExperience + ' 条经验提案等待人工审核',
+  });
+  const runs = activity.snapshot();
+  return {
+    now: Date.now(), nodes: Architecture.inventory(registry),
+    active: runs.active.concat(tickets),
+    recent: runs.recent.concat(readings, completed).sort((a, b) => b.endedAt - a.endedAt),
+  };
+});
 
 // CityVerse 后台控制台（intel/dashboard.py，默认 127.0.0.1:8756）实时概览。
 // 由主进程 fetch，绕开渲染进程 file:// 的 CORS 限制；控制台未启动时返回 online:false。
@@ -6528,6 +6643,35 @@ async function cityverseOverview() {
   return out;
 }
 ipcMain.handle('arch:cityverse-overview', () => cityverseOverview());
+
+// 仅查询控制台现有的只读端点，返回架构视图需要的标题和状态。
+ipcMain.handle('arch:cityverse-stage', async (_e, stage) => {
+  const routes = {
+    collect: 'findings', insight: 'insights', playbook: 'playbook', plan: 'plans',
+    approval: 'plans', execute: 'runs', gate: 'runs',
+  };
+  if (!Object.hasOwn(routes, stage)) return { error: '未知项目阶段' };
+  try {
+    const response = await fetch('http://127.0.0.1:8756/api/' + routes[stage], { signal: AbortSignal.timeout(2500) });
+    if (!response.ok) return { error: '阶段接口返回 HTTP ' + response.status };
+    const rows = await response.json();
+    if (!Array.isArray(rows)) return { error: '控制台未返回阶段列表' };
+    const filtered = rows.filter(row => {
+      if (stage === 'approval') return row.status === 'pending_approval';
+      if (stage === 'gate') return !!row.gate_status;
+      return true;
+    });
+    const items = filtered.slice(0, 8).map(row => {
+      const run = stage === 'execute' || stage === 'gate';
+      const title = run ? '计划 #' + row.plan_id + ' · 执行 #' + row.id
+        : activityTitle(row.title || row.summary) || ((row.id != null) ? '记录 #' + row.id : '采集记录');
+      return { title, status: activityTitle(stage === 'gate' ? row.gate_status : row.status) };
+    });
+    return { items };
+  } catch {
+    return { error: '暂时无法读取 CityVerse 阶段记录' };
+  }
+});
 
 // CityVerse 待审批规划列表 + 审批动作（批准/拒绝/执行），供工作台架构图「人工审批」节点就地审批。
 async function cityversePendingPlans() {

@@ -2432,7 +2432,7 @@
       function runToolTurn(msgs, round, contN) {
         live = '';
         liveThinking = '';
-        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, sessionId: jobSessionId }, {
+        window.ingrid.chatStream({ engine: engine, model: model, messages: msgs, tools: toolsPayload, activityTask: true, sessionId: jobSessionId }, {
           onDelta: function (chunk) {
             if (chunk && chunk.thinking) { thinking += chunk.thinking; liveThinking += chunk.thinking; }
             if (chunk && chunk.text) live += chunk.text;

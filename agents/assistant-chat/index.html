@@ -1733,7 +1733,7 @@
       function runToolTurn(msgs, round) {
         live = '';
         liveThinking = '';
-        window.ingrid.chatStream({ engine: engine, messages: msgs, tools: toolsPayload }, {
+        window.ingrid.chatStream({ engine: engine, messages: msgs, tools: toolsPayload, activityTask: true }, {
           onDelta: function (d) {
             if (d && d.thinking) { thinking += d.thinking; liveThinking += d.thinking; }
             if (d && d.text) live += d.text;
