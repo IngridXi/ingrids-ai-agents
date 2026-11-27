@@ -5941,7 +5941,7 @@ ipcMain.handle('tool:chief', (e, p) => {
   const result = toolChief(p);
   if (result?.ok && activitySender(e.sender) === 'assistant-chat') {
     const run = activity.start({
-      agent: 'cityverse', from: 'assistant-chat', source: 'CityVerse 本机总控',
+      agent: 'cv:chief', from: 'assistant-chat', source: 'CityVerse 本机总控',
       title: p.action === 'submit' ? activityTitle(p.title) : '总控操作 · ' + activityTitle(p.action),
     });
     activity.finish(run);
