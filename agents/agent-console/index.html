@@ -132,16 +132,6 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
 .tabbar{display:flex;gap:8px;margin-top:16px}
 .tabbar button{font-size:13px;font-weight:600;padding:8px 18px}
 .tabbar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.cv-flow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:14px 0; }
-.cv-flow button { text-align:left; padding:8px 10px; }
-.cv-flow button[aria-pressed=true] { border-color:var(--accent); }
-.cv-flow button small { display:block; color:var(--dim); margin-top:3px; }
-.cv-flow button small[data-active=true] { color:var(--warn); font-weight:700; }
-.cv-detail { border:1px solid var(--line); background:var(--panel2); border-radius:9px; padding:12px; }
-.cv-detail ul { margin:6px 0; padding-inline-start:22px; }
-.cv-detail li { margin-top:4px; overflow-wrap:anywhere; }
-.cv-reference { margin-top:12px; }
-.cv-reference > summary { cursor:pointer; color:var(--dim); font-size:13px; }
 </style>
 <link rel="stylesheet" href="../agent-architecture/view.css">
 </head>
@@ -262,20 +252,6 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
   <div id="viewArch" hidden>
     <section id="agentArchitecture" class="panel"></section>
 
-    <section class="panel" id="projView-cityverse">
-      <h2>CityVerse 项目架构</h2>
-      <p class="hint" id="cv-status" role="status">等待连接本机 CityVerse 控制台</p>
-      <div class="cv-flow" id="cv-flow" aria-label="社区情报建设流程"></div>
-      <div id="cv-detail" class="cv-detail"></div>
-      <details class="cv-reference">
-        <summary>战略研究与项目调度</summary>
-        <div class="cv-flow" id="cv-strategy"></div>
-      </details>
-      <details class="cv-reference">
-        <summary>运营与内容管理</summary>
-        <div class="cv-flow" id="cv-operations"></div>
-      </details>
-    </section>
   </div>
 </main>
 
@@ -645,150 +621,6 @@ $('#sentimentBox').addEventListener('input', (ev) => {
   $('#tabArch').onclick = function () { switchView('arch'); };
 
   function aid(id) { return document.getElementById(id); }
-  const stages = [
-    ['collect', '社区舆情采集', '读取社区来源并保存采集结果，供洞察提炼使用。', 'findings', '条采集结果'],
-    ['insight', '社区洞察提炼', '汇总采集结果，将洞察交给玩法整理与建设规划。', 'insights', '条洞察'],
-    ['playbook', '玩法整理', '维护玩法点子，供建设规划引用。', 'playbook', '条玩法'],
-    ['plan', '建设规划', '汇总洞察与玩法，生成待人工审核的建设计划。', 'plans', '条计划'],
-    ['approval', '人工审批', '查看待审计划。经人工批准后才能从控制台启动执行。', 'plansPending', '条待审'],
-    ['execute', '批准计划执行', '根据已批准的计划执行建设，执行结果进入质量门禁。', 'runs', '次执行'],
-    ['gate', '执行质量门禁', '审查执行结果并记录通过或驳回。', 'gates', '次门禁'],
-  ];
-  const projectRoles = {
-    'cv-strategy': [
-      ['selfcheck', '项目能力盘点', '盘点仓库现状，将能力快照与短板交给路线差距分析。'],
-      ['competitor', '竞品对标', '比较参考项目，把维度差异交给路线差距分析。'],
-      ['research', '路线资讯研究', '围绕路线图收集资讯，将简报交给路线差距分析。'],
-      ['analyze', '路线差距分析', '汇总项目能力、竞品与资讯，并给出优先级。'],
-      ['feed', '建设任务提案', '将差距分析转为待审批的建设规划。'],
-      ['chief', '项目任务调度', '从任务队列领取任务并交给项目执行程序，记录进度与结果。'],
-    ],
-    'cv-operations': [
-      ['content-planner', '运营内容策划', '将活动需求整理成待审批的任务说明。'],
-      ['poi-operator', '点位数据诊断', '检查商圈点位、街景路线和 AR 锚点，给出修复建议。'],
-      ['content-executor', '运营内容上架', '处理已获批准的活动、折扣和内容更新。'],
-      ['quality-gate', '运营内容质检', '审查运营内容的数值、文案和预算。'],
-      ['merchant-advisor', '商户折扣建议（规划中）', '为商户折扣方案提供审批建议。'],
-      ['risk-inspector', '游戏异常巡检', '检查异常用券、坐标漂移等风险信号。'],
-      ['data-governor', '运营数据对账', '核对点位、商户、券和玩家数据。'],
-      ['exp-settler', '运营经验提案', '从已解决的运营事项整理可复用的经验。'],
-      ['ip-guardian', '知识产权登记与巡查', '管理版权留痕、商标监测与授权记录。'],
-    ],
-  };
-  let selectedStage = 'collect';
-  let projectStatus = null;
-  let polling = false;
-  let detailGeneration = 0;
-
-  const flow = aid('cv-flow');
-  const stageButtons = new Map();
-  function addStage(container, key, title) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = title;
-    button.append(document.createElement('small'));
-    button.onclick = () => {
-      selectedStage = key;
-      renderCityverse();
-      renderStage();
-      if (container !== flow) aid('cv-detail').scrollIntoView({ block: 'nearest' });
-    };
-    stageButtons.set(key, button);
-    container.append(button);
-  }
-
-  stages.forEach(([key, title], index) => {
-    if (index) {
-      const arrow = document.createElement('span');
-      arrow.textContent = '→';
-      arrow.setAttribute('aria-hidden', 'true');
-      flow.append(arrow);
-    }
-    addStage(flow, key, title);
-  });
-  for (const [id, roles] of Object.entries(projectRoles)) {
-    for (const [key, title] of roles) addStage(aid(id), key, title);
-  }
-
-  function renderCityverse() {
-    const online = projectStatus?.online;
-    aid('cv-status').textContent = online
-      ? '控制台已连接 · ' + new Date(projectStatus.now).toLocaleTimeString('zh-CN')
-      : projectStatus?.error || '桌面工作台连接本机 CityVerse 控制台后显示实时记录';
-    const states = projectStatus?.active || {};
-    const active = {
-      approval: states.pendingApproval ? states.pendingApproval + ' 条待审批' : '',
-      execute: states.plansExecuting ? states.plansExecuting + ' 条执行中' : '',
-      gate: states.gatesReviewing ? states.gatesReviewing + ' 条审查中' : '',
-    };
-    for (const [key, button] of stageButtons) button.setAttribute('aria-pressed', String(selectedStage === key));
-    for (const [key, , , field, unit] of stages) {
-      const button = stageButtons.get(key);
-      const line = button.querySelector('small');
-      line.textContent = online ? active[key] || projectStatus[field] + ' ' + unit : '';
-      line.dataset.active = String(!!online && !!active[key]);
-    }
-  }
-
-  async function renderStage() {
-    const pane = aid('cv-detail');
-    if (pane.contains(document.activeElement)) return;
-    const generation = ++detailGeneration;
-    const stage = stages.find(item => item[0] === selectedStage);
-    const [key, title, duty] = stage || Object.values(projectRoles).flat().find(item => item[0] === selectedStage);
-    pane.innerHTML = '<strong>' + esc(title) + '</strong><p class="hint">' + esc(duty) + '</p>';
-    if (!stage) {
-      pane.insertAdjacentHTML('beforeend', '<p class="hint">这个角色的执行与协作记录由 CityVerse 自己的面板管理，工作台尚未接入。</p>');
-      return;
-    }
-    if (key === 'approval' && API.cityversePendingPlans) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = '打开待审批清单';
-      button.onclick = openCvApprove;
-      pane.append(button);
-    }
-    const status = document.createElement('div');
-    status.className = 'hint';
-    pane.append(status);
-    if (!projectStatus?.online || !API.cityverseStage) {
-      status.textContent = '当前无法读取阶段记录。';
-      return;
-    }
-    try {
-      const result = await API.cityverseStage(key);
-      if (generation !== detailGeneration) return;
-      if (result.error) {
-        status.textContent = result.error;
-        return;
-      }
-      status.textContent = result.items.length ? '控制台近期记录' : '暂无记录';
-      const list = document.createElement('ul');
-      result.items.forEach(item => {
-        const row = document.createElement('li');
-        row.textContent = [item.title, item.status].filter(Boolean).join(' · ');
-        list.append(row);
-      });
-      if (list.childNodes.length) pane.append(list);
-    } catch {
-      if (generation === detailGeneration) status.textContent = '阶段记录暂时无法读取。';
-    }
-  }
-
-  async function pollCityverse() {
-    if (!API.cityverseOverview || polling) return;
-    polling = true;
-    try {
-      projectStatus = await API.cityverseOverview();
-    } catch {
-      projectStatus = { online: false, error: '无法读取 CityVerse 控制台' };
-    } finally {
-      polling = false;
-      renderCityverse();
-      renderStage();
-    }
-  }
-
   // —— CityVerse 就地审批：点击「人工审批」节点弹出待审批列表，直接批准并执行 / 拒绝 ——
   function cvEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function openCvApprove() {
@@ -844,7 +676,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
       if (!(r1 && r1.ok)) { cvApErr('批准失败：' + ((r1 && r1.error) || '未知错误')); return; }
       return window.ingrid.cityversePlanAction(planId, 'execute', '').then(function (r2) {
         if (!(r2 && r2.ok)) { cvApErr('已批准 #' + planId + '，但执行启动失败：' + ((r2 && r2.error) || '未知错误')); return; }
-        loadCvPlans(); pollCityverse();
+        loadCvPlans(); aid('agentArchitecture').dispatchEvent(new Event('map:project-changed'));
       });
     }).catch(function (e) { cvApErr('操作失败：' + ((e && e.message) || e)); });
   }
@@ -854,24 +686,16 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     var body = aid('cv-ap-body'); if (body) body.innerHTML = '<div style="color:#8b949e">拒绝 #' + planId + '…</div>';
     window.ingrid.cityversePlanAction(planId, 'reject', reason).then(function (r) {
       if (!(r && r.ok)) { cvApErr('拒绝失败：' + ((r && r.error) || '未知错误')); return; }
-      loadCvPlans(); pollCityverse();
+      loadCvPlans(); aid('agentArchitecture').dispatchEvent(new Event('map:project-changed'));
     }).catch(function (e) { cvApErr('操作失败：' + ((e && e.message) || e)); });
   }
-  // 内联 onclick 在全局作用域查找，而这些函数被包在 IIFE 里，需显式挂到 window 才能被 SVG 节点 / 弹窗按钮调用
+  // 内联 onclick 在全局作用域查找，而这些函数被包在 IIFE 里，需显式挂到 window 才能被 架构图详情 / 弹窗按钮调用
   window.openCvApprove = openCvApprove;
   window.closeCvApprove = closeCvApprove;
   window.loadCvPlans = loadCvPlans;
   window.doCvApprove = doCvApprove;
   window.doCvReject = doCvReject;
 
-  renderCityverse();
-  renderStage();
-  if (API.cityverseOverview) {
-    $('#tabArch').addEventListener('click', pollCityverse);
-    setInterval(function () {
-      if (!$('#viewArch').hidden) pollCityverse();
-    }, 5000);
-  }
 })();
 
 /* ---------------- 启动 ---------------- */
@@ -885,6 +709,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
 })();
 </script>
 <script src="../../agent-architecture-core.js"></script>
+<script src="../agent-architecture/force-view.js"></script>
 <script src="../agent-architecture/view.js"></script>
 </body>
 </html>
