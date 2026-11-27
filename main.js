@@ -2000,12 +2000,15 @@ ipcMain.handle('memory:refine', async (_e, name, payload) => {
 });
 
 /* ---------------- IPC：Agent 治理官（只读盘点 + 重叠检测 + 对账）---------------- */
-ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
-ipcMain.handle('governance:run', () => {
+// 巡检结果缓存到 agent-governance.json，面板只读缓存。若只在手动「重新巡检」时刷新，
+// 删除/新增 agent 后重启仍会显示旧快照（红点不消），故抽成函数供「启动自动巡检 + 定时巡检」复用。
+function runAgentGovernance() {
   const report = agentGovernance.run(__dirname, dataDir());
   writeJson('agent-governance.json', report);
   return report;
-});
+}
+ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
+ipcMain.handle('governance:run', () => runAgentGovernance());
 
 /* ---------------- IPC：Agent 类型治理官（自动巡检 + 自动判定/修正 + 人工锁定 + 变更报告）----------------
  * 把「调度中枢」升级成治理型 agent：默认自动修正各 agent 的触发类型（主动/链路/缺口/人工），
@@ -7196,6 +7199,10 @@ if (gotSingleInstanceLock) {
     // API 余额监控：启动延时检查一次 + 每 60 分钟自动刷新余额并低余额提醒（DeepSeek 可自动查，其余手动填）
     setTimeout(() => { refreshBalanceAndAlert().catch(() => {}); }, 3000);
     setInterval(() => { refreshBalanceAndAlert().catch(() => {}); }, 60 * 60 * 1000);
+    // Agent 治理官（职责盘点 · 重叠检测 · 前后端对账）：启动即刷新一次缓存 + 每 24 小时定时巡检。
+    // 巡检面板读的是本地缓存 agent-governance.json，若不在启动时刷新，删除/新增 agent 后仍显示旧快照。
+    runAgentGovernance();
+    setInterval(() => { runAgentGovernance(); }, 24 * 60 * 60 * 1000);
     // Agent 类型治理官：启动自动巡检一次 + 每 24 小时定时巡检（主动型 · 时间驱动）
     // 变更时才发系统通知；锁定 agent 豁免自动修正。首次运行会把全部 agent 归入四类。
     setTimeout(() => { runAgentTypeGovernance(); }, 1200);

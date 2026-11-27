@@ -6,6 +6,10 @@
  *   - 状态：排队中 / 运行中 / 需决策 / 已完成 / 失败 / 已取消
  *   - 完成 / 需决策 / 失败 时才值得用户看，其余安静排队
  *   - 监听 task:changed 实时刷新；「任务中心」入口红点提示「需决策」
+ *
+ * v11 升级：顶部 tab 化 —— 把四类待办（需决策任务 / 经验提案 / CityVerse 规划 / 研究待办）
+ * 从「混在一个待你处理区块」拆成各自带数字徽标的 tab，点进去只看那一类、再分别去处理。
+ * 默认停在「待办」总览（4 个分类入口卡片），后台任务（含新建表单）单独一个 tab。
  */
 (function () {
   'use strict';
@@ -20,15 +24,33 @@
     cancelled: { label: '已取消', color: '#5F5E5A', bg: '#F1EFE8' },
   };
 
+  // 待办 tab 定义（顺序即展示顺序；「待办」= 总览入口，其余是单类）
+  var TABS = [
+    { key: 'all',         label: '待办' },
+    { key: 'waiting',     label: '需决策' },
+    { key: 'experience',  label: '经验提案' },
+    { key: 'cityverse',   label: 'CityVerse' },
+    { key: 'research',    label: '研究待办' },
+    { key: 'tasks',       label: '后台任务' },
+  ];
+
   var STYLE = [
     '.tk-mask{position:fixed;inset:0;background:rgba(20,18,35,.45);display:none;align-items:center;justify-content:center;z-index:300;}',
     '.tk-mask.open{display:flex;}',
-    '.tk-panel{width:min(720px,92vw);max-height:86vh;display:flex;flex-direction:column;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);}',
-    '.tk-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #eee;}',
+    '.tk-panel{width:min(760px,92vw);max-height:86vh;display:flex;flex-direction:column;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);}',
+    '.tk-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px 12px;border-bottom:1px solid #eee;}',
     '.tk-head h2{margin:0;font-size:17px;font-weight:600;color:#2c2c2a;}',
     '.tk-head .tk-sub{font-size:12px;color:#888780;font-weight:400;}',
     '.tk-close{border:none;background:transparent;font-size:24px;line-height:1;cursor:pointer;color:#888780;padding:4px 8px;}',
     '.tk-close:hover{color:#2c2c2a;}',
+    // 顶部 tab 栏
+    '.tk-tabs{display:flex;gap:6px;padding:12px 22px 12px;border-bottom:1px solid #eee;flex-wrap:wrap;}',
+    '.tk-tab{position:relative;border:1px solid #e5e3dc;background:#fff;color:#5F5E5A;border-radius:10px;padding:7px 13px;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;}',
+    '.tk-tab:hover{border-color:#7F77DD;color:#534AB7;}',
+    '.tk-tab.active{background:#EEEDFE;border-color:#7F77DD;color:#3C3489;font-weight:600;}',
+    '.tk-tbadge{background:#A32D2D;color:#fff;font-size:11px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;}',
+    '.tk-tbadge.zero{background:#EFEEE9;color:#a9a79d;font-weight:500;}',
+    // 新建任务表单（仅「后台任务」tab 显示）
     '.tk-form{display:flex;gap:10px;padding:16px 22px;border-bottom:1px solid #eee;flex-wrap:wrap;}',
     '.tk-form input,.tk-form select{flex:1;min-width:140px;padding:10px 12px;border:1px solid #ddd;border-radius:10px;font-size:13px;font-family:inherit;}',
     '.tk-form input:focus,.tk-form select:focus{outline:none;border-color:#7F77DD;}',
@@ -57,6 +79,18 @@
     '.tk-footbar button{border:1px solid #ddd;background:#fff;color:#5F5E5A;border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit;}',
     '.tk-footbar button:hover{border-color:#A32D2D;color:#A32D2D;}',
     '.tk-footbar .tk-note{font-size:11px;color:#b4b2a9;}',
+    // 待办总览入口卡片
+    '.tk-overview{display:flex;flex-direction:column;gap:10px;}',
+    '.tk-ov-card{display:flex;align-items:center;gap:12px;border:1px solid #eee;border-radius:12px;padding:14px 16px;cursor:pointer;background:#fff;}',
+    '.tk-ov-card:hover{border-color:#7F77DD;background:#FBFBFF;}',
+    '.tk-ov-card .tk-ov-ico{font-size:20px;line-height:1;}',
+    '.tk-ov-card .tk-ov-main{flex:1;}',
+    '.tk-ov-card .tk-ov-title{font-size:14px;font-weight:600;color:#2c2c2a;}',
+    '.tk-ov-card .tk-ov-desc{font-size:12px;color:#888780;margin-top:2px;}',
+    '.tk-ov-card .tk-ov-num{font-size:22px;font-weight:700;color:#A32D2D;}',
+    '.tk-ov-card .tk-ov-num.zero{color:#c9c7bf;}',
+    '.tk-ov-card .tk-ov-arrow{color:#b4b2a9;font-size:14px;}',
+    // 单类待办列表
     '.tk-ap-section{border:1px solid #f0c9a0;background:#fdf6ee;border-radius:12px;padding:12px 14px;margin-bottom:4px;}',
     '.tk-ap-head{font-size:13px;font-weight:700;color:#854F0B;margin-bottom:8px;}',
     '.tk-ap-group{margin-bottom:10px;}',
@@ -69,7 +103,10 @@
     '.tk-ap-item button:hover{background:#EEEDFE;}',
   ].join('');
 
-  var mask, panel, bodyEl, form, titleEl, goalEl, engineEl, scheduleEl, goBtn, clearBtn, noteEl;
+  var mask, panel, bodyEl, formEl, tabsEl, titleEl, goalEl, engineEl, scheduleEl, goBtn, clearBtn, noteEl;
+
+  // 面板状态：当前 tab + 最近一次拉取的数据
+  var state = { tab: 'all', approvals: { total: 0, waiting: [], experience: [], research: [], cityverse: [] }, tickets: [], counts: {} };
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -100,6 +137,7 @@
       '    <h2>任务中心 <span class="tk-sub">丢任务后台跑，完成或需决策才打扰你</span></h2>' +
       '    <button class="tk-close" type="button">&times;</button>' +
       '  </div>' +
+      '  <div class="tk-tabs"></div>' +
       '  <div class="tk-form">' +
       '    <input class="tk-title" placeholder="标题（可选）">' +
       '    <input class="tk-goal" placeholder="任务目标，例如：读取 Desktop/PhD 文件并生成对比报告">' +
@@ -122,6 +160,8 @@
 
     panel = mask.querySelector('.tk-panel');
     bodyEl = mask.querySelector('.tk-body');
+    formEl = mask.querySelector('.tk-form');
+    tabsEl = mask.querySelector('.tk-tabs');
     titleEl = mask.querySelector('.tk-title');
     goalEl = mask.querySelector('.tk-goal');
     engineEl = mask.querySelector('.tk-engine');
@@ -135,6 +175,14 @@
     goBtn.addEventListener('click', createTask);
     goalEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') createTask(); });
     clearBtn.addEventListener('click', clearDone);
+
+    // tab 切换（事件委托）
+    tabsEl.addEventListener('click', function (e) {
+      var t = e.target.closest ? e.target.closest('.tk-tab') : null;
+      if (!t) return;
+      state.tab = t.getAttribute('data-tab') || 'all';
+      renderAll();
+    });
 
     // 任务变化实时刷新
     if (IS_DESKTOP && window.ingrid.onTaskChanged) {
@@ -159,31 +207,133 @@
       ? window.ingrid.approvalsSummary()
       : Promise.resolve({ total: 0, waiting: [], experience: [], research: [], cityverse: [] });
     Promise.all([window.ingrid.taskList(), approvalsPromise]).then(function (vals) {
-      render(vals[0], vals[1]);
+      var d = vals[0] || {};
+      state.tickets = d.tickets || [];
+      state.counts = d.counts || {};
+      state.approvals = vals[1] || { total: 0, waiting: [], experience: [], research: [], cityverse: [] };
+      renderAll();
     }).catch(function (e) {
       bodyEl.innerHTML = '<div class="tk-empty">加载失败：' + esc((e && e.message) || e) + '</div>';
     });
   }
 
-  function render(d, approvals) {
-    approvals = approvals || { total: 0, waiting: [], experience: [], research: [], cityverse: [] };
-    var tickets = (d && d.tickets) || [];
-    var counts = (d && d.counts) || {};
-    var html = renderApprovalsBlock(approvals);
-    if (!tickets.length) {
-      html += '<div class="tk-empty">还没有后台任务。在上面输入目标，点「丢到后台运行」。</div>';
-      bodyEl.innerHTML = html;
-      noteEl.textContent = '0 个任务';
-      updateDot(approvals.total);
+  function tabCount(key) {
+    switch (key) {
+      case 'all':        return state.approvals.total || 0;
+      case 'waiting':    return state.approvals.waiting.length;
+      case 'experience': return state.approvals.experience.length;
+      case 'cityverse':  return state.approvals.cityverse.length;
+      case 'research':   return state.approvals.research.length;
+      case 'tasks':      return state.tickets.length;
+      default: return 0;
+    }
+  }
+
+  function renderAll() {
+    renderTabs();
+    renderBody();
+    updateDot(state.approvals.total);
+  }
+
+  function renderTabs() {
+    var html = '';
+    TABS.forEach(function (t) {
+      var n = tabCount(t.key);
+      var badge = n > 0
+        ? '<span class="tk-tbadge">' + (n > 99 ? '99+' : n) + '</span>'
+        : '<span class="tk-tbadge zero">0</span>';
+      html += '<button class="tk-tab' + (state.tab === t.key ? ' active' : '') + '" data-tab="' + t.key + '" type="button">' +
+        t.label + badge + '</button>';
+    });
+    tabsEl.innerHTML = html;
+  }
+
+  function renderBody() {
+    // 新建任务表单只属于「后台任务」tab
+    formEl.style.display = (state.tab === 'tasks') ? 'flex' : 'none';
+    if (state.tab === 'tasks') {
+      bodyEl.innerHTML = renderTasks();
+      bindTaskButtons();
+      noteEl.textContent = state.tickets.length + ' 个任务';
+      clearBtn.style.display = '';
       return;
+    }
+    clearBtn.style.display = 'none';
+    bodyEl.innerHTML = renderTabContent(state.tab);
+    bindDelegateButtons();
+    noteEl.textContent = tabCount(state.tab) + ' 项待办';
+  }
+
+  // 「待办」总览：4 个分类入口卡片，点卡片进对应 tab
+  function renderOverview() {
+    var cards = [
+      { key: 'waiting',    ico: '🧭', title: '需决策任务', desc: '后台任务卡在需要你拍板的问题上' },
+      { key: 'experience', ico: '💡', title: '经验提案',   desc: '知识沉淀官复盘出的经验，等你批准入库' },
+      { key: 'cityverse',  ico: '🏙️', title: 'CityVerse 规划', desc: '虚实城建设规划待你审批' },
+      { key: 'research',   ico: '📚', title: '研究待办',   desc: '研究助手清单里尚未完成的事项' },
+    ];
+    var html = '<div class="tk-overview">';
+    cards.forEach(function (c) {
+      var n = tabCount(c.key);
+      var numCls = n > 0 ? '' : ' zero';
+      var num = n > 0 ? n : 0;
+      html += '<div class="tk-ov-card" data-goto="' + c.key + '">' +
+        '<span class="tk-ov-ico">' + c.ico + '</span>' +
+        '<span class="tk-ov-main"><span class="tk-ov-title">' + esc(c.title) + '</span>' +
+        '<span class="tk-ov-desc">' + esc(c.desc) + '</span></span>' +
+        '<span class="tk-ov-num' + numCls + '">' + num + '</span>' +
+        '<span class="tk-ov-arrow">›</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function renderTabContent(key) {
+    if (key === 'all') return renderOverview();
+
+    var list = [];
+    if (key === 'waiting')    list = state.approvals.waiting;
+    if (key === 'experience') list = state.approvals.experience;
+    if (key === 'cityverse')  list = state.approvals.cityverse;
+    if (key === 'research')   list = state.approvals.research;
+
+    if (!list.length) return '<div class="tk-empty">没有待处理的「' + esc(tabLabel(key)) + '」</div>';
+
+    var html = '<div class="tk-ap-section"><div class="tk-ap-head">' + esc(tabLabel(key)) + ' · ' + list.length + '</div>';
+    list.forEach(function (x) {
+      var btn = '';
+      if (key === 'experience') btn = '<button data-ap="experience" type="button">去总控审批</button>';
+      else if (key === 'cityverse') btn = '<button data-ap="cityverse" type="button">去审批</button>';
+      else if (key === 'research') btn = '<button data-ap="research" type="button">打开研究助手处理</button>';
+      else if (key === 'waiting') btn = '<button data-goto="tasks" type="button">去后台任务查看</button>';
+
+      html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(x.title) + '</div>';
+      if (x.question) html += '<div class="tk-question">' + esc(x.question) + '</div>';
+      html += btn + '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function tabLabel(key) {
+    for (var i = 0; i < TABS.length; i++) if (TABS[i].key === key) return TABS[i].label;
+    return key;
+  }
+
+  // 后台任务列表（原 tickets 渲染逻辑，含状态徽标与操作按钮）
+  function renderTasks() {
+    var counts = state.counts || {};
+    var html = '';
+    if (!state.tickets.length) {
+      return '<div class="tk-empty">还没有后台任务。在上面输入目标，点「丢到后台运行」。</div>';
     }
     html += '<div class="tk-countbar">排队 ' + (counts.queued || 0) +
       ' · 运行 ' + (counts.running || 0) +
       ' · 需决策 ' + (counts.waiting || 0) +
       ' · 完成 ' + (counts.done || 0) +
       ' · 失败 ' + (counts.failed || 0) + '</div>';
-    // 新任务在上，按创建时间倒序
-    tickets.slice().reverse().forEach(function (t) {
+    state.tickets.slice().reverse().forEach(function (t) {
       var m = STATUS_META[t.status] || STATUS_META.queued;
       var badge;
       if (t.schedule) {
@@ -209,10 +359,10 @@
       html += '<button class="tk-danger" data-act="remove" data-id="' + t.id + '">删除</button>';
       html += '</span></div></div>';
     });
-    bodyEl.innerHTML = html;
-    noteEl.textContent = tickets.length + ' 个任务';
-    updateDot(approvals.total);
+    return html;
+  }
 
+  function bindTaskButtons() {
     bodyEl.querySelectorAll('button[data-act]').forEach(function (b) {
       b.addEventListener('click', function () {
         var act = b.getAttribute('data-act');
@@ -223,8 +373,11 @@
         else if (act === 'remove') { window.ingrid.taskRemove(id).then(load); }
       });
     });
+  }
+
+  // 待办 tab 里的按钮：data-ap=去对应 agent 处理；data-goto=切到某 tab
+  function bindDelegateButtons() {
     // 待审批「去审批」跳转：先关掉任务中心面板，再用带返回条的入口打开总控台。
-    // 直接 openAgent 会把总控台顶到全屏、又没有返回条，导致「进得去出不来」+ 顶部漏边。
     bodyEl.querySelectorAll('button[data-ap]').forEach(function (b) {
       b.addEventListener('click', function () {
         var ap = b.getAttribute('data-ap');
@@ -245,6 +398,13 @@
         }
       });
     });
+    // 总览卡片 / 「去后台任务查看」→ 切 tab
+    bodyEl.querySelectorAll('[data-goto]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        state.tab = el.getAttribute('data-goto') || 'all';
+        renderAll();
+      });
+    });
   }
 
   function updateDot(n) {
@@ -252,48 +412,6 @@
     if (!dot) return;
     dot.textContent = n > 99 ? '99+' : String(n || 0);
     dot.hidden = !(n > 0);
-  }
-
-  // 统一「待你处理」区块：把三类待审批（需决策任务 / 经验提案 / CityVerse 规划）收拢展示
-  function renderApprovalsBlock(a) {
-    a = a || { total: 0, waiting: [], experience: [], research: [], cityverse: [] };
-    var total = a.total || 0;
-    if (!total) return '';
-    var html = '<div class="tk-ap-section"><div class="tk-ap-head">⚠ 待你处理（' + total + '）</div>';
-    if (a.waiting.length) {
-      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">需决策任务 · ' + a.waiting.length + '</div>';
-      a.waiting.forEach(function (t) {
-        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(t.title) + '</div>' +
-          (t.question ? '<div class="tk-question">' + esc(t.question) + '</div>' : '') + '</div>';
-      });
-      html += '</div>';
-    }
-    if (a.experience.length) {
-      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">经验提案 · ' + a.experience.length + '</div>';
-      a.experience.forEach(function (p) {
-        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div>' +
-          '<button data-ap="experience" type="button">去总控审批</button></div>';
-      });
-      html += '</div>';
-    }
-    if (a.cityverse.length) {
-      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">CityVerse 规划 · ' + a.cityverse.length + '</div>';
-      a.cityverse.forEach(function (p) {
-        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div>' +
-          '<button data-ap="cityverse" type="button">去审批</button></div>';
-      });
-      html += '</div>';
-    }
-    if (a.research.length) {
-      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">研究待办 · ' + a.research.length + '</div>';
-      a.research.forEach(function (p) {
-        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div></div>';
-      });
-      html += '<button data-ap="research" type="button">打开研究助手处理</button>';
-      html += '</div>';
-    }
-    html += '</div>';
-    return html;
   }
 
   function createTask() {
@@ -304,7 +422,6 @@
     var engineSel = engineEl.value || 'auto';
     goBtn.disabled = true;
 
-    // 自动分拣：引擎选「自动分拣」时，用规则分类器判断任务类型 + 默认引擎 + 分类标签
     var resolveClassify = function () {
       if (engineSel !== 'auto') return Promise.resolve({ engine: engineSel, category: '' });
       return window.ingrid.taskClassify(goal).then(function (r) {
@@ -328,8 +445,6 @@
 
     Promise.all([resolveClassify(), resolveSchedule()]).then(function (vals) {
       var cls = vals[0], schedule = vals[1];
-      // 这类活后台队列干不了（转写要 ASR、音乐要生成模型）：拦下来并指路，
-      // 而不是建一条注定报「未知引擎」的任务让用户猜。
       if (cls.noBackground) {
         goBtn.disabled = false;
         alert('这类活后台队列干不了。' + (cls.note ? '\n\n' + cls.note : '') + '\n\n请到对应的 agent 里做。');
@@ -339,7 +454,6 @@
         title: titleEl.value.trim() || goal.slice(0, 20),
         goal: goal,
         engine: cls.engine,
-        // 引擎被兜底降级时留痕（如「编码（原建议 codex，已降级）」），方便事后追溯
         category: cls.category + (cls.downgradedFrom ? '（原建议 ' + cls.downgradedFrom + '，已降级）' : ''),
         schedule: schedule || null,
       };
@@ -349,7 +463,6 @@
         scheduleEl.value = '';
         engineEl.value = 'auto';
         goBtn.disabled = false;
-        // 定时任务交给调度器到点触发；一次性任务创建后立即丢后台跑
         if (!schedule) window.ingrid.taskRun(ticket.id).then(load);
         else load();
       }).catch(function (e) {
@@ -371,7 +484,8 @@
   // 页面加载即初始化首页「任务中心」红色数字徽章：监听待办广播 + 首次拉取（不依赖打开面板）
   if (IS_DESKTOP && window.ingrid.onApprovalsChanged) {
     window.ingrid.onApprovalsChanged(function (s) {
-      updateDot((s && s.total) || 0);
+      state.approvals = s || { total: 0, waiting: [], experience: [], research: [], cityverse: [] };
+      updateDot(state.approvals.total);
       if (mask && mask.classList.contains('open')) load();
     });
   }
