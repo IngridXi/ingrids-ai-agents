@@ -12,6 +12,7 @@
         "builtin:research/paper-deconstruction",
         "builtin:research/research-design",
         "builtin:research/literature-review",
+        "builtin:research/literature-curator",
         "builtin:research/sota-search",
         "builtin:research/data-analysis",
         "builtin:research/citation-audit",

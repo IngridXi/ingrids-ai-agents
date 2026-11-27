@@ -240,6 +240,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   toolDbZoteroReport: () => ipcRenderer.invoke('tool:db:zotero:report'),
   toolDbZoteroTag: (payload) => ipcRenderer.invoke('tool:db:zotero:tag', payload),
   toolDbZoteroCollection: (payload) => ipcRenderer.invoke('tool:db:zotero:collection', payload),
+  zoteroIngestNow: () => ipcRenderer.invoke('zotero:ingest-now'),
 
   // 软件工程 agent 工具（逆向 / 编译 / 补丁 / 反编译）
   toolBinInfo: (payload) => ipcRenderer.invoke('tool:bin:info', payload),

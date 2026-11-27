@@ -2914,6 +2914,35 @@ function ensureEcoRadar() {
   }
 }
 
+// 首次启动：确保「法务知识库每周更新」后台任务存在（幂等）。
+// 每周一 09:00 走 deepseek + web_search/fs 工具，联网核对 66 条法条的最新动态并增量更新
+// Obsidian 法务知识库。原 WorkBuddy 自动化「法务知识库每周自动更新」已迁移到此（local-first，零 WorkBuddy 依赖）。
+function ensureLegalUpdateTask() {
+  const q = getTaskQueue();
+  const has = q.list().some((t) => (t.title || '').indexOf('法务知识库') >= 0);
+  if (has) return;
+  q.enqueue({
+    title: '法务知识库 · 每周更新',
+    goal: [
+      '更新「法务知识库」：这是 AI 伦理教学系统配套的权威法条库。',
+      '法条库目录：~/Documents/Obsidian Vault/法务知识库（按领域分子目录，每条法条一个 md，含「法条原文/构成要件/司法解释/典型案例/涉及场景/更新记录」结构）。',
+      '法条清单索引：~/Dev/Ingrids-AI-Agents/agents/ethics-chat/legal-index.json。',
+      '',
+      '任务步骤：',
+      '1. 先用 fs_read 读 legal-index.json 拿到法条清单，再用 fs_list 浏览法务知识库目录结构，确认对应 md 文件位置。',
+      '2. 用 web_search 逐条搜索这些法条的最新动态（法条修订、新司法解释、新判例、立案追诉标准变化），重点核对：法条号是否变动、数额标准/刑期是否调整、是否有新典型案例。',
+      '3. 发现更新的，用 fs_edit 增量更新对应 md 文件：保留原有全部结构，只在「更新记录」追加本次更新日期和变更要点，绝不删除原有内容；没有更新的保持不动。',
+      '4. 法条原文必须用 web_fetch 从权威来源核实（国家法律法规数据库 flk.npc.gov.cn、中国政府网 gov.cn、中国人大网、最高法/最高检、各部委官网），严禁凭记忆编造法条号、条文、数额、刑期。',
+      '5. 全部完成后，运行 `node legal-build.js --check`（工作目录 ~/Dev/Ingrids-AI-Agents/agents/ethics-chat/）校验法条文件完整无缺失。',
+      '',
+      '最终交付：简要汇报本次更新了哪几条法条、每条更新了什么（一句话即可），以及校验是否通过。',
+    ].join('\n'),
+    agent: '伦理agent', engine: 'deepseek', model: '',
+    schedule: '09:00', weekdays: [1],
+  });
+  broadcastTasks();
+}
+
 // 启动清理：删除历史遗留的「CityVerse 情报」每日简报任务。
 // 该任务已被 CityVerse 战略参谋 research agent（intel/strategy/research.py）取代——
 // 情报检索统一由 research agent 负责（launchd 每日 08:00 常驻，Google News RSS 结构化抓取，
@@ -3026,6 +3055,8 @@ function startTaskScheduler() {
       q.listScheduled().forEach((t) => {
         const sch = String(t.schedule || '');
         const isOnce = sch.indexOf(' ') >= 0; // 'YYYY-MM-DD HH:MM' 一次性
+        // 周约束：任务声明了 weekdays 时，只在指定星期触发（0=周日..6=周六）；一次性任务不受此限
+        if (Array.isArray(t.weekdays) && t.weekdays.length && !isOnce && t.weekdays.indexOf(now.getDay()) < 0) return;
         const due = isOnce ? (sch === today + ' ' + hhmm) : (sch === hhmm && t.lastRunDate !== today);
         if (!due) return;
         if (isOnce) q.clearSchedule(t.id);
@@ -3055,14 +3086,12 @@ function startTaskScheduler() {
 
 /* ---------------- 主进程定时命令：把「固定脚本型」定时任务从外部（WorkBuddy）内聚到桌面应用自身 ---------------- */
 /* 统一管理多个「跑固定命令」的定时任务。每个任务直跑本地脚本，不经过 LLM。
-   rule: { weekdays?: number[] (0=周日..6=周六，缺省=每天), hhmm: 'HH:MM' } */
+   rule 两种形态：
+     - { intervalMinutes: N }：每 N 分钟跑一次（应用重启后立即补跑一次）
+     - { weekdays?: number[] (0=周日..6=周六，缺省=每天), hhmm: 'HH:MM' }：到点且当天未跑过则触发 */
 const APP_DIR = path.join(os.homedir(), 'Dev', 'Ingrids-AI-Agents');
 const CITYVERSE_INTEL_DIR = path.join(os.homedir(), 'Dev', 'cityverse-ar', 'intel');
-const ZOTERO_INGEST_SCRIPT = path.join(
-  os.homedir(),
-  '.workbuddy', 'plugins', 'marketplaces', 'my-experts', 'plugins',
-  'literature-curator', 'skills', 'zotero-literature', 'scripts', 'auto_ingest.py'
-);
+const ZOTERO_INGEST_SCRIPT = path.join(APP_DIR, 'scripts', 'zotero', 'auto_ingest.py');
 const SCHEDULED_COMMANDS = [
   {
     key: 'kb-scan',
@@ -3078,9 +3107,9 @@ const SCHEDULED_COMMANDS = [
   },
   {
     key: 'zotero-ingest',
-    label: 'Zotero 文献自动入库与整理',
+    label: 'Zotero 文献自动入库与整理（每 2 小时，Zotero 未开则静默跳过）',
     bin: 'python3', args: [ZOTERO_INGEST_SCRIPT], cwd: os.homedir(),
-    rule: { weekdays: [1], hhmm: '09:30' }, timeoutMs: 5 * 60 * 1000,
+    rule: { intervalMinutes: 120 }, timeoutMs: 5 * 60 * 1000,
   },
   {
     key: 'zotero-weekly',
@@ -3157,6 +3186,15 @@ function startScheduledCommands() {
       const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
       SCHEDULED_COMMANDS.forEach((t) => {
         const rule = t.rule || {};
+        // interval 模式：每 N 分钟跑一次，用时间戳记上次运行
+        if (rule.intervalMinutes) {
+          const last = scheduledCmdLastRun[t.key];
+          if (typeof last === 'number' && (now.getTime() - last) < rule.intervalMinutes * 60 * 1000) return;
+          scheduledCmdLastRun[t.key] = now.getTime();
+          runScheduledCommand(t).catch(() => {});
+          return;
+        }
+        // hhmm 模式：到点且当天未跑过则触发
         if (Array.isArray(rule.weekdays) && rule.weekdays.indexOf(weekday) < 0) return;
         if (hhmm < rule.hhmm) return;
         if (scheduledCmdLastRun[t.key] === today) return;
@@ -7017,6 +7055,12 @@ ipcMain.handle('workspace:list', () => toolDbWorkspaceList());
 ipcMain.handle('tool:db:zotero:report', () => toolDbZoteroReport());
 ipcMain.handle('tool:db:zotero:tag', (_e, p) => toolDbZoteroTag(p));
 ipcMain.handle('tool:db:zotero:collection', (_e, p) => toolDbZoteroCollection(p));
+// 文献管家：手动触发一次「Zotero 自动入库与整理」（复用定时任务同一入口）
+ipcMain.handle('zotero:ingest-now', () => {
+  const t = SCHEDULED_COMMANDS.find((c) => c.key === 'zotero-ingest');
+  if (!t) return Promise.resolve({ ok: false, error: '未找到 zotero-ingest 定时任务' });
+  return runScheduledCommand(t);
+});
 
 /* ---------------- 生命周期 ---------------- */
 if (gotSingleInstanceLock) {
@@ -7051,6 +7095,8 @@ if (gotSingleInstanceLock) {
     startScheduledCommands();
     // 灵感目录：确保内置调研 Agent 与每日调研计划存在
     ensureEcoRadar();
+    // 法务知识库：确保每周更新的后台任务存在（原 WorkBuddy 自动化已迁移到此）
+    ensureLegalUpdateTask();
     // CityVerse 情报：清理已废弃的工作台侧「每日综合简报」任务（统一由 CityVerse research agent 负责）
     cleanupLegacyCityverseIntel();
     // CityVerse 建设流水线：同步 DeepSeek Key（走云端，摆脱本地 Ollama 内存争抢）

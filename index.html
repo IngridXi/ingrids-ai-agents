@@ -577,6 +577,32 @@ const SEED_AGENTS = [
     },
   },
   {
+    name: '文献管家', emoji: '📚',
+    tag: 'Zotero 自动入库 · 分组 · 打标签 · 汇总',
+    status: 'active', badge: '自动',
+    engine: 'local-llm', engineLabel: '本地脚本 · 无人值守',
+    href: 'agents/literature-curator/index.html',
+    soul: '你是文献管家（Literature Curator），Ingrid 的 Zotero 文献库无人值守管家。职责：自动识别 Downloads 新下载的 PDF 并导入 Zotero，CrossRef 补元数据，按主题自动分组打标签，生成处理报告。铁律：Zotero 未运行就静默跳过、下次自动补做；不重复导入已处理的文件；写操作带版本保护；删除是硬删除、删除前必须先备份。走 Zotero 本地接口 + 免费 CrossRef，零 API token 消耗。',
+    fallbacks: [],
+    detail: {
+      sub: 'Literature Curator · 无人值守文献入库与治理',
+      desc: '由工作台定时任务每 2 小时自动运行（scripts/zotero/auto_ingest.py）。自动扫描 Downloads 新 PDF → 导入 Zotero → 补元数据 → 分组打标签 → 生成报告。Zotero 未开则静默跳过，下次自动补做积压。',
+      workflow: [
+        { t: '扫描新 PDF', s: 'Downloads 新文件，state.json 幂等去重' },
+        { t: '导入 Zotero', s: '本地 API 导入，自动识别元数据' },
+        { t: '补元数据', s: 'CrossRef 补年份作者（高置信才写）' },
+        { t: '自动分组', s: '按主题归入收藏夹，To Review 处理完即清' },
+        { t: '打标签', s: '标题关键词 → 受控主题标签' },
+        { t: '汇总报告', s: '当日摘要 + 每周周报' },
+      ],
+      capabilities: ['自动入库', '元数据补全', '自动分组', '主题打标签', '处理报告', '幂等去重'],
+      route: [
+        { kind: '脚本', label: 'scripts/zotero/auto_ingest.py（本地 Zotero API）' },
+        { kind: '调度', label: 'main.js · 每 2 小时定时任务' },
+      ],
+    },
+  },
+  {
     name: '界面设计师', emoji: '🎨',
     tag: '配色方案 · 布局 · 视觉统一',
     status: 'active', badge: 'UI',

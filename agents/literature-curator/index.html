@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文献管家 · Ingrid's AI Agents</title>
+<style>
+  :root {
+    --accent: #2f6b4f;
+    --accent-2: #25583f;
+    --accent-soft: #e8f1ec;
+    --ink: #22261f;
+    --ink-soft: #555b52;
+    --ink-faint: #8f958c;
+    --line: #e3e7e1;
+    --bg: #f6f8f5;
+    --card: #ffffff;
+    --danger: #c0392b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--ink);
+    padding: 28px 32px 40px; line-height: 1.6;
+  }
+  .head { display: flex; align-items: center; gap: 14px; }
+  .head .logo {
+    width: 52px; height: 52px; border-radius: 13px; flex: none;
+    background: linear-gradient(135deg, #2f6b4f, #3f8a63);
+    display: flex; align-items: center; justify-content: center; font-size: 27px;
+    color: #fff;
+  }
+  h1 { font-size: 21px; font-weight: 700; }
+  .sub { color: var(--ink-soft); font-size: 13.5px; margin-top: 3px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px;
+  }
+  .card.full { grid-column: 1 / -1; }
+  .card h2 { font-size: 14px; color: var(--accent-2); margin-bottom: 10px; letter-spacing: .3px; }
+  .kv { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--ink-faint); }
+  .kv .v { color: var(--ink); font-weight: 600; text-align: right; word-break: break-all; }
+  .steps { list-style: none; }
+  .steps li {
+    display: flex; gap: 10px; padding: 8px 0; font-size: 13.5px;
+    border-bottom: 1px solid #f0f3ef;
+  }
+  .steps li:last-child { border-bottom: none; }
+  .steps .n {
+    flex: none; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-2);
+    font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+  }
+  .steps b { color: var(--ink); }
+  .steps span { color: var(--ink-soft); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 10px; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+    transition: background .15s;
+  }
+  .btn:hover { background: var(--accent-2); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn.ghost {
+    background: var(--accent-soft); color: var(--accent-2);
+  }
+  .btn.ghost:hover { background: #dcebe2; }
+  .log {
+    margin-top: 14px; background: #1d2320; color: #d7e6dc;
+    border-radius: 10px; padding: 14px 16px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; white-space: pre-wrap; word-break: break-word;
+    min-height: 120px; max-height: 360px; overflow-y: auto;
+  }
+  .log .dim { color: #7f9186; }
+  code { background: var(--accent-soft); color: var(--accent-2); padding: 1px 6px; border-radius: 5px; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+  .hint { color: var(--ink-faint); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo">📚</div>
+    <div>
+      <h1>文献管家</h1>
+      <div class="sub">Literature Curator · Zotero 文献库无人值守入库与治理</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>运行概况</h2>
+      <div class="kv"><span class="k">自动运行</span><span class="v">每 2 小时一次</span></div>
+      <div class="kv"><span class="k">Zotero 未开</span><span class="v">静默跳过，下次自动补做</span></div>
+      <div class="kv"><span class="k">API 消耗</span><span class="v">零（本地接口 + CrossRef）</span></div>
+      <div class="kv"><span class="k">脚本</span><span class="v">scripts/zotero/auto_ingest.py</span></div>
+    </div>
+
+    <div class="card">
+      <h2>它自动做什么</h2>
+      <ul class="steps">
+        <li><span class="n">1</span><div><b>扫描新 PDF</b><br><span>Downloads 新文件，state.json 幂等去重</span></div></li>
+        <li><span class="n">2</span><div><b>导入 Zotero</b><br><span>本地 API 导入，自动识别元数据</span></div></li>
+        <li><span class="n">3</span><div><b>补元数据</b><br><span>CrossRef 补年份作者（高置信才写）</span></div></li>
+        <li><span class="n">4</span><div><b>自动分组</b><br><span>按主题归入收藏夹，To Review 处理完即清</span></div></li>
+        <li><span class="n">5</span><div><b>打标签</b><br><span>标题关键词 → 受控主题标签</span></div></li>
+        <li><span class="n">6</span><div><b>汇总报告</b><br><span>当日摘要 + 每周周报</span></div></li>
+      </ul>
+    </div>
+
+    <div class="card full">
+      <h2>手动运行</h2>
+      <button class="btn" id="runBtn">▶ 立即运行一次</button>
+      <button class="btn ghost" id="clearBtn" style="margin-left:8px;">清空日志</button>
+      <div class="log" id="log"><span class="dim">点击「立即运行」触发一次文献入库与整理，输出会显示在这里。</span></div>
+      <div class="hint">也可以在终端手动跑：<code>python3 ~/Dev/Ingrids-AI-Agents/scripts/zotero/auto_ingest.py</code></div>
+    </div>
+  </div>
+
+<script>
+  var logBox = document.getElementById('log');
+  var runBtn = document.getElementById('runBtn');
+  var clearBtn = document.getElementById('clearBtn');
+
+  function log(text, dim) {
+    var line = document.createElement('div');
+    if (dim) line.className = 'dim';
+    line.textContent = text;
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  function resetLog() {
+    logBox.innerHTML = '';
+  }
+
+  clearBtn.addEventListener('click', resetLog);
+
+  runBtn.addEventListener('click', async function () {
+    runBtn.disabled = true;
+    runBtn.textContent = '⏳ 运行中…';
+    var t0 = new Date();
+    log('[' + t0.toLocaleTimeString() + '] 触发文献入库…');
+    try {
+      var r = await window.ingrid.zoteroIngestNow();
+      if (r && r.ok) {
+        log((r.output && r.output.trim()) ? r.output : '完成（无输出）');
+      } else {
+        log('失败：' + ((r && r.error) || '未知错误'), true);
+        if (r && r.output) log(r.output, true);
+      }
+    } catch (e) {
+      log('异常：' + (e && e.message ? e.message : String(e)), true);
+    }
+    var sec = ((new Date() - t0) / 1000).toFixed(1);
+    log('[' + new Date().toLocaleTimeString() + '] 结束（耗时 ' + sec + ' 秒）', true);
+    runBtn.disabled = false;
+    runBtn.textContent = '▶ 立即运行一次';
+  });
+</script>
+</body>
+</html>
