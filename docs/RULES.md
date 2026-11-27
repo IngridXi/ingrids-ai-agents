@@ -54,6 +54,12 @@
 - **skill 数据来源边界**：本机 `~/.workbuddy/skills` 与插件目录里的 skill（海归海/音乐/公众号/配色类）**不属于个人工作台**，只作「可选导入源」，默认一条都不启用。
 - **仓库自带 skills/ 下的 .md**（research、design 板块）是 builtin，默认启用、随 git 走。
 - **`~/.workbuddy` 与 `.workbuddy` 目录**：属于宿主工具/项目数据，**不是**工作台规则的存放地；规则只认 `docs/RULES.md`。
+- **Git 提交协作规矩（多 agent/多会话并发提交同一仓库，必守）**：本仓库有多个 agent 会自动 commit+push（知识沉淀官、情绪偏好官等），人工开发会话也会同时改代码。为避免互相卷走对方未提交的改动，任何提交方必须遵守：
+  1. **只 add 自己改的文件**：`git add <具体文件>`，**禁止 `git add -A` / `git add .` / `git commit -am`**。否则会把另一个 agent 正在改、还没提交的文件一起卷进你的提交，导致提交信息与实际改动对不上号（2026-11-27 已发生一次：`e537c89` 是「知识沉淀官」的提交，却混进了我的 `toolRunShellAsync` + `ensureEcoRadar` 改动）。
+  2. **提交前先 `git pull --rebase`**（或至少 `git fetch` + 核对 `git rev-list --count origin/main..HEAD` 是否分叉），再 push，避免分叉冲突。
+  3. **提交前核对 `git status --short` + `git diff --stat`**：确认只含自己的文件，别人的改动留在工作区别动。
+  4. **commit 信息只写自己改的内容**，不替别人"带一句"，也不把别人的改动写进自己的描述。
+  5. **commit 后立即 push**，缩短"本地领先远端"的窗口期，减少并发冲突概率。
 
 ---
 

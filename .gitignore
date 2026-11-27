@@ -12,8 +12,8 @@ extensions/meeting_audio/server.log
 extensions/meeting_audio/__pycache__/
 *.pyc
 
-# 定时自动化任务的运行日志（机器自动写的流水账，不入库）
-.workbuddy/memory/automations/
+# WorkBuddy 宿主工具/项目数据（工作日志、自动化任务等），不入库
+.workbuddy/
 
 __pycache__/
 
