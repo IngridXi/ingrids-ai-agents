@@ -1766,7 +1766,19 @@ ipcMain.on('agents:list-sync', (e) => { e.returnValue = readJson('agents.json', 
 ipcMain.handle('settler:report', () => getKnowledgeSettler().report());
 ipcMain.handle('settler:proposals', (_e, status) => getKnowledgeSettler().proposals(status));
 ipcMain.handle('settler:library', () => getKnowledgeSettler().state.library);
-ipcMain.handle('settler:approve', (_e, id, opts) => getKnowledgeSettler().approve(id, opts));
+ipcMain.handle('settler:approve', (_e, id, opts) => {
+  const settler = getKnowledgeSettler();
+  const p = settler.proposals().find((x) => x.id === id || x.fingerprint === id);
+  const res = settler.approve(id, opts);
+  // 桥：methodology 入库后同步写 Obsidian 主库「经验沉淀/」（approve 即人工在环，符合铁律）
+  if (p && res && !res.error) {
+    const cat = (opts && opts.category) || p.category;
+    if (cat === 'methodology' || cat === 'both') {
+      res.obsidian = syncLessonToObsidian(p);
+    }
+  }
+  return res;
+});
 ipcMain.handle('settler:ignore', (_e, id) => getKnowledgeSettler().ignore(id));
 ipcMain.handle('settler:submit', (_e, item) => getKnowledgeSettler().submit(item));
 ipcMain.handle('settler:suggest', (_e, q) => getKnowledgeSettler().suggestFor(q));
@@ -6105,6 +6117,43 @@ function toolDbObsidianWrite(payload) {
     fs.writeFileSync(full, body, 'utf8');
     return { ok: true, path: full, title: title, tags: tags, chars: body.length };
   } catch (e) { return { ok: false, error: '写入失败：' + String(e && e.message || e) }; }
+}
+/* 经验沉淀官 bridge：approve 一条 methodology 后，同步写成 Obsidian 主库「经验沉淀/」下的一篇教训笔记。
+ * 体例对齐该目录既有笔记（frontmatter type:lesson + 一句话教训 + 现象/根因/修复 + 沉淀规则）。 */
+function syncLessonToObsidian(p) {
+  const vp = vaultPath();
+  if (!vp) return { ok: false, error: '未检测到 Obsidian 主库（请先安装 Obsidian 并创建 vault）' };
+  const title = String((p && p.title) || (p && p.rule) || '未命名经验').trim();
+  const short = (title.split(/[：:]/)[0] || '').trim() || title;
+  const heading = '经验沉淀：' + short;
+  const d = new Date();
+  const p2 = (x) => String(x).padStart(2, '0');
+  const dateStr = d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  const tags = ['经验沉淀', '教训', (p && p.rule) || '未分类'];
+  const body = [
+    '## 一句话教训', '',
+    '> **' + title + '**', '',
+    '## 现象', '',
+    String((p && p.evidence) || '（无）').trim(), '',
+    '## 根因', '',
+    String((p && p.rootCause) || '（无）').trim(), '',
+    '## 修复', '',
+    String((p && p.fixApproach) || '（无）').trim(), '',
+    '## 沉淀的规则 / 验证', '',
+    String((p && p.verification) || '（无）').trim(), '',
+  ].join('\n');
+  const fm = ['---', 'title: ' + JSON.stringify(heading), 'type: lesson', 'date: ' + dateStr, 'tags:'];
+  tags.forEach((t) => fm.push('  - ' + JSON.stringify(String(t))));
+  fm.push('---', '');
+  const content = fm.join('\n') + '\n# ' + heading + '\n\n' + body;
+  const dir = path.join(vp, '经验沉淀');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const full = path.join(dir, safeFileName(heading) + '.md');
+    if (fs.existsSync(full)) return { ok: true, skipped: true, path: full, reason: '同名经验已存在，跳过（唯一真相源）' };
+    fs.writeFileSync(full, content, 'utf8');
+    return { ok: true, path: full, title: heading };
+  } catch (e) { return { ok: false, error: '写入 Obsidian 失败：' + String(e && e.message || e) }; }
 }
 /* 伦理 agent 对话自动同步到 Obsidian（未规范模式问答，按会话聚合：一个会话一个 .md，边聊边追加） */
 function ethicsSync(payload) {

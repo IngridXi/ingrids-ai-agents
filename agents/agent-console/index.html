@@ -536,7 +536,12 @@ $('#proposals').addEventListener('click', async (ev) => {
     else if (b.dataset.approve) {
       const vid = b.dataset.approve;
       const ta = document.querySelector('textarea[data-vid="' + vid + '"]');
-      await API.settlerApprove(vid, { category: b.dataset.cat, verification: ta ? ta.value.trim() : '' });
+      const r = await API.settlerApprove(vid, { category: b.dataset.cat, verification: ta ? ta.value.trim() : '' });
+      if (r && r.obsidian) {
+        if (r.obsidian.ok && !r.obsidian.skipped) alert('已入库，并自动同步到 Obsidian 经验沉淀/');
+        else if (r.obsidian.skipped) alert('已入库；Obsidian 同名经验已存在，跳过同步');
+        else alert('已入库，但同步 Obsidian 失败：' + (r.obsidian.error || '未知'));
+      }
     }
     loadProposals(); loadLibrary(); loadOverview();
   } catch (e) { alert('操作失败：' + e.message); }
