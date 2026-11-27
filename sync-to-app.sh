@@ -9,7 +9,8 @@
 set -e
 
 SRC="$HOME/Dev/Ingrids-AI-Agents/"
-DST="$HOME/Applications/Ingrid's AI Agents.app/Contents/Resources/app/"
+APP="$HOME/Applications/Ingrid's AI Agents.app"
+DST="$APP/Contents/Resources/app/"
 
 if [ ! -d "$DST" ]; then
   echo "❌ 未找到打包副本：$DST"
@@ -43,11 +44,18 @@ if [ -d "$NM_SRC" ] && [ -d "$NM_DST" ]; then
   rsync -a \
     --exclude 'electron/' \
     --exclude '@electron/' \
+    --exclude '.bin/' \
     "$NM_SRC" "$NM_DST"
   echo "✅ node_modules 运行时依赖已补齐。"
 else
   echo "⚠️ 跳过 node_modules 补齐（目录缺失，请先 npm install）。"
 fi
+
+# 重新签名：rsync 覆盖 Resources/app 会破坏签名 seal（资源哈希失配），
+# 必须用自签名证书重签，否则 codesign 验证失败 → 钥匙串/TCC 授权失效 → 反复弹密码。
+echo ""
+echo "🔏 重新签名（恢复签名有效性，避免钥匙串/TCC 授权失效）..."
+node "$SRC/build/resign-app.cjs" "$APP"
 
 echo ""
 echo "✅ 已同步到打包副本。"
