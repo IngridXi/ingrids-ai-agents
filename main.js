@@ -203,12 +203,34 @@ function settlerPendingList() {
     }));
   } catch { return []; }
 }
+
+// 研究督导浮动 agent：读 Obsidian 主库「写作参考/00-研究待办清单.md」，
+// 解析所有「- [ ]」未完成/存疑项，作为「研究待办」接入统一待办中心。
+function researchTodoSummary() {
+  try {
+    const vp = vaultPath();
+    if (!vp) return [];
+    const file = path.join(vp, '写作参考', '00-研究待办清单.md');
+    if (!fs.existsSync(file)) return [];
+    const content = fs.readFileSync(file, 'utf8');
+    const items = [];
+    content.split(/\r?\n/).forEach(function (line, i) {
+      const m = line.match(/^\s*-\s*\[ \]\s*(.+)$/);
+      if (!m) return;
+      const title = m[1].trim();
+      if (title) items.push({ id: 'rt-' + i, kind: 'research', title: title });
+    });
+    return items;
+  } catch { return []; }
+}
+
 async function approvalsSummary() {
   const q = getTaskQueue();
   const waiting = q.list('waiting').map((t) => ({
     id: t.id, kind: 'task', title: t.title || '未命名任务', question: t.question || '', createdAt: t.updatedAt,
   }));
   const experience = settlerPendingList();
+  const research = researchTodoSummary();
   let cityverse = [];
   try {
     const cv = await cityversePendingPlans();
@@ -220,8 +242,8 @@ async function approvalsSummary() {
     }
   } catch { /* CityVerse 控制台未启动/不可用，忽略 */ }
   return {
-    total: waiting.length + experience.length + cityverse.length,
-    waiting: waiting, experience: experience, cityverse: cityverse,
+    total: waiting.length + experience.length + research.length + cityverse.length,
+    waiting: waiting, experience: experience, research: research, cityverse: cityverse,
   };
 }
 let approvalsRefreshTimer = null;
@@ -235,7 +257,7 @@ async function refreshApprovals() {
   try { s = await approvalsSummary(); } catch { return; }
   broadcast('approvals:changed', s);
   // 只有「待办指纹」变化（有新增/减少）才发系统通知，避免每轮轮询都轰炸
-  const fp = s.waiting.length + '/' + s.experience.length + '/' + s.cityverse.length;
+  const fp = s.waiting.length + '/' + s.experience.length + '/' + s.research.length + '/' + s.cityverse.length;
   if (s.total === 0) { lastApprovalFingerprint = fp; return; }
   if (fp === lastApprovalFingerprint) return;
   lastApprovalFingerprint = fp;
@@ -248,6 +270,7 @@ function notifyTodosAsSecretary(s) {
   const parts = [];
   if (s.waiting.length) parts.push(s.waiting.length + ' 个任务需决策');
   if (s.experience.length) parts.push(s.experience.length + ' 条经验提案待审批');
+  if (s.research.length) parts.push(s.research.length + ' 项研究待办未完成');
   if (s.cityverse.length) parts.push(s.cityverse.length + ' 条 CityVerse 规划待审批');
   try {
     if (Notification.isSupported()) {
@@ -2663,7 +2686,7 @@ async function bgWebFetch(url) {
     const res = await fetch(url, { headers: { 'User-Agent': WEB_UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
     if (!res.ok) return { ok: false, error: '抓取失败：HTTP ' + res.status };
     let text = htmlBodyText(await res.text());
-    if (text.length > 16000) text = text.slice(0, 16000) + '\n…（内容过长已截断）';
+    if (text.length > 60000) text = text.slice(0, 60000) + '\n…（正文过长，已截断至前 60000 字符）';
     if (!text) return { ok: false, error: '未能提取到正文' };
     return { ok: true, url: url, content: text };
   } catch (err) { return { ok: false, error: '抓取失败：' + String((err && err.message) || err) }; }
@@ -2739,7 +2762,7 @@ async function callBgChat(engine, model, messages, tools) {
   }
 }
 
-// 后台任务主循环：单任务独立会话，最多 10 轮工具，完成/失败/需决策时落库并通知
+// 后台任务主循环：单任务独立会话，最多 40 轮工具，完成/失败/需决策时落库并通知
 async function runBackgroundTask(ticket) {
   const q = getTaskQueue();
   const engine = String(ticket.engine || 'deepseek');
@@ -2764,7 +2787,7 @@ async function runBackgroundTask(ticket) {
     msgs.push({ role: 'user', content: String(ticket.goal || ticket.title || '') });
   }
 
-  const MAX_ROUNDS = 10;
+  const MAX_ROUNDS = 40;
   let failStreak = 0;
   let emptyStreak = 0;
 
@@ -5530,7 +5553,7 @@ function toolFsReadRaw(payload) {
       return { ok: false, error: '读取失败：' + String(e && e.message || e) };
     }
   }
-  if (st.size > 200 * 1024) return { ok: false, error: '文件过大（>200KB），暂不支持读取' };
+  if (st.size > 2 * 1024 * 1024) return { ok: false, error: '文件过大（>2MB），请用 offset/limit 分段读取（建议 limit 设为 6000~40000 分段续读）' };
   try {
     const buf = fs.readFileSync(target);
     if (buf.includes(0)) return { ok: false, error: '疑似二进制文件（' + ext + '），暂不支持读取正文。Word 请转成 txt/md 后读取，或直接读同名的 .txt/.md 版本。' };

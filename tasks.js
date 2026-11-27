@@ -157,7 +157,7 @@
     }
     var approvalsPromise = window.ingrid.approvalsSummary
       ? window.ingrid.approvalsSummary()
-      : Promise.resolve({ total: 0, waiting: [], experience: [], cityverse: [] });
+      : Promise.resolve({ total: 0, waiting: [], experience: [], research: [], cityverse: [] });
     Promise.all([window.ingrid.taskList(), approvalsPromise]).then(function (vals) {
       render(vals[0], vals[1]);
     }).catch(function (e) {
@@ -166,7 +166,7 @@
   }
 
   function render(d, approvals) {
-    approvals = approvals || { total: 0, waiting: [], experience: [], cityverse: [] };
+    approvals = approvals || { total: 0, waiting: [], experience: [], research: [], cityverse: [] };
     var tickets = (d && d.tickets) || [];
     var counts = (d && d.counts) || {};
     var html = renderApprovalsBlock(approvals);
@@ -235,6 +235,13 @@
           } else if (window.ingrid && window.ingrid.openAgent) {
             window.ingrid.openAgent('agents/agent-console/index.html');
           }
+        } else if (ap === 'research') {
+          close();
+          if (typeof window.openAgentInView === 'function') {
+            window.openAgentInView({ name: '研究助手', href: 'agents/research-chat/index.html' });
+          } else if (window.ingrid && window.ingrid.openAgent) {
+            window.ingrid.openAgent('agents/research-chat/index.html');
+          }
         }
       });
     });
@@ -249,7 +256,7 @@
 
   // 统一「待你处理」区块：把三类待审批（需决策任务 / 经验提案 / CityVerse 规划）收拢展示
   function renderApprovalsBlock(a) {
-    a = a || { total: 0, waiting: [], experience: [], cityverse: [] };
+    a = a || { total: 0, waiting: [], experience: [], research: [], cityverse: [] };
     var total = a.total || 0;
     if (!total) return '';
     var html = '<div class="tk-ap-section"><div class="tk-ap-head">⚠ 待你处理（' + total + '）</div>';
@@ -275,6 +282,14 @@
         html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div>' +
           '<button data-ap="cityverse" type="button">去审批</button></div>';
       });
+      html += '</div>';
+    }
+    if (a.research.length) {
+      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">研究待办 · ' + a.research.length + '</div>';
+      a.research.forEach(function (p) {
+        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div></div>';
+      });
+      html += '<button data-ap="research" type="button">打开研究助手处理</button>';
       html += '</div>';
     }
     html += '</div>';
