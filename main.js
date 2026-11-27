@@ -1858,6 +1858,9 @@ ipcMain.handle('settler:suggest', (_e, q) => getKnowledgeSettler().suggestFor(q)
  * 低于阈值跳过（防噪音）→ 带证据锚生成提案（仍停在 pending_approval，人工在环不变）。
  * 打分零 LLM 成本：结果充实度 + 目标可追溯 + 多轮 + 方法论信号词命中。 */
 const METHOD_SIGNALS = ['根因', '修复', '诊断', '兜底', '降级', '对齐', '幂等', '重试', '超时', '缓存', '竞态', '校准', '错位', '偏移', '断点'];
+// 内容型/调研型任务（灵感目录、生态雷达、日报周报、采集舆情等）产出的是「资讯」而非「问题→根因→修复」教训，
+// 自动发现一律跳过，避免把日报/调研报告误当经验提案污染待审批队列（「诊断」这类词会出现在插件简介里，靠信号词拦不住）。
+const NON_LESSON_RE = /灵感目录|生态雷达|eco-?radar|每日调研|生态调研|日报|周报|采集|舆情|盘点|巡检/;
 function extractRootCause(text) {
   const s = String(text || '');
   const m = s.match(/(?:根因|根本原因|原因|root\s*cause)\s*[:：]\s*([^\n。]{4,120})/i);
@@ -1869,6 +1872,8 @@ function collectDiscoveryItems() {
   let scanned = 0, scored = 0;
   done.forEach((t) => {
     scanned++;
+    // 内容型/调研型任务跳过：不是教训，沉淀只会污染经验库
+    if (NON_LESSON_RE.test((t.agent || '') + ' ' + (t.category || '') + ' ' + (t.title || ''))) return;
     const result = String(t.result || '').trim();
     const goal = String(t.goal || '').trim();
     let score = 0;
@@ -1892,8 +1897,20 @@ function collectDiscoveryItems() {
   });
   return { items, scanned, scored };
 }
+// 自愈：把历史上被自动发现误抓为「经验提案」的内容型/调研型任务提案标记为忽略，清出待审批队列。
+function purgeNonLessonProposals() {
+  try {
+    const settler = getKnowledgeSettler();
+    settler.proposals('pending_approval').forEach((p) => {
+      if (p.source === 'auto-discovery' && NON_LESSON_RE.test((p.rule || '') + ' ' + (p.title || ''))) {
+        settler.ignore(p.id);
+      }
+    });
+  } catch { /* 忽略 */ }
+}
 function runSettlerDiscovery() {
   try {
+    purgeNonLessonProposals();
     const { items, scanned, scored } = collectDiscoveryItems();
     const r = getKnowledgeSettler().runOnce(items);
     const report = { scanned, scored, consumed: r.consumed, created: r.created, pending_approval: r.pending_approval, generated_at: new Date().toISOString() };

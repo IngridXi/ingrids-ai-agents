@@ -35,6 +35,8 @@ main{max-width:1120px;margin:0 auto;padding:20px}
 .metric{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .metric .k{color:var(--dim);font-size:12px}
 .metric .v{font-size:26px;font-weight:650;margin-top:6px;font-family:var(--mono)}
+.metric.clickable{cursor:pointer;transition:border-color .15s}
+.metric.clickable:hover{border-color:var(--accent)}
 .pipeline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:14px}
 .pipeline .step{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;text-align:center}
 .pipeline .step .n{font-weight:600;font-size:13px}
@@ -156,7 +158,7 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
     <h2>后台 Agent 概览 <span class="tag">知识沉淀官 + Agent 治理官</span></h2>
     <div class="metrics">
       <div class="metric"><div class="k">注册 Agent</div><div class="v" id="mAgents">—</div></div>
-      <div class="metric"><div class="k">待审批经验提案</div><div class="v" id="mPending" style="color:var(--warn)">—</div></div>
+      <div class="metric clickable" id="metricPending" title="点击查看待审批提案"><div class="k">待审批经验提案</div><div class="v" id="mPending" style="color:var(--warn)">—</div></div>
       <div class="metric"><div class="k">方法论经验</div><div class="v" id="mMethod" style="color:var(--purple)">—</div></div>
       <div class="metric"><div class="k">结论事故</div><div class="v" id="mConclusion" style="color:var(--teal)">—</div></div>
       <div class="metric"><div class="k">治理发现（重叠/孤儿/空壳）</div><div class="v" id="mGov" style="color:var(--dim)">—</div></div>
@@ -510,6 +512,8 @@ async function doSuggest() {
 }
 
 /* ---------------- 事件绑定 ---------------- */
+// 概览里「待审批经验提案」卡片可点击，直接滚到待审批清单，避免误以为是静态数字
+$('#metricPending').onclick = () => { $('#proposals').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 $('#submitExp').onclick = async () => {
   const item = {
     source: 'manual',

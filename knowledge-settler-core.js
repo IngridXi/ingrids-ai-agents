@@ -58,7 +58,7 @@
 
   // 非「问题→根因→修复」诊断经验的 rule，反复触发属噪音，不作为经验来源。
   // 纯运维动作提醒（如「改完没重启」）已静态写死于 RULES，沉淀只会污染经验库。
-  var _SKIP_RULES = ['boot_code_lag', 'restart_required', 'manual_reminder'];
+  var _SKIP_RULES = ['boot_code_lag', 'restart_required', 'manual_reminder', 'eco-radar'];
 
   /* ---------- 3. 状态工厂 + 默认存储 ---------- */
   function emptyState() {

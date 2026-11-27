@@ -7,7 +7,7 @@
   const api = window.ingrid;
   root.innerHTML = `
     <div class="map-header">
-      <div><h2>Agent 分层架构图 <span id="mapApprovals" class="map-approvals" hidden></span></h2><p id="mapConnection" role="status">正在读取工作台…</p></div>
+      <div><h2>Agent 分层架构图</h2><p id="mapConnection" role="status">正在读取工作台…</p></div>
       <div class="map-controls">
         <div class="map-views" role="tablist" aria-label="视图切换">
           <button type="button" id="mapViewForce" role="tab" aria-selected="true">关系图</button>
@@ -316,15 +316,6 @@
   }
 
   function render() {
-    // 待审批总数徽章：本地（需决策任务 + 经验提案）+ CityVerse 规划
-    const pa = snapshot.pendingApprovals || {};
-    const pendingTotal = (pa.tasks || 0) + (pa.experience || 0) + (projectStatus?.online ? (projectStatus.plansPending || 0) : 0);
-    const ap = root.querySelector('#mapApprovals');
-    if (ap) {
-      ap.textContent = pendingTotal > 99 ? '99+' : String(pendingTotal);
-      ap.hidden = !(pendingTotal > 0);
-      ap.title = '待审批：需决策任务 ' + (pa.tasks || 0) + ' · 经验提案 ' + (pa.experience || 0) + ' · CityVerse 规划 ' + (projectStatus?.plansPending || 0);
-    }
     const query = search.value.trim().toLowerCase();
     const layer = Number(layerSelect.value);
     function matches(node) {

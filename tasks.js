@@ -223,12 +223,18 @@
         else if (act === 'remove') { window.ingrid.taskRemove(id).then(load); }
       });
     });
-    // 待审批「去审批」跳转（经验提案 / CityVerse 规划都在总控台就地审批）
+    // 待审批「去审批」跳转：先关掉任务中心面板，再用带返回条的入口打开总控台。
+    // 直接 openAgent 会把总控台顶到全屏、又没有返回条，导致「进得去出不来」+ 顶部漏边。
     bodyEl.querySelectorAll('button[data-ap]').forEach(function (b) {
       b.addEventListener('click', function () {
         var ap = b.getAttribute('data-ap');
-        if ((ap === 'experience' || ap === 'cityverse') && window.ingrid.openAgent) {
-          window.ingrid.openAgent('agents/agent-console/index.html');
+        if (ap === 'experience' || ap === 'cityverse') {
+          close();
+          if (typeof window.openAgentInView === 'function') {
+            window.openAgentInView({ name: '后台总控', href: 'agents/agent-console/index.html' });
+          } else if (window.ingrid && window.ingrid.openAgent) {
+            window.ingrid.openAgent('agents/agent-console/index.html');
+          }
         }
       });
     });
