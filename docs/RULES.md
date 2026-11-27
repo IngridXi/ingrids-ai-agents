@@ -74,9 +74,10 @@
 | 通用助手 💬 | `agents/assistant-chat/` | 通用问答 |
 | 会议纪要官 🎙️ | `agents/meeting-audio/` | FunASR 本地语音转写 |
 | 知识库 | `agents/knowledge/` | 知识库管理界面 |
-| 电脑操作 | `agents/computer-use/` | 浏览器自动化 |
 | 界面设计师 🎨 / 音乐创作 🎵 / 灵感目录 📡 | 主界面预设 | — |
 | 类型治理官 🧭（原智能路由 ra）/ CFO 成本官 💰 / 模型调控官 🎚️ / Agent 总管 🧭 | 主界面预设（控制面） | 自动巡检/修正，手动锁定豁免 |
+
+> **能力（非独立 Agent）**：电脑操作（截图 + 鼠标键盘，需系统「屏幕录制 + 辅助功能」授权）已能力化为每个 Agent 的 `computer:use` 开关（见 `agents-core.js` 能力清单），后端 `computer-use.py`；`agents/computer-use/` 是 v7 迁移前的遗留独立页，不再作为首页卡片。
 
 ### 关键文件
 - `main.js` — 主进程：IPC、工具执行（fs/db/web/computer）、流式聊天、文档生成、知识库引擎。

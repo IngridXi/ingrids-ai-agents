@@ -44,8 +44,8 @@ const DOMAIN_KEYWORDS = {
   '秘书日程': ['日程', '日历', '邮件', '秘书', '提醒', '同步'],
 };
 
-// 面板型 Agent（在首页渲染、无独立 agents/<slug>/index.html），属正常设计，不算孤儿前端。
-const CONTROL_PLANE_HINTS = ['调度中枢', '智能路由', '界面设计师', '秘书', '监事', '监督者', '知识沉淀官', 'Agent 总控'];
+// 控制面 / 治理运营类 Agent 的 name 提示词（含历史名：调度中枢/智能路由→类型治理官）。与 agent-ops-governor.js 的 CONTROL_PLANE 保持一致，用于 control_plane 计数；不含 worker（界面设计师是 production，非控制面）。
+const CONTROL_PLANE_HINTS = ['调度中枢', '智能路由', '秘书', '监事', '监督者', '知识沉淀官', 'Agent 总控', 'CFO', '模型调控', 'Agent 总管', '类型治理'];
 
 /* ---------- 2. 工具函数 ---------- */
 function readText(p) {
