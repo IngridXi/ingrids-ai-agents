@@ -714,6 +714,25 @@ $('#sentimentBox').addEventListener('input', (ev) => {
 
 })();
 
+/* ---------------- hash 直达（任务中心跳转定位到具体审批界面） ---------------- */
+// 任务中心各 tab 通过 openAgentInView 带 hash 打开本页：'#experience' → 待审批经验提案、
+// '#cityverse' → 架构图 CityVerse 审批弹窗、'#governance' → 治理巡检。加载时与 hash 变化时都定位一次。
+function applyHashRoute() {
+  const h = (window.location.hash || '').replace('#', '');
+  if (!h) return;
+  if (h === 'experience') {
+    $('#tabConsole').click();
+    setTimeout(function () { const el = $('#proposals'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+  } else if (h === 'cityverse') {
+    $('#tabArch').click();
+    setTimeout(function () { if (window.openCvApprove) window.openCvApprove(); }, 120);
+  } else if (h === 'governance') {
+    $('#tabConsole').click();
+    setTimeout(function () { const el = $('#govKpis'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+  }
+}
+window.addEventListener('hashchange', applyHashRoute);
+
 /* ---------------- 启动 ---------------- */
 (async function boot() {
   if (!hasApi()) {
@@ -722,6 +741,7 @@ $('#sentimentBox').addEventListener('input', (ev) => {
     return;
   }
   loadOverview(); loadProposals(); loadLibrary(); loadGovernance(); loadSentiment();
+  applyHashRoute();
 })();
 </script>
 <script src="../../agent-architecture-core.js"></script>

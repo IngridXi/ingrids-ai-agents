@@ -381,12 +381,19 @@
     bodyEl.querySelectorAll('button[data-ap]').forEach(function (b) {
       b.addEventListener('click', function () {
         var ap = b.getAttribute('data-ap');
-        if (ap === 'experience' || ap === 'cityverse') {
+        if (ap === 'experience') {
           close();
           if (typeof window.openAgentInView === 'function') {
-            window.openAgentInView({ name: '后台总控', href: 'agents/agent-console/index.html' });
+            window.openAgentInView({ name: '后台总控 · 经验提案', href: 'agents/agent-console/index.html#experience' });
           } else if (window.ingrid && window.ingrid.openAgent) {
-            window.ingrid.openAgent('agents/agent-console/index.html');
+            window.ingrid.openAgent('agents/agent-console/index.html#experience');
+          }
+        } else if (ap === 'cityverse') {
+          close();
+          if (typeof window.openAgentInView === 'function') {
+            window.openAgentInView({ name: '后台总控 · CityVerse 审批', href: 'agents/agent-console/index.html#cityverse' });
+          } else if (window.ingrid && window.ingrid.openAgent) {
+            window.ingrid.openAgent('agents/agent-console/index.html#cityverse');
           }
         } else if (ap === 'research') {
           close();

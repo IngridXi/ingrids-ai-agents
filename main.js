@@ -2007,7 +2007,39 @@ function runAgentGovernance() {
   writeJson('agent-governance.json', report);
   return report;
 }
-ipcMain.handle('governance:report', () => readJson('agent-governance.json', null));
+// 缓存新鲜度（根源解决「改了 agent 面板仍显示旧快照」）：读缓存前先比「缓存 mtime」与「源码最新 mtime」
+// （首页注册 index.html / 巡检脚本 agent-governance.js / 任一 agents/<slug>/index.html）。
+// 只要源码比缓存新（删除/新增/修改过 agent），就自动重跑一次，无需依赖启动钩子或定时。
+function newestAgentMtime() {
+  let m = 0;
+  try {
+    const dir = path.join(__dirname, 'agents');
+    if (fs.existsSync(dir)) {
+      fs.readdirSync(dir).forEach(function (name) {
+        const idx = path.join(dir, name, 'index.html');
+        try { m = Math.max(m, fs.statSync(idx).mtimeMs); } catch { /* 忽略无前端页的目录 */ }
+      });
+    }
+  } catch { /* 忽略 */ }
+  return m;
+}
+function governanceFreshReport() {
+  const cacheFile = path.join(dataDir(), 'agent-governance.json');
+  try {
+    const st = fs.statSync(cacheFile);
+    const newestSrc = Math.max(
+      fs.statSync(path.join(__dirname, 'index.html')).mtimeMs,
+      fs.statSync(path.join(__dirname, 'agent-governance.js')).mtimeMs,
+      newestAgentMtime(),
+    );
+    if (st.mtimeMs >= newestSrc) {
+      const r = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if (r && r.generated_at) return r;
+    }
+  } catch { /* 无缓存或读失败 → 走重跑 */ }
+  return runAgentGovernance();
+}
+ipcMain.handle('governance:report', () => governanceFreshReport());
 ipcMain.handle('governance:run', () => runAgentGovernance());
 
 /* ---------------- IPC：Agent 类型治理官（自动巡检 + 自动判定/修正 + 人工锁定 + 变更报告）----------------
@@ -2140,7 +2172,12 @@ function openAgentInMainView(href) {
   if (typeof href !== 'string' || !href || href.includes('..')) return false;
   if (href.includes('meeting-audio')) ensureMeetingAudioBackend();
   if (!mainWindow) return false;
-  let view = agentViews.get(href);
+  // 拆分 hash 直达指令（如 agents/agent-console/index.html#experience）：
+  // hash 只作页面内定位，不影响视图缓存 key（避免同页面因 hash 不同重复建 BrowserView）与文件路径。
+  const hashIdx = href.indexOf('#');
+  const viewKey = hashIdx >= 0 ? href.slice(0, hashIdx) : href;
+  const targetHash = hashIdx >= 0 ? href.slice(hashIdx + 1) : '';
+  let view = agentViews.get(viewKey);
   if (!view) {
     view = new BrowserView({
       webPreferences: Object.assign({ preload: path.join(__dirname, 'preload.js') }, WEB_PREFS),
@@ -2150,18 +2187,21 @@ function openAgentInMainView(href) {
       if (/^https?:\/\//.test(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
-    agentViews.set(href, view);
+    agentViews.set(viewKey, view);
   }
   // 检测页面文件是否更新：若磁盘上的 mtime 比上次加载更新，则重新 loadFile 拿到最新界面；
   // 否则复用缓存（保住流式/后台任务的现场）。解决「改了 agent 页面，切回时还是旧版」的问题。
-  const filePath = path.join(__dirname, href);
+  const filePath = path.join(__dirname, viewKey);
   let mtime = 0;
   try { mtime = fs.statSync(filePath).mtimeMs; } catch (e) { /* 文件可能不存在，保持原逻辑 */ }
   if (!view.__loadedMtime || mtime > view.__loadedMtime) {
-    view.webContents.loadFile(filePath);
+    view.webContents.loadFile(filePath, targetHash ? { hash: targetHash } : undefined);
     view.__loadedMtime = mtime;
+  } else if (targetHash) {
+    // 视图已缓存（页面已加载）：直接改 hash 触发页面内 hashchange 定位
+    view.webContents.executeJavaScript('window.location.hash=' + JSON.stringify(targetHash) + ';').catch(() => {});
   }
-  activeAgentHref = href;
+  activeAgentHref = viewKey;
   mainWindow.setBrowserView(view);
   layoutAgentView();
   return true;
