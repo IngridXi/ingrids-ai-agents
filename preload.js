@@ -278,6 +278,10 @@ contextBridge.exposeInMainWorld('ingrid', {
   taskClassify: (text) => ipcRenderer.invoke('task:classify', text),
   onTaskChanged: (cb) => ipcRenderer.on('task:changed', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // 统一待办中心（三类待审批聚合：需决策任务 + 经验提案 + CityVerse 规划）
+  approvalsSummary: () => ipcRenderer.invoke('approvals:summary'),
+  onApprovalsChanged: (cb) => ipcRenderer.on('approvals:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
   // 自然语言定时解析（「明天下午3点 / 每天9点」→ schedule 字符串）
   scheduleParse: (text) => ipcRenderer.invoke('schedule:parse', text),
 

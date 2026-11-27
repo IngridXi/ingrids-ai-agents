@@ -57,6 +57,16 @@
     '.tk-footbar button{border:1px solid #ddd;background:#fff;color:#5F5E5A;border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit;}',
     '.tk-footbar button:hover{border-color:#A32D2D;color:#A32D2D;}',
     '.tk-footbar .tk-note{font-size:11px;color:#b4b2a9;}',
+    '.tk-ap-section{border:1px solid #f0c9a0;background:#fdf6ee;border-radius:12px;padding:12px 14px;margin-bottom:4px;}',
+    '.tk-ap-head{font-size:13px;font-weight:700;color:#854F0B;margin-bottom:8px;}',
+    '.tk-ap-group{margin-bottom:10px;}',
+    '.tk-ap-group:last-child{margin-bottom:0;}',
+    '.tk-ap-gtitle{font-size:11px;font-weight:600;color:#b45309;margin-bottom:6px;}',
+    '.tk-ap-item{display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid #f0e4d5;border-radius:10px;padding:10px 12px;margin-bottom:6px;}',
+    '.tk-ap-item:last-child{margin-bottom:0;}',
+    '.tk-ap-title{font-size:13px;color:#2c2c2a;font-weight:600;line-height:1.4;}',
+    '.tk-ap-item button{align-self:flex-start;border:1px solid #7F77DD;background:#fff;color:#534AB7;border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;}',
+    '.tk-ap-item button:hover{background:#EEEDFE;}',
   ].join('');
 
   var mask, panel, bodyEl, form, titleEl, goalEl, engineEl, scheduleEl, goBtn, clearBtn, noteEl;
@@ -145,21 +155,29 @@
       bodyEl.innerHTML = '<div class="tk-empty">任务中心需在桌面应用中使用</div>';
       return;
     }
-    window.ingrid.taskList().then(function (d) { render(d); }).catch(function (e) {
+    var approvalsPromise = window.ingrid.approvalsSummary
+      ? window.ingrid.approvalsSummary()
+      : Promise.resolve({ total: 0, waiting: [], experience: [], cityverse: [] });
+    Promise.all([window.ingrid.taskList(), approvalsPromise]).then(function (vals) {
+      render(vals[0], vals[1]);
+    }).catch(function (e) {
       bodyEl.innerHTML = '<div class="tk-empty">加载失败：' + esc((e && e.message) || e) + '</div>';
     });
   }
 
-  function render(d) {
+  function render(d, approvals) {
+    approvals = approvals || { total: 0, waiting: [], experience: [], cityverse: [] };
     var tickets = (d && d.tickets) || [];
     var counts = (d && d.counts) || {};
+    var html = renderApprovalsBlock(approvals);
     if (!tickets.length) {
-      bodyEl.innerHTML = '<div class="tk-empty">还没有后台任务。在上面输入目标，点「丢到后台运行」。</div>';
+      html += '<div class="tk-empty">还没有后台任务。在上面输入目标，点「丢到后台运行」。</div>';
+      bodyEl.innerHTML = html;
       noteEl.textContent = '0 个任务';
-      updateDot(0);
+      updateDot(approvals.total);
       return;
     }
-    var html = '<div class="tk-countbar">排队 ' + (counts.queued || 0) +
+    html += '<div class="tk-countbar">排队 ' + (counts.queued || 0) +
       ' · 运行 ' + (counts.running || 0) +
       ' · 需决策 ' + (counts.waiting || 0) +
       ' · 完成 ' + (counts.done || 0) +
@@ -193,7 +211,7 @@
     });
     bodyEl.innerHTML = html;
     noteEl.textContent = tickets.length + ' 个任务';
-    updateDot((counts.waiting || 0) + (counts.running || 0));
+    updateDot(approvals.total);
 
     bodyEl.querySelectorAll('button[data-act]').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -205,11 +223,56 @@
         else if (act === 'remove') { window.ingrid.taskRemove(id).then(load); }
       });
     });
+    // 待审批「去审批」跳转（经验提案 / CityVerse 规划都在总控台就地审批）
+    bodyEl.querySelectorAll('button[data-ap]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var ap = b.getAttribute('data-ap');
+        if ((ap === 'experience' || ap === 'cityverse') && window.ingrid.openAgent) {
+          window.ingrid.openAgent('agents/agent-console/index.html');
+        }
+      });
+    });
   }
 
   function updateDot(n) {
     var dot = document.getElementById('taskDot');
-    if (dot) dot.hidden = !(n > 0);
+    if (!dot) return;
+    dot.textContent = n > 99 ? '99+' : String(n || 0);
+    dot.hidden = !(n > 0);
+  }
+
+  // 统一「待你处理」区块：把三类待审批（需决策任务 / 经验提案 / CityVerse 规划）收拢展示
+  function renderApprovalsBlock(a) {
+    a = a || { total: 0, waiting: [], experience: [], cityverse: [] };
+    var total = a.total || 0;
+    if (!total) return '';
+    var html = '<div class="tk-ap-section"><div class="tk-ap-head">⚠ 待你处理（' + total + '）</div>';
+    if (a.waiting.length) {
+      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">需决策任务 · ' + a.waiting.length + '</div>';
+      a.waiting.forEach(function (t) {
+        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(t.title) + '</div>' +
+          (t.question ? '<div class="tk-question">' + esc(t.question) + '</div>' : '') + '</div>';
+      });
+      html += '</div>';
+    }
+    if (a.experience.length) {
+      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">经验提案 · ' + a.experience.length + '</div>';
+      a.experience.forEach(function (p) {
+        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div>' +
+          '<button data-ap="experience" type="button">去总控审批</button></div>';
+      });
+      html += '</div>';
+    }
+    if (a.cityverse.length) {
+      html += '<div class="tk-ap-group"><div class="tk-ap-gtitle">CityVerse 规划 · ' + a.cityverse.length + '</div>';
+      a.cityverse.forEach(function (p) {
+        html += '<div class="tk-ap-item"><div class="tk-ap-title">' + esc(p.title) + '</div>' +
+          '<button data-ap="cityverse" type="button">去审批</button></div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
   }
 
   function createTask() {
@@ -282,5 +345,16 @@
   function clearDone() {
     if (!IS_DESKTOP) return;
     window.ingrid.taskClear().then(load);
+  }
+
+  // 页面加载即初始化首页「任务中心」红色数字徽章：监听待办广播 + 首次拉取（不依赖打开面板）
+  if (IS_DESKTOP && window.ingrid.onApprovalsChanged) {
+    window.ingrid.onApprovalsChanged(function (s) {
+      updateDot((s && s.total) || 0);
+      if (mask && mask.classList.contains('open')) load();
+    });
+  }
+  if (IS_DESKTOP && window.ingrid.approvalsSummary) {
+    window.ingrid.approvalsSummary().then(function (s) { updateDot((s && s.total) || 0); }).catch(function () {});
   }
 })();

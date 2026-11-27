@@ -183,7 +183,71 @@ function broadcastTasks() {
     const q = getTaskQueue();
     broadcast('task:changed', { tickets: q.list(), counts: q.counts() });
   } catch { /* 忽略广播失败 */ }
+  scheduleApprovalsRefresh();
 }
+
+/* ---------------- 统一「待办中心」：三类待审批聚合 ----------------
+ * 把散落在三处、都「需要用户拍板」的活收拢成一个总数：
+ *   1. 后台任务队列 waiting（需决策）
+ *   2. 知识沉淀官 pending_approval（经验提案）
+ *   3. CityVerse 控制台 pending_approval（建设规划）
+ * 用途：首页任务中心红色数字徽章 + 系统通知提醒 + 任务中心面板统一展示。
+ */
+function settlerPendingList() {
+  try {
+    return getKnowledgeSettler().proposals('pending_approval').map((p) => ({
+      id: p.id, kind: 'experience', title: p.title || p.rule || '经验提案',
+      category: p.category, createdAt: p.created,
+    }));
+  } catch { return []; }
+}
+async function approvalsSummary() {
+  const q = getTaskQueue();
+  const waiting = q.list('waiting').map((t) => ({
+    id: t.id, kind: 'task', title: t.title || '未命名任务', question: t.question || '', createdAt: t.updatedAt,
+  }));
+  const experience = settlerPendingList();
+  let cityverse = [];
+  try {
+    const cv = await cityversePendingPlans();
+    if (cv && cv.online && Array.isArray(cv.plans)) {
+      cityverse = cv.plans.map((p) => ({
+        id: p.id, kind: 'cityverse', title: p.title || ('规划 #' + p.id),
+        human_report: p.human_report || '', createdAt: p.created_at || '',
+      }));
+    }
+  } catch { /* CityVerse 控制台未启动/不可用，忽略 */ }
+  return {
+    total: waiting.length + experience.length + cityverse.length,
+    waiting: waiting, experience: experience, cityverse: cityverse,
+  };
+}
+let approvalsRefreshTimer = null;
+function scheduleApprovalsRefresh() {
+  if (approvalsRefreshTimer) return;
+  approvalsRefreshTimer = setTimeout(() => { approvalsRefreshTimer = null; refreshApprovals(); }, 400);
+}
+let lastApprovalFingerprint = '';
+async function refreshApprovals() {
+  let s;
+  try { s = await approvalsSummary(); } catch { return; }
+  broadcast('approvals:changed', s);
+  // 只有「待办指纹」变化（有新增/减少）才发系统通知，避免每轮轮询都轰炸
+  const fp = s.waiting.length + '/' + s.experience.length + '/' + s.cityverse.length;
+  if (s.total === 0) { lastApprovalFingerprint = fp; return; }
+  if (fp === lastApprovalFingerprint) return;
+  lastApprovalFingerprint = fp;
+  const parts = [];
+  if (s.waiting.length) parts.push(s.waiting.length + ' 个任务需决策');
+  if (s.experience.length) parts.push(s.experience.length + ' 条经验提案待审批');
+  if (s.cityverse.length) parts.push(s.cityverse.length + ' 条 CityVerse 规划待审批');
+  try {
+    if (Notification.isSupported()) {
+      new Notification({ title: '你有 ' + s.total + ' 件待办需要处理', body: parts.join(' · ') }).show();
+    }
+  } catch { /* 通知失败不阻断 */ }
+}
+ipcMain.handle('approvals:summary', () => approvalsSummary());
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(path.join(dataDir(), name), 'utf8')); }
   catch { return fallback; }
@@ -1777,10 +1841,11 @@ ipcMain.handle('settler:approve', (_e, id, opts) => {
       res.obsidian = syncLessonToObsidian(p);
     }
   }
+  scheduleApprovalsRefresh();
   return res;
 });
-ipcMain.handle('settler:ignore', (_e, id) => getKnowledgeSettler().ignore(id));
-ipcMain.handle('settler:submit', (_e, item) => getKnowledgeSettler().submit(item));
+ipcMain.handle('settler:ignore', (_e, id) => { const r = getKnowledgeSettler().ignore(id); scheduleApprovalsRefresh(); return r; });
+ipcMain.handle('settler:submit', (_e, item) => { const r = getKnowledgeSettler().submit(item); scheduleApprovalsRefresh(); return r; });
 ipcMain.handle('settler:suggest', (_e, q) => getKnowledgeSettler().suggestFor(q));
 /* ---------------- 知识沉淀官 · 自动发现（sleep-time 巡逻 + 重要性打分）----------------
  * 把 runOnce 从「被动等人喂」升级为「定时自扫任务队列已解决项 → 启发式重要性打分 →
@@ -1833,6 +1898,7 @@ function runSettlerDiscovery() {
       } catch (e) { /* 通知失败不阻断 */ }
       broadcast('settler:discovered', report);
     }
+    scheduleApprovalsRefresh();
     return report;
   } catch (e) {
     const err = { error: String(e && e.message || e), generated_at: new Date().toISOString() };
@@ -6730,10 +6796,16 @@ ipcMain.handle('arch:status', (e) => {
     title: pendingExperience + ' 条经验提案等待人工审核',
   });
   const runs = activity.snapshot();
+  const pendingApprovals = {
+    tasks: queue.filter(t => t.status === 'waiting').length,
+    experience: pendingExperience,
+    cityverse: 0, // CityVerse 待审批由 cityverseOverview 单独提供（异步 fetch）
+  };
   return {
     now: Date.now(), nodes: Architecture.inventory(registry),
     active: runs.active.concat(tickets),
     recent: runs.recent.concat(readings, completed).sort((a, b) => b.endedAt - a.endedAt),
+    pendingApprovals,
   };
 });
 
@@ -6899,6 +6971,10 @@ if (gotSingleInstanceLock) {
     // 知识沉淀官自动发现：启动延时一次 + 每 6 小时定时复盘任务队列已解决项（启发式打分 → 待审批提案，人工在环不变）
     setTimeout(() => { runSettlerDiscovery(); }, 8000);
     setInterval(() => { runSettlerDiscovery(); }, 6 * 60 * 60 * 1000);
+    // 统一待办中心：启动延时汇总一次 + 每 60 秒轮询（兜底捕获 CityVerse 控制台新增待审批，
+    // 本地任务/经验提案变化由 broadcastTasks / settler 变更点即时触发）
+    setTimeout(() => { refreshApprovals(); }, 5000);
+    setInterval(() => { refreshApprovals(); }, 60 * 1000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });

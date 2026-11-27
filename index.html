@@ -94,6 +94,8 @@
   .side-item:hover { background: rgba(255,255,255,.06); color: #fff; }
   .side-item.active { background: linear-gradient(135deg, var(--accent), #7c6cf0); color: #fff; box-shadow: 0 6px 16px rgba(108,92,231,.34); }
   .side-item .bdot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+  .side-item .bnum { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 3px rgba(220,38,38,.18); line-height: 1; }
+  .side-item .bnum[hidden] { display: none; }
 
   .side-foot { padding: 14px 8px 0; margin-top: 10px; font-size: 11px; color: #6e6699; border-top: 1px solid rgba(255,255,255,.08); line-height: 1.6; }
 
@@ -319,7 +321,7 @@
         <div class="side-sep">知识库</div>
         <button class="side-item" id="navKnowledge"><span class="ic" data-icon="book"></span><span>知识库</span></button>
         <div class="side-sep">系统</div>
-        <button class="side-item" id="navTasks"><span class="ic" data-icon="zap"></span><span>任务中心</span><span class="bdot" id="taskDot" hidden></span></button>
+        <button class="side-item" id="navTasks"><span class="ic" data-icon="zap"></span><span>任务中心</span><span class="bnum" id="taskDot" hidden>0</span></button>
         <button class="side-item" id="navDashboard"><span class="ic" data-icon="chart"></span><span>仪表盘</span></button>
         <button class="side-item" id="navMermaid"><span class="ic" data-icon="flow"></span><span>流程图</span></button>
         <button class="side-item" id="navApiUsage"><span class="ic" data-icon="money"></span><span>API 用量</span><span class="bdot" id="apiDot" hidden></span></button>
