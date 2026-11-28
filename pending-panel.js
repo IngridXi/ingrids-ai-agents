@@ -14,7 +14,9 @@
   'use strict';
 
   var AGENT = '';
-  var fabEl = null, panelEl = null, bodyEl = null, countEl = null;
+  var fabEl = null, panelEl = null, bodyEl = null, autoBodyEl = null, countEl = null;
+  var currentTab = 'todo';
+  var autoState = null;
 
   /* ---------- 样式 ---------- */
   function ensureStyle() {
@@ -74,6 +76,24 @@
       'border-radius:8px;padding:6px 0;font-size:12px;cursor:pointer;font-family:inherit;}',
       '#pending-panel .pp-foot button:hover{border-color:#7F77DD;color:#534AB7;}',
       '#pending-panel .pp-foot button.pp-clear:hover{border-color:#E5484D;color:#E5484D;}',
+      '#pending-panel .pp-tabs{display:flex;border-bottom:1px solid #f0eef8;background:#FAFAFE;}',
+      '#pending-panel .pp-tab{flex:1;border:none;background:transparent;padding:9px 4px;font-size:13px;color:#9B98B0;cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;}',
+      '#pending-panel .pp-tab:hover{color:#534AB7;}',
+      '#pending-panel .pp-tab.active{color:#534AB7;font-weight:700;border-bottom-color:#7F77DD;}',
+      '#pending-panel .pp-auto{padding:14px;}',
+      '#pending-panel .pp-auto-start{width:100%;border:none;background:#7F77DD;color:#fff;padding:12px 0;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;}',
+      '#pending-panel .pp-auto-start:hover{background:#6B63CC;}',
+      '#pending-panel .pp-auto-start.running{background:#E5484D;}',
+      '#pending-panel .pp-auto-start.running:hover{background:#D03C40;}',
+      '#pending-panel .pp-auto-status{margin:12px 2px 0;font-size:13px;color:#2c2c2a;line-height:1.6;}',
+      '#pending-panel .pp-auto-status .dim{color:#9B98B0;}',
+      '#pending-panel .pp-auto-stats{margin:10px 2px 0;font-size:13px;color:#2c2c2a;display:flex;gap:14px;}',
+      '#pending-panel .pp-auto-log{margin-top:12px;border-top:1px solid #f0eef8;padding-top:10px;max-height:42vh;overflow-y:auto;}',
+      '#pending-panel .pp-auto-log .lg-title{font-size:11px;color:#9B98B0;margin-bottom:6px;}',
+      '#pending-panel .pp-auto-log .lg-item{font-size:12px;line-height:1.5;padding:4px 0;color:#5F5E5A;display:flex;gap:6px;align-items:flex-start;}',
+      '#pending-panel .pp-auto-log .lg-item .v{flex:none;font-weight:700;}',
+      '#pending-panel .pp-auto-log .lg-item.done .v{color:#3BA55D;}',
+      '#pending-panel .pp-auto-log .lg-item.blocked .v{color:#E6A23C;}',
     ].join('\n');
     var st = document.createElement('style');
     st.id = 'pp-style';
@@ -105,17 +125,25 @@
       '<button class="pp-iconbtn" data-act="refresh" title="刷新">↻</button>' +
       '<button class="pp-iconbtn" data-act="close" title="收起">×</button>' +
       '</div>' +
+      '<div class="pp-tabs">' +
+      '<button class="pp-tab active" data-tab="todo">📋 待办</button>' +
+      '<button class="pp-tab" data-tab="auto">🚀 自动托管</button>' +
+      '</div>' +
       '<div class="pp-body"></div>' +
+      '<div class="pp-auto" style="display:none"></div>' +
       '<div class="pp-foot">' +
       '<button data-act="scan">重新扫描</button>' +
       '<button class="pp-clear" data-act="clear">清除已完成</button>' +
       '</div>';
 
     bodyEl = panelEl.querySelector('.pp-body');
+    autoBodyEl = panelEl.querySelector('.pp-auto');
     countEl = fabEl.querySelector('.pp-count');
     panelEl.querySelector('.pp-agent').textContent = AGENT || '';
 
     panelEl.addEventListener('click', function (e) {
+      var tab = e.target.closest('[data-tab]');
+      if (tab) { switchTab(tab.getAttribute('data-tab')); return; }
       var btn = e.target.closest('[data-act]');
       if (!btn) return;
       var act = btn.getAttribute('data-act');
@@ -123,6 +151,7 @@
       else if (act === 'refresh') { PendingPanel.refresh(); }
       else if (act === 'scan') { PendingPanel.scan(); }
       else if (act === 'clear') { window.ingrid.pendingClearDone(AGENT).then(function () { PendingPanel.refresh(); }); }
+      else if (act === 'autopilot') { toggleAutopilot(); }
     });
 
     document.body.appendChild(fabEl);
@@ -235,6 +264,62 @@
       '</div>';
   }
 
+  /* ---------- 自动托管 ---------- */
+  function switchTab(name) {
+    currentTab = name;
+    var tabs = panelEl.querySelectorAll('.pp-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
+    }
+    bodyEl.style.display = name === 'todo' ? '' : 'none';
+    autoBodyEl.style.display = name === 'auto' ? '' : 'none';
+    panelEl.querySelector('.pp-foot').style.display = name === 'todo' ? '' : 'none';
+    if (name === 'auto') renderAutopilot();
+  }
+
+  function renderAutopilot() {
+    if (!autoBodyEl) return;
+    var st = autoState || { active: false, done: 0, blocked: 0, current: '', log: [] };
+    var active = !!st.active;
+    var html = '';
+    html += '<button class="pp-auto-start' + (active ? ' running' : '') + '" data-act="autopilot">' + (active ? '⏹ 停止托管' : '🚀 开始自动托管') + '</button>';
+    html += '<div class="pp-auto-status">';
+    if (active) {
+      html += '状态：<b>运行中…</b>';
+      if (st.current) html += '<br>当前：<span class="dim">' + esc(st.current) + '</span>';
+    } else {
+      html += '状态：<span class="dim">空闲</span>';
+    }
+    html += '</div>';
+    html += '<div class="pp-auto-stats"><span>✅ 完成 <b>' + (st.done || 0) + '</b></span><span>⚠️ 卡住 <b>' + (st.blocked || 0) + '</b></span></div>';
+    var log = st.log || [];
+    if (log.length) {
+      html += '<div class="pp-auto-log"><div class="lg-title">执行记录</div>';
+      for (var i = log.length - 1; i >= 0; i--) {
+        var it = log[i];
+        var isDone = it.verdict === 'done';
+        var reason = it.reason ? ' · ' + esc(it.reason) : '';
+        html += '<div class="lg-item ' + (isDone ? 'done' : 'blocked') + '"><span class="v">' + (isDone ? '✓' : '⚠') + '</span><span>' + esc(it.title) + reason + '</span></div>';
+      }
+      html += '</div>';
+    } else {
+      html += '<div class="pp-auto-status" style="margin-top:12px"><span class="dim">点击「开始自动托管」，会自动把清单里所有未完成的正式待办逐条派发执行，直到全部打勾或卡住。</span></div>';
+    }
+    autoBodyEl.innerHTML = html;
+  }
+
+  function toggleAutopilot() {
+    var st = autoState || {};
+    if (st.active) {
+      if (window.ingrid && window.ingrid.pendingAutopilotStop) window.ingrid.pendingAutopilotStop(AGENT);
+    } else if (window.ingrid && window.ingrid.pendingAutopilot) {
+      window.ingrid.pendingAutopilot(AGENT).then(function (res) {
+        if (res && !res.ok && res.error) alert(res.error);
+        renderAutopilot();
+      });
+    }
+  }
+
   /* ---------- API ---------- */
   function refresh() {
     if (!window.ingrid || !window.ingrid.pendingList) return;
@@ -255,6 +340,14 @@
     // 监听广播自动刷新
     if (window.ingrid && window.ingrid.onPendingChanged) {
       window.ingrid.onPendingChanged(function () { refresh(); });
+    }
+    // 监听自动托管进度广播（只响应本 agent）
+    if (window.ingrid && window.ingrid.onAutopilotChanged) {
+      window.ingrid.onAutopilotChanged(function (d) {
+        if (d && d.agent !== AGENT) return;
+        autoState = d;
+        renderAutopilot();
+      });
     }
   }
 

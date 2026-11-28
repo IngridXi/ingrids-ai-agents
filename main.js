@@ -2322,11 +2322,8 @@ ipcMain.handle('pending:remove', (_e, id) => { const r = getPendingTracker().rem
 ipcMain.handle('pending:clear-done', (_e, agent) => { const t = getPendingTracker(); t.done(agent || '').forEach((x) => t.remove(x.id)); broadcast('pending:changed', {}); return true; });
 ipcMain.handle('pending:scan', (_e, agent) => { const r = agent ? scanAgentPending(agent) : scanAllPending(); broadcast('pending:changed', {}); return r; });
 // 点击待办 → 派发给对应 agent 后台自主执行（全自动闭环：跑完自动判断做完/卡住并回写）
-ipcMain.handle('pending:dispatch', async (_e, id) => {
-  const tracker = getPendingTracker();
-  const item = tracker.find(id);
-  if (!item) return { ok: false, error: '待办不存在（可能已处理）' };
-  if (item.running) return { ok: false, error: '该待办正在执行中，请稍候' };
+// 建会话 + 入队 + 标记执行中 + 广播（手动点▶ 与自动托管共用），返回后台任务票据
+function enqueuePendingDispatch(item) {
   const engine = agentEngineByName(item.agent) || 'deepseek';
   const goal = buildPendingGoal(item);
   // 留聊天记录：为本次派发新建一个会话，记下「派发指令」，执行结果在收尾时追加
@@ -2339,18 +2336,101 @@ ipcMain.handle('pending:dispatch', async (_e, id) => {
     pendingId: item.id,
     chatSessionId: sessionId,
   });
-  tracker.markRunning(item.id);
+  getPendingTracker().markRunning(item.id);
   broadcast('pending:changed', {});
-  // 通知研究助手页面刷新会话列表并选中本次派发新建的会话（让用户看到「弹出新聊天」）
+  // 通知对应助手页面刷新会话列表并选中本次派发新建的会话（让用户看到「弹出新聊天」）
   broadcast('chat:session-updated', { agent: item.agent, sessionId });
   broadcastTasks();
+  return ticket;
+}
+
+ipcMain.handle('pending:dispatch', async (_e, id) => {
+  const tracker = getPendingTracker();
+  const item = tracker.find(id);
+  if (!item) return { ok: false, error: '待办不存在（可能已处理）' };
+  if (item.running) return { ok: false, error: '该待办正在执行中，请稍候' };
+  const ticket = enqueuePendingDispatch(item);
   runBackgroundTask(ticket).catch((e) => {
     getTaskQueue().fail(ticket.id, String((e && e.message) || e));
     settlePendingAfterBgTask(ticket, 'failed', String((e && e.message) || e));
     broadcastTasks();
   });
-  return { ok: true, ticketId: ticket.id, chatSessionId: sessionId };
+  return { ok: true, ticketId: ticket.id, chatSessionId: ticket.chatSessionId };
 });
+
+/* ---------------- 自动托管：一键派发所有未完成待办，逐条推进直至全部打勾或卡住 ---------------- */
+const autopilotState = {};   // { [agent]: { active, stopRequested, done, blocked, current, attempted:Set, log:[] } }
+
+function broadcastAutopilot(agent) {
+  const st = autopilotState[agent];
+  broadcast('autopilot:changed', st ? {
+    agent: agent, active: st.active, stopRequested: st.stopRequested,
+    done: st.done, blocked: st.blocked, current: st.current,
+    log: (st.log || []).slice(-60),
+  } : { agent: agent, active: false, done: 0, blocked: 0, current: '', log: [] });
+}
+
+// 自动托管主循环：反复取「下一条显式未完成」→ 派发 → await 跑完 → 结算，直到无进展或用户叫停。
+async function runAutopilot(agent) {
+  const st = autopilotState[agent] = { active: true, stopRequested: false, done: 0, blocked: 0, current: '', attempted: new Set(), log: [] };
+  broadcastAutopilot(agent);
+  const tracker = getPendingTracker();
+  try {
+    let guard = 0;
+    while (!st.stopRequested && guard++ < 500) {
+      // 只自动推进「显式」未完成项；suggested（待确认）与已尝试过卡住的项跳过，避免误判与死循环
+      const open = tracker.open(agent).filter((x) => x.source !== 'suggested' && !x.running && !st.attempted.has(x.id));
+      if (!open.length) break;
+      const item = open[0];
+      st.attempted.add(item.id);
+      st.current = item.title;
+      broadcastAutopilot(agent);
+      let ticket;
+      try { ticket = enqueuePendingDispatch(item); }
+      catch (e) {
+        st.blocked++;
+        st.current = '';
+        st.log.push({ title: item.title, verdict: 'blocked', reason: String((e && e.message) || e) });
+        broadcastAutopilot(agent);
+        continue;
+      }
+      await runBackgroundTask(ticket);
+      const settled = tracker.find(item.id);
+      if (settled && settled.status === 'done') {
+        st.done++;
+        st.log.push({ title: item.title, verdict: 'done' });
+      } else {
+        st.blocked++;
+        st.log.push({ title: item.title, verdict: 'blocked', reason: (settled && settled.lastError) || '' });
+      }
+      st.current = '';
+      broadcastAutopilot(agent);
+    }
+  } finally {
+    st.active = false;
+    st.current = '';
+    broadcastAutopilot(agent);
+  }
+  return { ok: true, done: st.done, blocked: st.blocked, log: st.log };
+}
+
+ipcMain.handle('pending:autopilot', async (_e, agent) => {
+  const a = String(agent || '').trim();
+  if (!a) return { ok: false, error: '缺少 agent' };
+  const st = autopilotState[a];
+  if (st && st.active) return { ok: false, error: '自动托管已在运行中' };
+  // 后台跑，不阻塞 IPC；进度/结束通过 autopilot:changed 广播给前端
+  runAutopilot(a).catch((e) => { console.error('autopilot error', e); });
+  return { ok: true, started: true };
+});
+
+ipcMain.handle('pending:autopilot:stop', (_e, agent) => {
+  const a = String(agent || '').trim();
+  const st = autopilotState[a];
+  if (st) st.stopRequested = true;
+  return { ok: true };
+});
+
 // 一键备份：把 chat-history 目录下所有 agent 会话导出为一个 JSON 文件
 ipcMain.handle('chat:backup', () => {
   try {

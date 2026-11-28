@@ -754,6 +754,26 @@
       input.focus();
     }).catch(function () { newChat(); });
   }
+  // 待办派发新建会话后：刷新会话列表并选中该会话，让用户实时看到「弹出新聊天」及执行结果
+  function reloadSessionForDispatch(targetId) {
+    if (!IS_DESKTOP) return;
+    window.ingrid.chatHistoryLoad(AGENT_NAME).then(function (data) {
+      var list = null;
+      if (data && Array.isArray(data.sessions)) {
+        list = data.sessions.map(function (s) {
+          return { id: s.id || uid(), title: s.title || '新对话', createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), pinned: !!s.pinned, titleAuto: s.titleAuto !== false, messages: Array.isArray(s.messages) ? s.messages : [] };
+        });
+      }
+      sessions = (list && list.length) ? list : [];
+      if (!sessions.length) { newChat(); return; }
+      if (targetId && sessionById(targetId)) activeId = targetId;
+      else if (!currentSession()) activeId = sessions[0].id;
+      history = currentSession().messages;
+      renderSessionList();
+      renderActiveSession();
+      input.focus();
+    }).catch(function () {});
+  }
 
   /* ---------- 会话内消息检索 ---------- */
   function clearSearch() {
@@ -1972,6 +1992,11 @@
   loadSoul();
   loadEngines();
   loadSessions();
+  if (IS_DESKTOP && window.ingrid.onChatSessionUpdated) {
+    window.ingrid.onChatSessionUpdated(function (d) {
+      if (d && d.agent === AGENT_NAME) reloadSessionForDispatch(d.sessionId);
+    });
+  }
   refreshMemory();
   el('webBtn').classList.add('active');
   applySidebarWidth();
