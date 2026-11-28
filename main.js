@@ -2235,6 +2235,7 @@ ipcMain.handle('chat:history:save', (_e, name, data) => {
         if (name === '研究助手') { parseExplicitTodoFile(); scheduleApprovalsRefresh(); }
         broadcast('pending:changed', {});
         maybeDiscoverQuestions(name);
+        maybeSynthesizeNeeds();
       } catch { /* 同步失败不阻断 */ }
     });
     return true;
@@ -2269,9 +2270,22 @@ function getQuestionTracker() {
   return _questionTracker;
 }
 
-// 按清单种类取 tracker：todo → 待办；question → 相关问题
+// —— 详细步骤清单（路线图拆解，独立于待办/相关问题）——
+let _stepTracker = null;
+function getStepTracker() {
+  if (_stepTracker) return _stepTracker;
+  _stepTracker = new PendingTrackerCore.PendingTracker({
+    load: () => readJson('steps.json', null),
+    save: (state) => writeJson('steps.json', state),
+  });
+  return _stepTracker;
+}
+
+// 按清单种类取 tracker：todo → 待办；question → 相关问题；step → 路线图步骤
 function trackerFor(kind) {
-  return kind === 'question' ? getQuestionTracker() : getPendingTracker();
+  if (kind === 'question') return getQuestionTracker();
+  if (kind === 'step') return getStepTracker();
+  return getPendingTracker();
 }
 
 // 核心目的与需求锚点：优先取监事（supervisor.json）里启用的核心需求。
@@ -2386,6 +2400,232 @@ function maybeDiscoverQuestions(agent) {
   }).catch(() => {});
 }
 
+/* ---------------- 路线图（全局一份，大方向；编辑入口在监事面板） ---------------- */
+function readRoadmap() {
+  const r = readJson('roadmap.json', { directions: [], updatedAt: 0 });
+  return {
+    directions: (Array.isArray(r.directions) ? r.directions : [])
+      .map((d) => ({
+        id: String(d.id || ''), text: String(d.text || '').trim(),
+        weight: Math.max(1, Math.min(3, Number(d.weight) || 2)),
+        active: d.active !== false, createdAt: Number(d.createdAt) || Date.now(),
+      }))
+      .filter((d) => d.text),
+    updatedAt: Number(r.updatedAt) || 0,
+  };
+}
+function writeRoadmap(r) {
+  writeJson('roadmap.json', { directions: (r && r.directions) || [], updatedAt: Date.now() });
+}
+function roadmapDirections() {
+  return readRoadmap().directions.filter((d) => d.active !== false).map((d) => String(d.text).trim()).filter(Boolean);
+}
+
+// 可指派的执行型 agent（步骤拆解/编排时只能从中选，避免误派给路由/治理官/转写官）
+const EXECUTABLE_AGENTS = ['研究助手', '软件工程', '通用助手', '伦理agent', '界面设计师'];
+function executableAgentNames() {
+  const agents = readJson('agents.json', []);
+  const have = new Set((Array.isArray(agents) ? agents : []).map((a) => a && a.name ? String(a.name) : '').filter(Boolean));
+  const out = EXECUTABLE_AGENTS.filter((n) => have.has(n));
+  return out.length ? out : EXECUTABLE_AGENTS;
+}
+
+/* ---------------- 需求梳理官：动态把核心目的梳理成结构化需求（随任务变化，非一次生成） ---------------- */
+function gatherNeedsContext() {
+  const parts = [];
+  const goals = coreGoals();
+  if (goals.length) parts.push('当前核心需求（启用中）：\n' + goals.map((g, i) => (i + 1) + '. ' + g).join('\n'));
+  const rd = roadmapDirections();
+  if (rd.length) parts.push('当前路线图大方向：\n' + rd.map((d, i) => (i + 1) + '. ' + d).join('\n'));
+  const dir = path.join(dataDir(), 'chat-history');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { files = []; }
+  const recents = [];
+  files.slice(0, 12).forEach((f) => {
+    const name = f.slice(0, -5);
+    let raw = null;
+    try { raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { raw = null; }
+    const sessions = Array.isArray(raw) ? [{ title: '' }] : ((raw && raw.sessions) || []);
+    const titles = sessions.slice(0, 3).map((s) => String((s && s.title) || '').trim()).filter(Boolean);
+    if (titles.length) recents.push(name + '：' + titles.join('、'));
+  });
+  if (recents.length) parts.push('各 agent 近期工作（会话标题）：\n' + recents.join('\n'));
+  const todos = getPendingTracker().open('').map((x) => x.title).slice(0, 10);
+  if (todos.length) parts.push('未完成待办：' + todos.join('；'));
+  const steps = getStepTracker().open('').map((x) => x.title).slice(0, 10);
+  if (steps.length) parts.push('路线图步骤：' + steps.join('；'));
+  return parts.join('\n\n');
+}
+
+// 把 LLM 梳理出的结构化需求，动态合并进 supervisor.json（保留旧 id；新增/更新/显式停用）
+function mergeSynthesizedGoals(obj) {
+  const cur = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '' });
+  const existing = (Array.isArray(cur.goals) ? cur.goals : []).map((g) => Object.assign({}, g));
+  const sim = PendingTrackerCore.similarEnough;
+  const gid = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const findExisting = (text) => existing.find((g) => sim(String(g.text), String(text)));
+  let added = 0, updated = 0, deactivated = 0;
+
+  (Array.isArray(obj.goals) ? obj.goals : []).forEach((g) => {
+    const text = String(g.text || '').trim();
+    if (!text) return;
+    const weight = Math.max(1, Math.min(3, Number(g.weight) || 2));
+    const action = String(g.action || 'keep');
+    const ref = String(g.ref || '').trim();
+    let target = ref ? findExisting(ref) : null;
+    if (!target) target = findExisting(text);
+
+    if (action === 'deactivate') {
+      if (target && target.active !== false) { target.active = false; deactivated++; }
+      return;
+    }
+    if (target) {
+      if (target.text !== text) { target.text = text; updated++; }
+      if (Number(target.weight) !== weight) { target.weight = weight; updated++; }
+      target.active = true;
+    } else {
+      existing.push({ id: gid(), text: text, weight: weight, active: true, createdAt: Date.now() });
+      added++;
+    }
+  });
+
+  writeJson('supervisor.json', { goals: existing, active: cur.active !== false, lastCorrection: String(cur.lastCorrection || '') });
+  return { ok: true, added: added, updated: updated, deactivated: deactivated, summary: String(obj.summary || ''), total: existing.filter((g) => g.active !== false).length };
+}
+
+async function synthesizeNeeds(opts) {
+  opts = opts || {};
+  const ctx = gatherNeedsContext();
+  const prompt = [
+    '你是「需求梳理官」（监事团队的一员）。把用户的核心目的动态梳理成结构化需求。',
+    '注意：用户的需求会随不同任务动态变化，不是一次生成就一劳永逸。结合近期工作，',
+    '① 保留仍有效的需求；② 补充新浮现的需求；③ 更新措辞已变化的需求；④ 停用已过时/已完成的需求。',
+    '',
+    '【当前状态】',
+    ctx || '（暂无任何工作记录，请给出一份初始的结构化需求）',
+    '',
+    '只输出一个 JSON 对象，不要其他文字：',
+    '{"summary":"一句话说明本次梳理的结论","goals":[{"text":"需求描述（一句话、可验证）","weight":1|2|3,"action":"keep|add|update|deactivate","ref":"对应的旧需求原文（keep/update/deactivate 尽量给出，add 留空）"}]}',
+    '要求：需求结构化、可验证、锚定用户真正目的；weight=3 表示最高优先/核心；3~8 条，宁缺毋滥。',
+  ].join('\n');
+  const r = await callBgChat('deepseek', '', [{ role: 'user', content: prompt }], null);
+  if (!r || !r.ok || !r.text) return { ok: false, error: '需求梳理调用失败：' + String((r && r.error) || '无返回') };
+  const obj = extractJsonText(r.text);
+  if (!obj || !Array.isArray(obj.goals)) return { ok: false, error: '梳理结果无法解析', raw: String(r.text).slice(0, 200) };
+  return mergeSynthesizedGoals(obj);
+}
+
+// 节流自动梳理：约 5 分钟冷却，随 agent 对话保存触发（需求随任务动态变化）
+const _needsSynthesizeAt = {};
+function maybeSynthesizeNeeds() {
+  const now = Date.now();
+  const last = _needsSynthesizeAt['__all__'] || 0;
+  if (now - last < 5 * 60 * 1000) return;
+  _needsSynthesizeAt['__all__'] = now;
+  synthesizeNeeds().then((r) => { if (r && r.ok) broadcast('supervisor:changed', {}); }).catch(() => {});
+}
+
+/* ---------------- 路线图拆解官：把大方向拆成详细步骤，按 agent 分发 ---------------- */
+async function generateRoadmapSteps(opts) {
+  opts = opts || {};
+  const rd = roadmapDirections();
+  const goals = coreGoals();
+  const agents = executableAgentNames();
+  const prompt = [
+    '你是「路线图拆解官」。把路线图的大方向，拆解成详细、可执行、可验证的步骤清单，并给每一步标注最适合执行的 agent。',
+    '',
+    '【路线图大方向】',
+    rd.length ? rd.map((d, i) => (i + 1) + '. ' + d).join('\n') : '（路线图为空，请结合核心需求自行拆解）',
+    '',
+    '【核心需求（锚点）】',
+    goals.length ? goals.map((g, i) => (i + 1) + '. ' + g).join('\n') : '（暂无）',
+    '',
+    '【可指派的执行 agent（务必从中选，不要臆造）】',
+    agents.join('、'),
+    '',
+    '只输出一个 JSON 数组，不要其他文字：',
+    '[{"title":"步骤标题（一句话、动作明确）","detail":"这一步具体做什么、怎么算完成（1~2 句）","agent":"最适合的 agent（从上表选）","roadmap":"对应的大方向（从上面抄，可省略）","order":1}]',
+    '要求：步骤详细、可独立执行、顺序合理（order 从 1 递增）；每步只指派一个 agent；共 4~12 步。',
+  ].join('\n');
+  const r = await callBgChat('deepseek', '', [{ role: 'user', content: prompt }], null);
+  if (!r || !r.ok || !r.text) return { ok: false, error: '拆解调用失败：' + String((r && r.error) || '无返回') };
+  let arr = null;
+  try { arr = JSON.parse(String(r.text).trim()); } catch { /* 继续 */ }
+  if (!Array.isArray(arr)) {
+    const m = String(r.text).match(/\[[\s\S]*\]/);
+    if (m) { try { arr = JSON.parse(m[0]); } catch { arr = null; } }
+  }
+  if (!Array.isArray(arr)) return { ok: false, error: '拆解结果无法解析为列表', raw: String(r.text).slice(0, 200) };
+  const tracker = getStepTracker();
+  const validAgents = new Set(agents);
+  let added = 0, skipped = 0;
+  arr.forEach((s, i) => {
+    const title = String((s && s.title) || '').trim();
+    if (!title) return;
+    const agent = validAgents.has(String(s && s.agent)) ? String(s.agent) : (agents[0] || '通用助手');
+    const order = Number(s && s.order) || (i + 1);
+    const res = tracker.addStep({
+      title: title,
+      detail: String((s && s.detail) || ''),
+      order: order,
+      agent: agent,
+      roadmap: String((s && s.roadmap) || ''),
+      roadmapId: '',
+      source: 'roadmap',
+    });
+    if (res && res.added) added++; else skipped++;
+  });
+  broadcast('step:changed', {});
+  return { ok: true, added: added, skipped: skipped };
+}
+
+/* ---------------- 执行编排官：权衡「先做哪一步后做哪一步」，排合理顺序 ---------------- */
+async function planExecutionOrder(agent, items) {
+  if (!items.length) return items;
+  if (items.length === 1) return items;
+  const goals = coreGoals();
+  const brief = items.map((x, i) => ({ i: i, kind: x.kind, title: String(x.title || '').slice(0, 80) }));
+  const kindLabel = (k) => (k === 'todo' ? '待办' : k === 'question' ? '相关问题' : '路线图步骤');
+  const prompt = [
+    '你是「执行编排官」。把下面这批待执行的工作（混有待办、相关问题、路线图步骤），',
+    '权衡「依赖关系、价值高低、是否阻塞后续、与核心需求的相关度、路线图先后」，排出一个合理的执行顺序。',
+    '',
+    '【核心需求】',
+    goals.length ? goals.map((g, i) => (i + 1) + '. ' + g).join('\n') : '（暂无）',
+    '',
+    '【待排序工作】',
+    brief.map((b) => (b.i + 1) + '. [' + kindLabel(b.kind) + '] ' + b.title).join('\n'),
+    '',
+    '只输出一个 JSON 对象，不要其他文字：',
+    '{"order":[3,1,2]}',
+    'order 是条目序号（从 1 开始）按执行先后排列；必须包含全部 ' + brief.length + ' 个序号且不重复。',
+  ].join('\n');
+  let order = null;
+  try {
+    const r = await callBgChat('deepseek', '', [{ role: 'user', content: prompt }], null);
+    if (r && r.ok && r.text) {
+      const obj = extractJsonText(r.text);
+      if (obj && Array.isArray(obj.order)) order = obj.order.map(Number).filter((n) => Number.isFinite(n));
+      if (!order) { const m = String(r.text).match(/\[[\s\S]*?\]/); if (m) { try { order = JSON.parse(m[0]).map(Number); } catch { order = null; } } }
+    }
+  } catch { order = null; }
+  if (order && order.length === brief.length) {
+    const set = new Set(order);
+    if (set.size === brief.length && order.every((n) => n >= 1 && n <= brief.length)) {
+      return order.map((n) => items[n - 1]);
+    }
+  }
+  // 兜底：待办 → 步骤（按 order）→ 相关问题，其余按时间
+  const prio = { todo: 0, step: 1, question: 2 };
+  return items.slice().sort((a, b) => {
+    const pa = prio[a.kind] != null ? prio[a.kind] : 1;
+    const pb = prio[b.kind] != null ? prio[b.kind] : 1;
+    if (pa !== pb) return pa - pb;
+    if (a.kind === 'step' && b.kind === 'step') return (a.order || 0) - (b.order || 0);
+    return (a.createdAt || 0) - (b.createdAt || 0);
+  });
+}
+
 // 扫描某个 agent 的聊天历史，把「未完成/未开始/未查到」提炼进清单（幂等，可反复全量扫）。
 // 整条对话历史全量扫（所有 session × 所有 assistant 消息），按「会话创建时间 + 消息序号」构造稳定时间锚点，
 // 让清单按对话真实先后「按时间顺序」排列（消息本身无 ts，用 session.createdAt 兜底）。
@@ -2467,6 +2707,59 @@ ipcMain.handle('question:clear-done', (_e, agent) => { const t = getQuestionTrac
 ipcMain.handle('question:discover', async (_e, agent) => { const r = await discoverQuestions(agent || ''); broadcast('question:changed', {}); return r; });
 ipcMain.handle('question:dispatch', async (_e, id) => dispatchListItem(id, 'question'));
 
+/* ---------------- 详细步骤清单 IPC（路线图拆解 + 闭环） ---------------- */
+ipcMain.handle('step:list', (_e, agent) => {
+  const t = getStepTracker();
+  const a = agent || '';
+  return { open: t.open(a), done: t.done(a), agents: t.agents(), summary: t.summary(a) };
+});
+ipcMain.handle('step:summary', (_e, agent) => getStepTracker().summary(agent || ''));
+ipcMain.handle('step:complete', (_e, id) => { const r = getStepTracker().complete(id); broadcast('step:changed', {}); return r; });
+ipcMain.handle('step:reopen', (_e, id) => { const r = getStepTracker().reopen(id); broadcast('step:changed', {}); return r; });
+ipcMain.handle('step:remove', (_e, id) => { const r = getStepTracker().remove(id); broadcast('step:changed', {}); return r; });
+ipcMain.handle('step:clear-done', (_e, agent) => { const t = getStepTracker(); t.done(agent || '').forEach((x) => t.remove(x.id)); broadcast('step:changed', {}); return true; });
+ipcMain.handle('step:generate', async (_e) => { const r = await generateRoadmapSteps(); broadcast('step:changed', {}); return r; });
+ipcMain.handle('step:dispatch', async (_e, id) => dispatchListItem(id, 'step'));
+
+/* ---------------- 路线图 + 需求梳理官 IPC ---------------- */
+function mutateRoadmap(fn) {
+  const r = readRoadmap();
+  fn(r);
+  writeRoadmap(r);
+  return readRoadmap();
+}
+ipcMain.handle('roadmap:list', (_e) => readRoadmap());
+ipcMain.handle('roadmap:add', (_e, text, weight) => {
+  const out = mutateRoadmap((r) => {
+    r.directions.push({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text: String(text || '').trim(), weight: Math.max(1, Math.min(3, Number(weight) || 2)), active: true, createdAt: Date.now() });
+  });
+  broadcast('roadmap:changed', {});
+  return out;
+});
+ipcMain.handle('roadmap:update', (_e, id, patch) => {
+  const out = mutateRoadmap((r) => {
+    const d = r.directions.find((x) => x.id === id);
+    if (d && patch) {
+      if (patch.text != null) d.text = String(patch.text).trim();
+      if (patch.weight != null) d.weight = Math.max(1, Math.min(3, Number(patch.weight) || 2));
+      if (patch.active != null) d.active = !!patch.active;
+    }
+  });
+  broadcast('roadmap:changed', {});
+  return out;
+});
+ipcMain.handle('roadmap:remove', (_e, id) => {
+  const out = mutateRoadmap((r) => { r.directions = r.directions.filter((x) => x.id !== id); });
+  broadcast('roadmap:changed', {});
+  return out;
+});
+ipcMain.handle('roadmap:toggle', (_e, id) => {
+  const out = mutateRoadmap((r) => { const d = r.directions.find((x) => x.id === id); if (d) d.active = !d.active; });
+  broadcast('roadmap:changed', {});
+  return out;
+});
+ipcMain.handle('synthesize:run', async (_e) => { const r = await synthesizeNeeds(); broadcast('supervisor:changed', {}); return r; });
+
 // 点击待办 → 派发给对应 agent 后台自主执行（全自动闭环：跑完自动判断做完/卡住并回写）
 // 建会话 + 入队 + 标记执行中 + 广播（手动点▶ 与自动托管共用），返回后台任务票据
 function enqueuePendingDispatch(item, kind) {
@@ -2474,7 +2767,7 @@ function enqueuePendingDispatch(item, kind) {
   const engine = agentEngineByName(item.agent) || 'deepseek';
   const goal = buildPendingGoal(item, kind);
   // 留聊天记录：为本次派发新建一个会话，记下「派发指令」，执行结果在收尾时追加
-  const label = kind === 'question' ? '【相关问题】' : '【待办】';
+  const label = kind === 'question' ? '【相关问题】' : kind === 'step' ? '【路线图步骤】' : '【待办】';
   const sessionId = appendDispatchSession(item.agent, label + item.title, goal);
   const ticket = getTaskQueue().enqueue({
     title: item.title,
@@ -2488,6 +2781,7 @@ function enqueuePendingDispatch(item, kind) {
   trackerFor(kind).markRunning(item.id);
   broadcast('pending:changed', {});
   broadcast('question:changed', {});
+  broadcast('step:changed', {});
   // 通知对应助手页面刷新会话列表并选中本次派发新建的会话（让用户看到「弹出新聊天」）
   broadcast('chat:session-updated', { agent: item.agent, sessionId });
   broadcastTasks();
@@ -2521,28 +2815,42 @@ function broadcastAutopilot(agent) {
     agent: agent, active: st.active, stopRequested: st.stopRequested,
     done: st.done, blocked: st.blocked, current: st.current,
     kinds: (st.kinds && st.kinds.length) ? st.kinds : ['todo'],
+    plan: st.plan || null,
     log: (st.log || []).slice(-60),
-  } : { agent: agent, active: false, done: 0, blocked: 0, current: '', kinds: ['todo'], log: [] });
+  } : { agent: agent, active: false, done: 0, blocked: 0, current: '', kinds: ['todo'], plan: null, log: [] });
 }
 
-// 自动托管主循环：按勾选的清单（待办 / 相关问题）反复取「下一条未完成」→ 派发 → await 跑完 → 结算，
-// 直到无进展或用户叫停。
+// 自动托管主循环：按勾选的清单（待办 / 相关问题 / 步骤）收集所有未完成项，
+// 先交给「执行编排官」权衡先后排好顺序，再逐条派发 → await 跑完 → 结算，直到全部打勾或卡住。
 async function runAutopilot(agent, kinds) {
   const k = Array.isArray(kinds) && kinds.length ? kinds : ['todo'];
-  const st = autopilotState[agent] = { active: true, stopRequested: false, done: 0, blocked: 0, current: '', attempted: new Set(), log: [], kinds: k };
+  const st = autopilotState[agent] = { active: true, stopRequested: false, done: 0, blocked: 0, current: '', attempted: new Set(), log: [], kinds: k, plan: null };
   broadcastAutopilot(agent);
   try {
+    // 收集选中清单的未完成项（跳过待确认的建议项与执行中项）
+    let items = [];
+    if (k.indexOf('todo') >= 0) items = items.concat(getPendingTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'todo' })));
+    if (k.indexOf('question') >= 0) items = items.concat(getQuestionTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'question' })));
+    if (k.indexOf('step') >= 0) items = items.concat(getStepTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'step' })));
+    items = items.filter((x) => x.source !== 'suggested' && !x.running);
+
+    // 执行编排官：权衡「先做哪一步后做哪一步」，排出合理顺序
+    if (items.length > 1) {
+      st.current = '🧭 编排执行顺序…';
+      broadcastAutopilot(agent);
+      items = await planExecutionOrder(agent, items);
+    }
+    st.plan = items.map((x) => ({ kind: x.kind, title: x.title }));
+    st.current = '';
+    broadcastAutopilot(agent);
+
     let guard = 0;
-    while (!st.stopRequested && guard++ < 800) {
-      // 只自动推进「显式/正式」未完成项；suggested（待确认）与已尝试过卡住的项跳过，避免误判与死循环
-      let items = [];
-      if (k.indexOf('todo') >= 0) items = items.concat(getPendingTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'todo' })));
-      if (k.indexOf('question') >= 0) items = items.concat(getQuestionTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'question' })));
-      items = items.filter((x) => x.source !== 'suggested' && !x.running && !st.attempted.has(x.kind + ':' + x.id));
-      if (!items.length) break;
-      const item = items[0];
-      st.attempted.add(item.kind + ':' + item.id);
-      st.current = (item.kind === 'question' ? '❓ ' : '') + item.title;
+    for (let i = 0; i < items.length && !st.stopRequested && guard++ < 800; i++) {
+      const item = items[i];
+      const key = item.kind + ':' + item.id;
+      if (st.attempted.has(key)) continue;
+      st.attempted.add(key);
+      st.current = (item.kind === 'question' ? '❓ ' : item.kind === 'step' ? '🪜 ' : '') + item.title;
       broadcastAutopilot(agent);
       let ticket;
       try { ticket = enqueuePendingDispatch(item, item.kind); }
@@ -2578,7 +2886,7 @@ ipcMain.handle('pending:autopilot', async (_e, agent, kinds) => {
   if (!a) return { ok: false, error: '缺少 agent' };
   const st = autopilotState[a];
   if (st && st.active) return { ok: false, error: '自动托管已在运行中' };
-  const k = Array.isArray(kinds) && kinds.length ? kinds.filter((x) => x === 'todo' || x === 'question') : ['todo'];
+  const k = Array.isArray(kinds) && kinds.length ? kinds.filter((x) => x === 'todo' || x === 'question' || x === 'step') : ['todo'];
   if (!k.length) return { ok: false, error: '至少勾选一种清单' };
   // 后台跑，不阻塞 IPC；进度/结束通过 autopilot:changed 广播给前端
   runAutopilot(a, k).catch((e) => { console.error('autopilot error', e); });
@@ -3285,6 +3593,12 @@ function buildPendingGoal(item, kind) {
     if (item.value) parts.push('', '这个问题为什么重要：' + String(item.value).slice(0, 200));
     if (item.anchor) parts.push('锚定的核心目的：' + String(item.anchor).slice(0, 200));
     parts.push('', '回答完后在结尾标注完成状态（【完成】或【未完成】原因）。');
+  } else if (kind === 'step') {
+    parts.push('请执行下面这条路线图步骤（一步一步做，做完这一步即可，不要擅自扩到其他步骤）：');
+    parts.push(t);
+    if (item.detail) parts.push('', '具体怎么做 / 完成标准：' + String(item.detail).slice(0, 400));
+    if (item.roadmap) parts.push('所属大方向：' + String(item.roadmap).slice(0, 200));
+    parts.push('', '做完后在结尾标注完成状态（【完成】或【未完成】原因）。');
   } else {
     const ev = String(item.evidence || '').trim();
     parts.push('请完成下面这条待办：');
@@ -3410,6 +3724,7 @@ async function settlePendingAfterBgTask(ticket, outcome, payload) {
   }
   broadcast('pending:changed', {});
   broadcast('question:changed', {});
+  broadcast('step:changed', {});
 }
 
 /* ---------------- 后台任务 Watchdog：定时巡检卡死任务（吸收 dsh 自愈思想） ---------------- */

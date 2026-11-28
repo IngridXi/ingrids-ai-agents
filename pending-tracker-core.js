@@ -450,6 +450,53 @@
     return true;
   };
 
+  // —— 详细步骤清单（路线图拆解，第三个清单）——
+  // 加入/更新一条「步骤」条目（去重靠标题指纹 + 模糊相似，限定同 agent）。
+  // s = { title, detail, order, agent, roadmap, roadmapId, source }；已存在则刷新详情/顺序/路线图，不回退状态。
+  // createdAt = now + order，保证 open 步骤按「order 升序」展示（复用 all() 的 createdAt 排序）。
+  PendingTracker.prototype.addStep = function (s) {
+    s = s || {};
+    var title = String(s.title || '').trim();
+    if (!title) return { ok: false, reason: 'empty', added: false };
+    var fp = fingerprint(title);
+    if (!fp) return { ok: false, reason: 'empty', added: false };
+    var self = this;
+    var existing = null;
+    for (var i = 0; i < this.state.items.length; i++) {
+      if (this.state.items[i].id === fp) { existing = this.state.items[i]; break; }
+    }
+    if (!existing) {
+      for (var k = 0; k < this.state.items.length; k++) {
+        var it = this.state.items[k];
+        if (it.agent === (s.agent || '未知') && similarEnough(it.title, title)) { existing = it; break; }
+      }
+    }
+    var now = Date.now();
+    if (existing) {
+      if (s.detail) existing.detail = String(s.detail);
+      if (s.roadmap) existing.roadmap = String(s.roadmap);
+      if (s.roadmapId) existing.roadmapId = String(s.roadmapId);
+      if (s.order != null) existing.order = Number(s.order);
+      if (s.source) existing.source = String(s.source);
+      if (existing.type !== 'step') existing.type = 'step';
+      if (now > (existing.updatedAt || 0)) existing.updatedAt = now;
+      this._save();
+      return { ok: true, added: false, item: existing };
+    }
+    var order = Number(s.order || 0);
+    var item = {
+      id: fp, type: 'step', title: title, agent: s.agent || '未知',
+      status: ST_OPEN, source: s.source || 'roadmap',
+      detail: String(s.detail || ''), order: order,
+      roadmap: String(s.roadmap || ''), roadmapId: String(s.roadmapId || ''),
+      evidence: '', createdAt: now + order, updatedAt: now + order, doneAt: null,
+      running: false, lastError: '', result: '',
+    };
+    this.state.items.push(item);
+    this._save();
+    return { ok: true, added: true, item: item };
+  };
+
   // 确认「建议项」→ 转正式（source: suggested → explicit）
   PendingTracker.prototype.confirm = function (id) {
     var it = this._find(id);

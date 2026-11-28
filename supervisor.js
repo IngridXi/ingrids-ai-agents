@@ -56,6 +56,7 @@
   /* ---------- 状态 ---------- */
   var supTarget = '__all__';   // '__all__' 所有 | '__orch__' 本轮委派 | 具体 agent id
   var minimized = false;
+  var roadmapData = { directions: [], updatedAt: 0 };
 
   /* ---------- 样式 ---------- */
   var style = document.createElement('style');
@@ -126,7 +127,11 @@
       '<div class="sup-sec"><label>监督的工作</label><select id="supTarget"></select></div>' +
       '<div class="sup-sec"><label>核心需求 · 可随时增删</label><div id="supGoals"></div>' +
         '<div class="sup-add"><input type="text" id="supGoalInput" placeholder="新增一条核心需求…"><button id="supGoalAdd">＋</button></div>' +
-        '<button class="sup-btn ghost" id="supClarify">' + iconSvg('message') + ' 对话确认需求（先讲清楚再做）</button></div>' +
+        '<button class="sup-btn ghost" id="supClarify">' + iconSvg('message') + ' 对话确认需求（先讲清楚再做）</button>' +
+        '<button class="sup-btn ghost" id="supSynthesize" style="margin-top:6px">✨ 自动梳理需求（结合近期工作动态更新）</button></div>' +
+      '<div class="sup-sec"><label>路线图 · 大方向</label><div id="supRoadmap"></div>' +
+        '<div class="sup-add"><input type="text" id="supRoadmapInput" placeholder="新增一个大方向…"><button id="supRoadmapAdd">＋</button></div>' +
+        '<button class="sup-btn ghost" id="supGenSteps">🪜 根据路线图生成详细步骤</button></div>' +
       '<div class="sup-switch-row"><label class="sup-check"><input type="checkbox" id="supActive"> 开始监督</label>' +
         '<button class="sup-btn ghost" id="supInject" style="flex:1">' + iconSvg('megaphone') + ' 提醒当前工作</button></div>' +
       '<div class="sup-sec" id="supCorrWrap" style="display:none"><label>当前纠偏指令</label><div class="sup-corr" id="supCorr"></div></div>' +
@@ -182,6 +187,46 @@
       row.querySelector('[data-act=del]').addEventListener('click', function () { goals.remove(id); renderGoals(); });
     });
   }
+  function renderRoadmap() {
+    var box = document.getElementById('supRoadmap');
+    if (!box) return;
+    var dirs = (roadmapData && roadmapData.directions) || [];
+    if (!dirs.length) {
+      box.innerHTML = '<div class="sup-empty">还没有路线图大方向。加一条（例如「把研究助手打磨成可对外分享的产品」），再点「生成详细步骤」让 agent 拆解。</div>';
+    } else {
+      box.innerHTML = dirs.map(function (d) {
+        return '<div class="sup-goal' + (d.active ? '' : ' off') + '" data-rid="' + esc(d.id) + '">' +
+          '<span class="w">' + d.weight + '</span>' +
+          '<span class="gx">' + esc(d.text) + '</span>' +
+          '<span class="d" title="停用/启用" data-act="rtoggle">' + (d.active ? '◉' : '○') + '</span>' +
+          '<span class="d" title="删除" data-act="rdel">✕</span></div>';
+      }).join('');
+    }
+    box.querySelectorAll('.sup-goal').forEach(function (row) {
+      var id = row.getAttribute('data-rid');
+      var toggle = row.querySelector('[data-act=rtoggle]');
+      var del = row.querySelector('[data-act=rdel]');
+      if (toggle) toggle.addEventListener('click', function () { if (window.ingrid.roadmapToggle) window.ingrid.roadmapToggle(id).then(loadRoadmap); });
+      if (del) del.addEventListener('click', function () {
+        if (!confirm('删除这条路线图方向？')) return;
+        if (window.ingrid.roadmapRemove) window.ingrid.roadmapRemove(id).then(loadRoadmap);
+      });
+    });
+  }
+  // 重新加载监事的核心需求（需求梳理官在主进程更新后，这里同步刷新）
+  function reloadGoals() {
+    goals = new SC.GoalStore(goalStorage());
+    sup.goals = goals;
+    window.__supGoals = goals;
+    renderGoals(); renderStatus(); renderCorrection();
+  }
+  function loadRoadmap() {
+    if (!DESKTOP || !window.ingrid.roadmapList) return;
+    window.ingrid.roadmapList().then(function (r) {
+      roadmapData = r || { directions: [], updatedAt: 0 };
+      renderRoadmap();
+    }).catch(function () {});
+  }
   function renderStatus() {
     var el = document.getElementById('supStatus');
     var active = goals.active;
@@ -212,7 +257,7 @@
   function renderAll() {
     var tgt = document.getElementById('supTarget');
     if (tgt) tgt.innerHTML = targetOptions();
-    renderGoals(); renderStatus(); renderCorrection(); renderLog();
+    renderGoals(); renderStatus(); renderCorrection(); renderLog(); renderRoadmap();
   }
 
   /* ---------- 事件 ---------- */
@@ -262,6 +307,54 @@
   });
 
   document.getElementById('supClarify').addEventListener('click', openClarify);
+
+  // 自动梳理需求：调用主进程的「需求梳理官」，把核心目的动态梳理成结构化需求
+  document.getElementById('supSynthesize').addEventListener('click', function () {
+    if (!DESKTOP || !window.ingrid.synthesizeRun) { alert('当前环境不支持'); return; }
+    var btn = this;
+    btn.disabled = true; btn.textContent = '✨ 梳理中…（调用 LLM）';
+    window.ingrid.synthesizeRun().then(function (r) {
+      if (r && r.ok) {
+        sup.addLog('ok', '需求梳理官：新增 ' + r.added + ' 条 / 更新 ' + r.updated + ' 条 / 停用 ' + r.deactivated + ' 条');
+        if (r.summary) sup.addLog('info', '梳理结论：' + r.summary);
+        reloadGoals(); renderLog();
+      } else {
+        sup.addLog('warn', '需求梳理失败：' + String((r && r.error) || '未知错误'));
+        renderLog();
+      }
+    }).catch(function (e) {
+      sup.addLog('warn', '需求梳理异常：' + String((e && e.message) || e));
+      renderLog();
+    }).then(function () { btn.disabled = false; btn.textContent = '✨ 自动梳理需求（结合近期工作动态更新）'; });
+  });
+
+  // 路线图：新增大方向
+  function addRoadmapDir(text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    if (!window.ingrid.roadmapAdd) return;
+    window.ingrid.roadmapAdd(text, 2).then(loadRoadmap);
+  }
+  document.getElementById('supRoadmapAdd').addEventListener('click', function () {
+    var inp = document.getElementById('supRoadmapInput');
+    addRoadmapDir(inp.value); inp.value = '';
+  });
+  document.getElementById('supRoadmapInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { addRoadmapDir(this.value); this.value = ''; }
+  });
+
+  // 根据路线图生成详细步骤（交给「路线图拆解官」）
+  document.getElementById('supGenSteps').addEventListener('click', function () {
+    if (!DESKTOP || !window.ingrid.stepGenerate) { alert('当前环境不支持'); return; }
+    var btn = this;
+    btn.disabled = true; btn.textContent = '🪜 拆解中…（调用 LLM）';
+    window.ingrid.stepGenerate().then(function (r) {
+      if (r && r.ok) sup.addLog('ok', '路线图拆解：生成/更新 ' + r.added + ' 个详细步骤（已按 agent 分发）');
+      else sup.addLog('warn', '路线图拆解失败：' + String((r && r.error) || '未知错误'));
+      renderLog();
+    }).catch(function (e) { sup.addLog('warn', '路线图拆解异常：' + String((e && e.message) || e)); renderLog(); })
+      .then(function () { btn.disabled = false; btn.textContent = '🪜 根据路线图生成详细步骤'; });
+  });
 
   /* ---------- 澄清对话流程 ---------- */
   var clarifyStep = 0, clarifyInstruction = '', clarifyAnswers = [];
@@ -330,8 +423,16 @@
 
   /* ---------- 初始化 ---------- */
   renderAll();
+  loadRoadmap();
   if (DESKTOP && window.ingrid.getRunMode) {
     window.ingrid.getRunMode().then(function (on) { realMode = !!on; });
+  }
+  // 需求梳理官在主进程更新核心需求后，本面板同步刷新
+  if (DESKTOP && window.ingrid.onSupervisorChanged) {
+    window.ingrid.onSupervisorChanged(function () { reloadGoals(); });
+  }
+  if (DESKTOP && window.ingrid.onRoadmapChanged) {
+    window.ingrid.onRoadmapChanged(function () { loadRoadmap(); });
   }
   // 与调度中枢的「真实调用」开关保持同步
   document.addEventListener('change', function (e) {

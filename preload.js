@@ -332,6 +332,29 @@ contextBridge.exposeInMainWorld('ingrid', {
   questionDispatch: (id) => ipcRenderer.invoke('question:dispatch', id),
   onQuestionChanged: (cb) => ipcRenderer.on('question:changed', (_e, d) => { if (cb) cb(d || {}); }),
 
+  // 详细步骤清单（路线图拆解，与待办/相关问题并列的第三个清单）
+  stepList: (agent) => ipcRenderer.invoke('step:list', agent),
+  stepSummary: (agent) => ipcRenderer.invoke('step:summary', agent),
+  stepComplete: (id) => ipcRenderer.invoke('step:complete', id),
+  stepReopen: (id) => ipcRenderer.invoke('step:reopen', id),
+  stepRemove: (id) => ipcRenderer.invoke('step:remove', id),
+  stepClearDone: (agent) => ipcRenderer.invoke('step:clear-done', agent),
+  stepGenerate: () => ipcRenderer.invoke('step:generate'),
+  stepDispatch: (id) => ipcRenderer.invoke('step:dispatch', id),
+  onStepChanged: (cb) => ipcRenderer.on('step:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
+  // 路线图（全局一份，大方向；编辑入口在监事面板）
+  roadmapList: () => ipcRenderer.invoke('roadmap:list'),
+  roadmapAdd: (text, weight) => ipcRenderer.invoke('roadmap:add', text, weight),
+  roadmapUpdate: (id, patch) => ipcRenderer.invoke('roadmap:update', id, patch),
+  roadmapRemove: (id) => ipcRenderer.invoke('roadmap:remove', id),
+  roadmapToggle: (id) => ipcRenderer.invoke('roadmap:toggle', id),
+  onRoadmapChanged: (cb) => ipcRenderer.on('roadmap:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
+  // 需求梳理官（动态把核心目的梳理成结构化需求）
+  synthesizeRun: () => ipcRenderer.invoke('synthesize:run'),
+  onSupervisorChanged: (cb) => ipcRenderer.on('supervisor:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
   // Agent 治理官（只读盘点 + 重叠检测 + 对账）
   governanceReport: () => ipcRenderer.invoke('governance:report'),
   governanceRun: () => ipcRenderer.invoke('governance:run'),

@@ -14,11 +14,11 @@
   'use strict';
 
   var AGENT = '';
-  var fabEl = null, panelEl = null, bodyEl = null, qBodyEl = null, autoBodyEl = null, countEl = null;
+  var fabEl = null, panelEl = null, bodyEl = null, qBodyEl = null, stepBodyEl = null, autoBodyEl = null, countEl = null;
   var currentTab = 'todo';
   var autoState = null;
   var autoKinds = ['todo', 'question'];
-  var todoOpenCount = 0, qOpenCount = 0;
+  var todoOpenCount = 0, qOpenCount = 0, stepOpenCount = 0;
 
   /* ---------- 样式 ---------- */
   function ensureStyle() {
@@ -43,7 +43,7 @@
       '#pending-panel .pp-spacer{flex:1;}',
       '#pending-panel .pp-iconbtn{border:none;background:transparent;cursor:pointer;font-size:16px;color:#9B98B0;padding:2px 6px;border-radius:6px;}',
       '#pending-panel .pp-iconbtn:hover{background:#F0EEF8;color:#534AB7;}',
-      '#pending-panel .pp-body,#pending-panel .pp-qbody{flex:1;overflow-y:auto;padding:8px 10px;}',
+      '#pending-panel .pp-body,#pending-panel .pp-qbody,#pending-panel .pp-stepbody{flex:1;overflow-y:auto;padding:8px 10px;}',
       '#pending-panel .pp-empty{padding:34px 16px;text-align:center;color:#9B98B0;font-size:13px;line-height:1.7;}',
       '#pending-panel .pp-item{display:flex;align-items:flex-start;gap:8px;padding:9px 8px;border-radius:10px;margin-bottom:4px;}',
       '#pending-panel .pp-item:hover{background:#F7F6FD;}',
@@ -110,6 +110,10 @@
       '#pending-panel .pp-kinds{display:flex;gap:14px;margin:10px 2px 0;font-size:12px;color:#5F5E5A;}',
       '#pending-panel .pp-kinds label{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;}',
       '#pending-panel .pp-kinds input{accent-color:#7F77DD;}',
+      // 步骤清单
+      '#pending-panel .pp-step-detail{font-size:11px;color:#5F5E5A;line-height:1.5;margin-top:2px;}',
+      '#pending-panel .pp-step-road{display:inline-block;font-size:10px;color:#0f766e;background:#E6F7F5;padding:1px 6px;border-radius:8px;margin-right:6px;margin-top:3px;}',
+      '#pending-panel .pp-step-num{flex:0 0 auto;width:20px;height:20px;border-radius:6px;background:#F3F1FC;color:#534AB7;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px;}',
     ].join('\n');
     var st = document.createElement('style');
     st.id = 'pp-style';
@@ -144,10 +148,12 @@
       '<div class="pp-tabs">' +
       '<button class="pp-tab active" data-tab="todo">📋 待办</button>' +
       '<button class="pp-tab" data-tab="questions">❓ 相关问题</button>' +
+      '<button class="pp-tab" data-tab="steps">🪜 步骤</button>' +
       '<button class="pp-tab" data-tab="auto">🚀 自动托管</button>' +
       '</div>' +
       '<div class="pp-body"></div>' +
       '<div class="pp-qbody" style="display:none"></div>' +
+      '<div class="pp-stepbody" style="display:none"></div>' +
       '<div class="pp-auto" style="display:none"></div>' +
       '<div class="pp-foot">' +
       '<button data-act="scan">重新扫描</button>' +
@@ -156,6 +162,7 @@
 
     bodyEl = panelEl.querySelector('.pp-body');
     qBodyEl = panelEl.querySelector('.pp-qbody');
+    stepBodyEl = panelEl.querySelector('.pp-stepbody');
     autoBodyEl = panelEl.querySelector('.pp-auto');
     countEl = fabEl.querySelector('.pp-count');
     panelEl.querySelector('.pp-agent').textContent = AGENT || '';
@@ -172,6 +179,8 @@
       else if (act === 'clear') { window.ingrid.pendingClearDone(AGENT).then(function () { PendingPanel.refresh(); }); }
       else if (act === 'discover') { PendingPanel.discover(); }
       else if (act === 'qclear') { window.ingrid.questionClearDone(AGENT).then(function () { PendingPanel.refresh(); }); }
+      else if (act === 'sgen') { PendingPanel.generateSteps(); }
+      else if (act === 'sclear') { window.ingrid.stepClearDone(AGENT).then(function () { PendingPanel.refresh(); }); }
       else if (act === 'autopilot') { toggleAutopilot(); }
     });
 
@@ -371,6 +380,80 @@
     updateFabBadge();
   }
 
+  /* ---------- 步骤清单（路线图拆解） ---------- */
+  function stepItemHtml(it, status, order) {
+    var check = status === 'done' ? '✓' : '';
+    var title = esc(it.title);
+    var detail = it.detail ? esc(it.detail) : '';
+    var roadmap = it.roadmap ? esc(it.roadmap) : '';
+    var time = status === 'done' ? relTime(it.doneAt) : relTime(it.updatedAt || it.createdAt);
+    var running = !!it.running;
+    var err = it.lastError ? esc(it.lastError) : '';
+    var actions = '<button class="pp-act" data-act="del" data-id="' + esc(it.id) + '" title="删除/忽略">🗑</button>';
+    if (status === 'open') {
+      actions = '<button class="pp-act pp-run" data-act="run" data-id="' + esc(it.id) + '" title="' + (running ? '执行中…' : '派发给 ' + esc(it.agent || '') + ' 执行这一步') + '"' + (running ? ' disabled' : '') + '>' + (running ? '⏳' : '▶') + '</button>' + actions;
+    }
+    var errHtml = err ? '<div class="pp-err" title="' + err + '">⚠️ ' + err + '</div>' : '';
+    return '<div class="pp-item ' + status + (running ? ' running' : '') + '">' +
+      '<button class="pp-check" data-id="' + esc(it.id) + '" data-status="' + status + '" title="' + (status === 'open' ? '标记完成' : '恢复为未完成') + '">' + check + '</button>' +
+      (order != null ? '<span class="pp-step-num">' + order + '</span>' : '') +
+      '<div class="pp-mid">' +
+      '<div class="pp-txt">' + title + '</div>' +
+      (detail ? '<div class="pp-step-detail">' + detail + '</div>' : '') +
+      '<div class="pp-meta">' + (roadmap ? '<span class="pp-step-road">🧭 ' + roadmap + '</span>' : '') +
+      '<span>' + esc(it.agent || '') + '</span>' + (time ? '<span>' + time + '</span>' : '') + '</div>' +
+      errHtml +
+      '</div>' +
+      '<div class="pp-item-actions">' + actions + '</div>' +
+      '</div>';
+  }
+
+  function renderSteps(data) {
+    var open = (data && data.open) || [];
+    var done = (data && data.done) || [];
+    stepOpenCount = open.length;
+    var html = '<button class="pp-discover" data-act="sgen">🪜 根据路线图生成详细步骤</button>';
+    if (!open.length && !done.length) {
+      html += '<div class="pp-empty">暂无步骤<br>先在监事面板设定「路线图大方向」，再点上方生成步骤<br>（会按 agent 自动分发到各自的清单）</div>';
+    } else {
+      open.forEach(function (it, i) { html += stepItemHtml(it, 'open', it.order != null ? it.order : (i + 1)); });
+      done.forEach(function (it) { html += stepItemHtml(it, 'done', null); });
+      if (done.length) html += '<div style="text-align:right;margin-top:6px"><button class="pp-act" data-act="sclear" style="font-size:11px;color:#9B98B0">清除已完成 ✕</button></div>';
+    }
+    stepBodyEl.innerHTML = html;
+
+    // 勾选完成 / 恢复
+    stepBodyEl.querySelectorAll('.pp-check').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = el.getAttribute('data-id');
+        var isOpen = el.getAttribute('data-status') === 'open';
+        if (isOpen) window.ingrid.stepComplete(id).then(function () { PendingPanel.refresh(); });
+        else window.ingrid.stepReopen(id).then(function () { PendingPanel.refresh(); });
+      });
+    });
+    // 删除 / 忽略
+    stepBodyEl.querySelectorAll('.pp-act[data-act="del"]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (!confirm('从清单删除这条步骤？')) return;
+        window.ingrid.stepRemove(el.getAttribute('data-id')).then(function () { PendingPanel.refresh(); });
+      });
+    });
+    // 派发执行
+    stepBodyEl.querySelectorAll('.pp-act[data-act="run"]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (el.disabled) return;
+        var id = el.getAttribute('data-id');
+        if (!window.ingrid || !window.ingrid.stepDispatch) { alert('当前环境不支持派发执行'); return; }
+        el.disabled = true;
+        window.ingrid.stepDispatch(id).then(function (res) {
+          if (res && res.ok) { PendingPanel.refresh(); }
+          else { el.disabled = false; if (res && res.error) alert(res.error); }
+        }).catch(function () { el.disabled = false; });
+      });
+    });
+    updateFabBadge();
+  }
+
   // 更新 tab 上的计数角标
   function updateTabs() {
     var tabs = panelEl.querySelectorAll('.pp-tab');
@@ -378,12 +461,13 @@
       var t = tabs[i].getAttribute('data-tab');
       if (t === 'todo') tabs[i].innerHTML = '📋 待办' + (todoOpenCount ? ' (' + todoOpenCount + ')' : '');
       else if (t === 'questions') tabs[i].innerHTML = '❓ 相关问题' + (qOpenCount ? ' (' + qOpenCount + ')' : '');
+      else if (t === 'steps') tabs[i].innerHTML = '🪜 步骤' + (stepOpenCount ? ' (' + stepOpenCount + ')' : '');
     }
   }
 
-  // 更新 FAB 角标：正式待办 + 相关问题（都是「open 的工作」）
+  // 更新 FAB 角标：正式待办 + 相关问题 + 步骤（都是「open 的工作」）
   function updateFabBadge() {
-    var total = todoOpenCount + qOpenCount;
+    var total = todoOpenCount + qOpenCount + stepOpenCount;
     countEl.textContent = String(total);
     countEl.style.display = total > 0 ? 'flex' : 'none';
     updateTabs();
@@ -398,9 +482,11 @@
     }
     bodyEl.style.display = name === 'todo' ? '' : 'none';
     qBodyEl.style.display = name === 'questions' ? '' : 'none';
+    stepBodyEl.style.display = name === 'steps' ? '' : 'none';
     autoBodyEl.style.display = name === 'auto' ? '' : 'none';
     panelEl.querySelector('.pp-foot').style.display = name === 'todo' ? '' : 'none';
     if (name === 'questions') refreshQuestions();
+    if (name === 'steps') refreshSteps();
     if (name === 'auto') renderAutopilot();
   }
 
@@ -410,11 +496,12 @@
     var active = !!st.active;
     var kinds = active ? (st.kinds && st.kinds.length ? st.kinds : autoKinds) : autoKinds;
     var html = '';
-    // 托管范围：待办 / 相关问题（分别或同时勾选）
+    // 托管范围：待办 / 相关问题 / 步骤（分别或同时勾选）
     html += '<div class="pp-kinds">' +
       '<span style="font-size:11px;color:#9B98B0">托管范围</span>' +
       '<label><input type="checkbox" data-kind="todo" ' + (kinds.indexOf('todo') >= 0 ? 'checked' : '') + (active ? ' disabled' : '') + '> 📋 待办</label>' +
       '<label><input type="checkbox" data-kind="question" ' + (kinds.indexOf('question') >= 0 ? 'checked' : '') + (active ? ' disabled' : '') + '> ❓ 相关问题</label>' +
+      '<label><input type="checkbox" data-kind="step" ' + (kinds.indexOf('step') >= 0 ? 'checked' : '') + (active ? ' disabled' : '') + '> 🪜 步骤</label>' +
       '</div>';
     html += '<button class="pp-auto-start' + (active ? ' running' : '') + '" data-act="autopilot" style="margin-top:10px">' + (active ? '⏹ 停止托管' : '🚀 开始自动托管') + '</button>';
     html += '<div class="pp-auto-status">';
@@ -433,12 +520,12 @@
         var it = log[i];
         var isDone = it.verdict === 'done';
         var reason = it.reason ? ' · ' + esc(it.reason) : '';
-        var kindTag = it.kind === 'question' ? '❓' : '📋';
+        var kindTag = it.kind === 'question' ? '❓' : it.kind === 'step' ? '🪜' : '📋';
         html += '<div class="lg-item ' + (isDone ? 'done' : 'blocked') + '"><span class="v">' + (isDone ? '✓' : '⚠') + '</span><span>' + kindTag + ' ' + esc(it.title) + reason + '</span></div>';
       }
       html += '</div>';
     } else {
-      html += '<div class="pp-auto-status" style="margin-top:12px"><span class="dim">勾选要托管的清单（待办 / 相关问题，可同时），点「开始自动托管」，会逐条派发执行，直到全部打勾或卡住。</span></div>';
+      html += '<div class="pp-auto-status" style="margin-top:12px"><span class="dim">勾选要托管的清单（待办 / 相关问题 / 步骤，可同时），点「开始自动托管」：会先由执行编排官排好先后顺序，再逐条派发执行，直到全部打勾或卡住。</span></div>';
     }
     autoBodyEl.innerHTML = html;
     // 绑定勾选
@@ -470,15 +557,30 @@
     if (!window.ingrid) return;
     var p1 = window.ingrid.pendingList ? window.ingrid.pendingList(AGENT).catch(function () { return null; }) : Promise.resolve(null);
     var p2 = window.ingrid.questionList ? window.ingrid.questionList(AGENT).catch(function () { return null; }) : Promise.resolve(null);
-    Promise.all([p1, p2]).then(function (rs) {
+    var p3 = window.ingrid.stepList ? window.ingrid.stepList(AGENT).catch(function () { return null; }) : Promise.resolve(null);
+    Promise.all([p1, p2, p3]).then(function (rs) {
       if (rs[0]) render(rs[0]);
       if (rs[1]) renderQuestions(rs[1]);
+      if (rs[2]) renderSteps(rs[2]);
       updateFabBadge();
     });
   }
   function refreshQuestions() {
     if (!window.ingrid || !window.ingrid.questionList) return;
     window.ingrid.questionList(AGENT).then(renderQuestions).catch(function () {});
+  }
+  function refreshSteps() {
+    if (!window.ingrid || !window.ingrid.stepList) return;
+    window.ingrid.stepList(AGENT).then(renderSteps).catch(function () {});
+  }
+  function generateSteps() {
+    if (!window.ingrid || !window.ingrid.stepGenerate) return;
+    var btn = stepBodyEl ? stepBodyEl.querySelector('[data-act="sgen"]') : null;
+    if (btn) btn.disabled = true;
+    window.ingrid.stepGenerate().then(function (r) {
+      if (r && !r.ok && r.error) alert('生成失败：' + r.error);
+      refresh();
+    }).catch(function () { refresh(); }).then(function () { if (btn) btn.disabled = false; });
   }
   function scan() {
     if (!window.ingrid || !window.ingrid.pendingScan) return;
@@ -508,6 +610,9 @@
     if (window.ingrid && window.ingrid.onQuestionChanged) {
       window.ingrid.onQuestionChanged(function () { refresh(); });
     }
+    if (window.ingrid && window.ingrid.onStepChanged) {
+      window.ingrid.onStepChanged(function () { refresh(); });
+    }
     // 监听自动托管进度广播（只响应本 agent）
     if (window.ingrid && window.ingrid.onAutopilotChanged) {
       window.ingrid.onAutopilotChanged(function (d) {
@@ -518,5 +623,5 @@
     }
   }
 
-  global.PendingPanel = { init: init, refresh: refresh, refreshQuestions: refreshQuestions, scan: scan, discover: discover };
+  global.PendingPanel = { init: init, refresh: refresh, refreshQuestions: refreshQuestions, refreshSteps: refreshSteps, scan: scan, discover: discover, generateSteps: generateSteps };
 })(window);
