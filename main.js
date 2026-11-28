@@ -2328,12 +2328,16 @@ ipcMain.handle('pending:dispatch', async (_e, id) => {
   if (!item) return { ok: false, error: '待办不存在（可能已处理）' };
   if (item.running) return { ok: false, error: '该待办正在执行中，请稍候' };
   const engine = agentEngineByName(item.agent) || 'deepseek';
+  const goal = buildPendingGoal(item);
+  // 留聊天记录：为本次派发新建一个会话，记下「派发指令」，执行结果在收尾时追加
+  const sessionId = appendDispatchSession(item.agent, item.title, goal);
   const ticket = getTaskQueue().enqueue({
     title: item.title,
-    goal: buildPendingGoal(item),
+    goal: goal,
     agent: item.agent,
     engine: engine,
     pendingId: item.id,
+    chatSessionId: sessionId,
   });
   tracker.markRunning(item.id);
   broadcast('pending:changed', {});
@@ -2343,7 +2347,7 @@ ipcMain.handle('pending:dispatch', async (_e, id) => {
     settlePendingAfterBgTask(ticket, 'failed', String((e && e.message) || e));
     broadcastTasks();
   });
-  return { ok: true, ticketId: ticket.id };
+  return { ok: true, ticketId: ticket.id, chatSessionId: sessionId };
 });
 // 一键备份：把 chat-history 目录下所有 agent 会话导出为一个 JSON 文件
 ipcMain.handle('chat:backup', () => {
@@ -3082,6 +3086,49 @@ async function judgePendingDone(ticket, resultText) {
   }
 }
 
+// 生成聊天会话 id（主进程内唯一即可）
+function newChatSessionId() {
+  return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// 为「待办派发」新建一条聊天记录会话，记下派发指令（返回 session id）
+function appendDispatchSession(agent, title, userContent) {
+  const file = chatHistoryFile(agent);
+  let data;
+  try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { data = null; }
+  if (!data || !Array.isArray(data.sessions)) data = { v: 1, sessions: [], activeId: '' };
+  const id = newChatSessionId();
+  const now = Date.now();
+  const session = {
+    id: id,
+    title: String(title || '待办执行').slice(0, 40),
+    createdAt: now,
+    updatedAt: now,
+    pinned: false,
+    titleAuto: true,
+    messages: [{ role: 'user', content: String(userContent || ''), ts: now }],
+  };
+  data.sessions.push(session);
+  data.activeId = id;
+  try { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); } catch { /* 写入失败不阻断 */ }
+  return id;
+}
+
+// 往指定会话追加 assistant 执行结果消息（留档供回看）
+function appendDispatchResult(agent, sessionId, content) {
+  if (!sessionId) return;
+  const file = chatHistoryFile(agent);
+  let data;
+  try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return; }
+  if (!data || !Array.isArray(data.sessions)) return;
+  const s = data.sessions.find((x) => x && x.id === sessionId);
+  if (!s) return;
+  s.messages = s.messages || [];
+  s.messages.push({ role: 'assistant', content: String(content || '').slice(0, 8000), ts: Date.now() });
+  s.updatedAt = Date.now();
+  try { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); } catch { /* 写入失败不阻断 */ }
+}
+
 // 后台任务跑完后回写来源待办：done → 自动打勾；failed/blocked → 保留并记录原因
 async function settlePendingAfterBgTask(ticket, outcome, payload) {
   if (!ticket || !ticket.pendingId) return;   // 非待办派发的任务不回写
@@ -3093,6 +3140,13 @@ async function settlePendingAfterBgTask(ticket, outcome, payload) {
   } else {
     const verdict = await judgePendingDone(ticket, payload);
     tracker.settle(ticket.pendingId, verdict.verdict, verdict.reason);
+  }
+  // 留聊天记录：把执行结果追加到本次派发的会话（成功写最终输出，失败写错误）
+  if (ticket.chatSessionId) {
+    const resultText = outcome === 'failed'
+      ? '执行失败：' + String(payload || '')
+      : String(payload || '');
+    appendDispatchResult(ticket.agent, ticket.chatSessionId, resultText);
   }
   broadcast('pending:changed', {});
 }
