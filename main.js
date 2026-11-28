@@ -3603,11 +3603,25 @@ async function runBackgroundTask(ticket) {
   }
 
   const MAX_ROUNDS = 120;
+  const WRAP_AT = MAX_ROUNDS - 8;   // 还剩 8 轮时强制收尾：停止检索，输出「已完成/未完成」的中间成果
   let failStreak = 0;
   let emptyStreak = 0;
+  let wrapHinted = false;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     q.heartbeat(ticket.id);   // 每轮心跳：让 Watchdog 知道还在推进，避免误判卡死
+    // 轮次即将用尽：停止继续检索/比对，逼出「已完成进度 + 未完成清单」的中间成果，
+    // 而不是撞到 MAX_ROUNDS 后一句「超过 120 轮失败」丢掉所有已做的工作。
+    if (!wrapHinted && round >= WRAP_AT) {
+      wrapHinted = true;
+      msgs.push({
+        role: 'user',
+        content: '【系统提示】你的执行轮次即将用尽，请立即停止继续检索/比对，'
+          + '基于已完成的进度直接输出最终结果：明确列出「已完成」和「未完成」两部分，'
+          + '已完成的给出结论，未完成的说明还差什么。最后一行标注【完成】或【未完成】原因。'
+          + '从本条起不要再调用任何工具。',
+      });
+    }
     const r = await callBgChat(engine, model, msgs, BG_TOOLS);
     if (!r.ok) {
       failStreak++;

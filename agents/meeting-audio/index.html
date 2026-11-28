@@ -56,6 +56,10 @@ header p{margin:0;color:#ddd7f0;font-size:15px;max-width:820px}
 .status{margin-top:14px;font-size:13px;color:var(--muted);min-height:20px}
 .status.err{color:var(--danger)}
 .status.ok{color:var(--accent)}
+.wx-tip{background:var(--warn-soft);border:1px solid #f0d9b5;color:#8a5a12;border-radius:9px;padding:10px 12px;font-size:13px;margin:0 0 14px;line-height:1.6}
+.video-drop{border:1.5px dashed var(--line);border-radius:10px;padding:12px 14px;transition:border-color .15s,background .15s}
+.video-drop.dragging{border-color:var(--accent);background:var(--accent-soft)}
+.video-drop .drop-hint{font-size:12px;color:var(--muted);margin-top:8px;text-align:center}
 .divider{border:0;border-top:1px solid var(--line);margin:24px 0}
 .hidden{display:none!important}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}
@@ -292,8 +296,12 @@ footer{padding:28px 0 48px;font-size:12px;color:var(--faint);text-align:center}
   <section class="panel tab-panel" id="tab-video">
    <h2>视频总结 · 不看也能掌握</h2>
    <p class="lead">粘贴视频链接（YouTube / B站 / 抖音 / 小红书 / 小宇宙等）或本地音视频路径，自动抓字幕总结；无字幕则下载音频本地转写。全程本地总结。</p>
-   <label for="video-url">视频链接或本地文件路径</label>
-   <input type="text" id="video-url" placeholder="例如：https://www.youtube.com/watch?v=xxxx 或 /Users/me/视频.mp4">
+   <p class="wx-tip">⚠️ 微信视频号不支持直接贴链接（视频号视频需微信登录态 + 加密视频流，无法自动解析）。请把视频「转发 → 保存」成 mp4 后拖到下方框里，或点「选择本地视频」导入，即可转写总结。</p>
+   <div class="video-drop" id="video-drop">
+    <label for="video-url">视频链接或本地文件路径</label>
+    <input type="text" id="video-url" placeholder="例如：https://www.youtube.com/watch?v=xxxx 或 /Users/me/视频.mp4">
+    <div class="drop-hint">📂 可把本地视频 / 音频文件（mp4 · mov · mp3 · m4a · wav）直接拖到此处</div>
+   </div>
    <div class="engine-bar" style="margin:14px 0 0">
     <span class="eb-label">无字幕时转写语言</span>
     <select id="video-lang" aria-label="转写语言">

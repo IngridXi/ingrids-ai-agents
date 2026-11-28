@@ -561,6 +561,24 @@
       doVideoSummary();
     }).catch(function (e) { setStatus(el('video-status'), '选择文件失败：' + e.message, 'err'); });
   });
+  // 拖拽本地视频/音频到视频总结区，直接取磁盘路径并触发总结（视频号视频保存成 mp4 后拖进来即可）
+  (function () {
+    var drop = el('video-drop');
+    if (!drop) return;
+    drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('dragging'); });
+    drop.addEventListener('dragleave', function () { drop.classList.remove('dragging'); });
+    drop.addEventListener('drop', function (e) {
+      e.preventDefault(); drop.classList.remove('dragging');
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      var p = '';
+      if (window.ingrid && window.ingrid.getFilePath) p = window.ingrid.getFilePath(f);
+      if (!p && f.path) p = f.path;
+      if (!p) { setStatus(el('video-status'), '无法获取文件路径，请点「选择本地视频」', 'err'); return; }
+      el('video-url').value = p;
+      doVideoSummary();
+    });
+  })();
 
   /* ============ 左侧功能导航切换 ============ */
   var navItems = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));
