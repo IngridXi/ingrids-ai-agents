@@ -314,11 +314,23 @@ contextBridge.exposeInMainWorld('ingrid', {
   pendingClearDone: (agent) => ipcRenderer.invoke('pending:clear-done', agent),
   pendingScan: (agent) => ipcRenderer.invoke('pending:scan', agent),
   pendingDispatch: (id) => ipcRenderer.invoke('pending:dispatch', id),
-  pendingAutopilot: (agent) => ipcRenderer.invoke('pending:autopilot', agent),
+  pendingAutopilot: (agent, kinds) => ipcRenderer.invoke('pending:autopilot', agent, kinds),
   pendingAutopilotStop: (agent) => ipcRenderer.invoke('pending:autopilot:stop', agent),
   onPendingChanged: (cb) => ipcRenderer.on('pending:changed', (_e, d) => { if (cb) cb(d || {}); }),
   onChatSessionUpdated: (cb) => ipcRenderer.on('chat:session-updated', (_e, d) => { if (cb) cb(d || {}); }),
   onAutopilotChanged: (cb) => ipcRenderer.on('autopilot:changed', (_e, d) => { if (cb) cb(d || {}); }),
+
+  // 相关问题清单（发散式发掘，与待办并行）
+  questionList: (agent) => ipcRenderer.invoke('question:list', agent),
+  questionSummary: (agent) => ipcRenderer.invoke('question:summary', agent),
+  questionAdd: (agent, q) => ipcRenderer.invoke('question:add', agent, q),
+  questionComplete: (id) => ipcRenderer.invoke('question:complete', id),
+  questionReopen: (id) => ipcRenderer.invoke('question:reopen', id),
+  questionRemove: (id) => ipcRenderer.invoke('question:remove', id),
+  questionClearDone: (agent) => ipcRenderer.invoke('question:clear-done', agent),
+  questionDiscover: (agent) => ipcRenderer.invoke('question:discover', agent),
+  questionDispatch: (id) => ipcRenderer.invoke('question:dispatch', id),
+  onQuestionChanged: (cb) => ipcRenderer.on('question:changed', (_e, d) => { if (cb) cb(d || {}); }),
 
   // Agent 治理官（只读盘点 + 重叠检测 + 对账）
   governanceReport: () => ipcRenderer.invoke('governance:report'),

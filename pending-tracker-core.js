@@ -396,6 +396,60 @@
     return true;
   };
 
+  // —— 相关问题清单（发散式发掘）——
+  // 加入/更新一个「相关问题」条目（去重靠标题指纹 + 模糊相似，限定同 agent）。
+  // q = { title, value, anchor, agent, source }；已存在则刷新价值/锚点/来源，不回退状态。
+  PendingTracker.prototype.addQuestion = function (q) {
+    q = q || {};
+    var title = String(q.title || '').trim();
+    if (!title) return { ok: false, reason: 'empty', added: false };
+    var fp = fingerprint(title);
+    if (!fp) return { ok: false, reason: 'empty', added: false };
+    var self = this;
+    var existing = null;
+    for (var i = 0; i < this.state.items.length; i++) {
+      if (this.state.items[i].id === fp) { existing = this.state.items[i]; break; }
+    }
+    if (!existing) {
+      for (var k = 0; k < this.state.items.length; k++) {
+        var it = this.state.items[k];
+        if (it.agent === (q.agent || '未知') && similarEnough(it.title, title)) { existing = it; break; }
+      }
+    }
+    var now = Date.now();
+    if (existing) {
+      if (q.value) existing.value = String(q.value);
+      if (q.anchor) existing.anchor = String(q.anchor);
+      if (q.source) existing.source = String(q.source);
+      if (existing.type !== 'question') existing.type = 'question';
+      if (now > (existing.updatedAt || 0)) existing.updatedAt = now;
+      this._save();
+      return { ok: true, added: false, item: existing };
+    }
+    var item = {
+      id: fp, type: 'question', title: title, agent: q.agent || '未知',
+      status: ST_OPEN, source: q.source || 'discovered',
+      value: String(q.value || ''), anchor: String(q.anchor || ''),
+      evidence: '', createdAt: now, updatedAt: now, doneAt: null,
+      running: false, lastError: '', answer: '', answerAt: null,
+    };
+    this.state.items.push(item);
+    this._save();
+    return { ok: true, added: true, item: item };
+  };
+
+  // 回答问题：记录答案并打勾完成（done）
+  PendingTracker.prototype.answer = function (id, text) {
+    var it = this._find(id);
+    if (!it) return false;
+    it.status = ST_DONE; it.doneAt = Date.now(); it.updatedAt = Date.now();
+    it.answer = String(text || '').slice(0, 8000);
+    it.answerAt = Date.now();
+    it.running = false; it.lastError = '';
+    this._save();
+    return true;
+  };
+
   // 确认「建议项」→ 转正式（source: suggested → explicit）
   PendingTracker.prototype.confirm = function (id) {
     var it = this._find(id);

@@ -14,9 +14,11 @@
   'use strict';
 
   var AGENT = '';
-  var fabEl = null, panelEl = null, bodyEl = null, autoBodyEl = null, countEl = null;
+  var fabEl = null, panelEl = null, bodyEl = null, qBodyEl = null, autoBodyEl = null, countEl = null;
   var currentTab = 'todo';
   var autoState = null;
+  var autoKinds = ['todo', 'question'];
+  var todoOpenCount = 0, qOpenCount = 0;
 
   /* ---------- 样式 ---------- */
   function ensureStyle() {
@@ -41,7 +43,7 @@
       '#pending-panel .pp-spacer{flex:1;}',
       '#pending-panel .pp-iconbtn{border:none;background:transparent;cursor:pointer;font-size:16px;color:#9B98B0;padding:2px 6px;border-radius:6px;}',
       '#pending-panel .pp-iconbtn:hover{background:#F0EEF8;color:#534AB7;}',
-      '#pending-panel .pp-body{flex:1;overflow-y:auto;padding:8px 10px;}',
+      '#pending-panel .pp-body,#pending-panel .pp-qbody{flex:1;overflow-y:auto;padding:8px 10px;}',
       '#pending-panel .pp-empty{padding:34px 16px;text-align:center;color:#9B98B0;font-size:13px;line-height:1.7;}',
       '#pending-panel .pp-item{display:flex;align-items:flex-start;gap:8px;padding:9px 8px;border-radius:10px;margin-bottom:4px;}',
       '#pending-panel .pp-item:hover{background:#F7F6FD;}',
@@ -94,6 +96,20 @@
       '#pending-panel .pp-auto-log .lg-item .v{flex:none;font-weight:700;}',
       '#pending-panel .pp-auto-log .lg-item.done .v{color:#3BA55D;}',
       '#pending-panel .pp-auto-log .lg-item.blocked .v{color:#E6A23C;}',
+      // 相关问题清单
+      '#pending-panel .pp-q-why{font-size:11px;color:#7a6a3a;line-height:1.5;margin-top:2px;}',
+      '#pending-panel .pp-q-anchor{display:inline-block;font-size:10px;color:#534AB7;background:#EEEBFB;padding:1px 6px;border-radius:8px;margin-right:6px;margin-top:3px;}',
+      '#pending-panel .pp-answer{font-size:12px;color:#3f6b43;background:#F1FAF2;border-left:2px solid #5DBB63;padding:4px 8px;border-radius:5px;margin-top:4px;line-height:1.5;max-height:96px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;}',
+      '#pending-panel .pp-discover{width:100%;border:none;background:#F3F1FC;color:#534AB7;padding:8px 0;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:4px;}',
+      '#pending-panel .pp-discover:hover{background:#E9E5FB;}',
+      '#pending-panel .pp-discover[disabled]{color:#C9C4E0;cursor:default;}',
+      '#pending-panel .pp-q-head{display:flex;gap:8px;padding:8px 10px;}',
+      '#pending-panel .pp-q-head input{flex:1;border:1px solid #E3E1F0;border-radius:8px;padding:6px 8px;font-size:12px;font-family:inherit;color:#2c2c2a;}',
+      '#pending-panel .pp-q-head button{border:1px solid #E3E1F0;background:#fff;color:#534AB7;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;}',
+      '#pending-panel .pp-q-head button:hover{background:#F3F1FC;border-color:#7F77DD;}',
+      '#pending-panel .pp-kinds{display:flex;gap:14px;margin:10px 2px 0;font-size:12px;color:#5F5E5A;}',
+      '#pending-panel .pp-kinds label{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;}',
+      '#pending-panel .pp-kinds input{accent-color:#7F77DD;}',
     ].join('\n');
     var st = document.createElement('style');
     st.id = 'pp-style';
@@ -127,9 +143,11 @@
       '</div>' +
       '<div class="pp-tabs">' +
       '<button class="pp-tab active" data-tab="todo">📋 待办</button>' +
+      '<button class="pp-tab" data-tab="questions">❓ 相关问题</button>' +
       '<button class="pp-tab" data-tab="auto">🚀 自动托管</button>' +
       '</div>' +
       '<div class="pp-body"></div>' +
+      '<div class="pp-qbody" style="display:none"></div>' +
       '<div class="pp-auto" style="display:none"></div>' +
       '<div class="pp-foot">' +
       '<button data-act="scan">重新扫描</button>' +
@@ -137,6 +155,7 @@
       '</div>';
 
     bodyEl = panelEl.querySelector('.pp-body');
+    qBodyEl = panelEl.querySelector('.pp-qbody');
     autoBodyEl = panelEl.querySelector('.pp-auto');
     countEl = fabEl.querySelector('.pp-count');
     panelEl.querySelector('.pp-agent').textContent = AGENT || '';
@@ -151,6 +170,8 @@
       else if (act === 'refresh') { PendingPanel.refresh(); }
       else if (act === 'scan') { PendingPanel.scan(); }
       else if (act === 'clear') { window.ingrid.pendingClearDone(AGENT).then(function () { PendingPanel.refresh(); }); }
+      else if (act === 'discover') { PendingPanel.discover(); }
+      else if (act === 'qclear') { window.ingrid.questionClearDone(AGENT).then(function () { PendingPanel.refresh(); }); }
       else if (act === 'autopilot') { toggleAutopilot(); }
     });
 
@@ -186,11 +207,11 @@
     var total = open.length + done.length;
 
     // 角标只算「正式未完成」（建议项是待确认，不算正式待办）
-    countEl.textContent = String(explicitOpen.length);
-    countEl.style.display = explicitOpen.length > 0 ? 'flex' : 'none';
+    todoOpenCount = explicitOpen.length;
 
     if (!total) {
       bodyEl.innerHTML = '<div class="pp-empty">暂无待办 🎉<br>研究助手显式写清单、或聊天里交代「未完成」时会自动进清单</div>';
+      updateFabBadge();
       return;
     }
 
@@ -264,6 +285,110 @@
       '</div>';
   }
 
+  /* ---------- 相关问题清单 ---------- */
+  function questionItemHtml(it, status) {
+    var check = status === 'done' ? '✓' : '';
+    var title = esc(it.title);
+    var value = it.value ? esc(it.value) : '';
+    var anchor = it.anchor ? esc(it.anchor) : '';
+    var time = status === 'done' ? relTime(it.doneAt) : relTime(it.updatedAt || it.createdAt);
+    var running = !!it.running;
+    var err = it.lastError ? esc(it.lastError) : '';
+    var answer = (status === 'done' && it.answer) ? '<div class="pp-answer">' + esc(it.answer) + '</div>' : '';
+    var tag = (it.source === 'discovered') ? '<span class="pp-sugtag" style="background:#EEEBFB;color:#534AB7">🪄 发掘</span>' : '';
+    var actions = '<button class="pp-act" data-act="del" data-id="' + esc(it.id) + '" title="删除/忽略">🗑</button>';
+    if (status === 'open') {
+      actions = '<button class="pp-act pp-run" data-act="run" data-id="' + esc(it.id) + '" title="' + (running ? '执行中…' : '派发给 agent 研究回答') + '"' + (running ? ' disabled' : '') + '>' + (running ? '⏳' : '▶') + '</button>' + actions;
+    }
+    var errHtml = err ? '<div class="pp-err" title="' + err + '">⚠️ ' + err + '</div>' : '';
+    return '<div class="pp-item ' + status + (running ? ' running' : '') + '">' +
+      '<button class="pp-check" data-id="' + esc(it.id) + '" data-status="' + status + '" title="' + (status === 'open' ? '标记已想清楚' : '恢复为未解决') + '">' + check + '</button>' +
+      '<div class="pp-mid">' +
+      '<div class="pp-txt">' + tag + title + '</div>' +
+      (value ? '<div class="pp-q-why">💡 ' + value + '</div>' : '') +
+      '<div class="pp-meta">' + (anchor ? '<span class="pp-q-anchor">' + anchor + '</span>' : '') + (time ? '<span>' + time + '</span>' : '') + '</div>' +
+      errHtml + answer +
+      '</div>' +
+      '<div class="pp-item-actions">' + actions + '</div>' +
+      '</div>';
+  }
+
+  function renderQuestions(data) {
+    var open = (data && data.open) || [];
+    var done = (data && data.done) || [];
+    qOpenCount = open.length;
+    var html = '<button class="pp-discover" data-act="discover">🪄 发散式发掘相关问题</button>' +
+      '<div class="pp-q-head"><input id="pp-q-input" placeholder="手动添加一个问题…" /><button data-act="qadd">添加</button></div>';
+    if (!open.length && !done.length) {
+      html += '<div class="pp-empty">暂无相关问题<br>点上方「发掘」发散思考，或让 agent 在对话中自动发掘<br>（围绕核心目的与需求的高价值问题）</div>';
+    } else {
+      open.forEach(function (it) { html += questionItemHtml(it, 'open'); });
+      done.forEach(function (it) { html += questionItemHtml(it, 'done'); });
+      if (done.length) html += '<div style="text-align:right;margin-top:6px"><button class="pp-act" data-act="qclear" style="font-size:11px;color:#9B98B0">清除已答 ✕</button></div>';
+    }
+    qBodyEl.innerHTML = html;
+
+    // 手动添加
+    var inp = qBodyEl.querySelector('#pp-q-input');
+    var doAdd = function () {
+      var v = inp ? (inp.value || '').trim() : '';
+      if (!v) return;
+      if (!window.ingrid || !window.ingrid.questionAdd) return;
+      window.ingrid.questionAdd(AGENT, { title: v, source: 'manual' }).then(function () { PendingPanel.refresh(); });
+    };
+    if (inp) inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') doAdd(); });
+    qBodyEl.querySelectorAll('.pp-act[data-act="qadd"]').forEach(function (el) { el.addEventListener('click', doAdd); });
+
+    // 勾选完成 / 恢复
+    qBodyEl.querySelectorAll('.pp-check').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = el.getAttribute('data-id');
+        var isOpen = el.getAttribute('data-status') === 'open';
+        if (isOpen) window.ingrid.questionComplete(id).then(function () { PendingPanel.refresh(); });
+        else window.ingrid.questionReopen(id).then(function () { PendingPanel.refresh(); });
+      });
+    });
+    // 删除 / 忽略
+    qBodyEl.querySelectorAll('.pp-act[data-act="del"]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (!confirm('从清单删除这个问题？')) return;
+        window.ingrid.questionRemove(el.getAttribute('data-id')).then(function () { PendingPanel.refresh(); });
+      });
+    });
+    // 派发回答
+    qBodyEl.querySelectorAll('.pp-act[data-act="run"]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (el.disabled) return;
+        var id = el.getAttribute('data-id');
+        if (!window.ingrid || !window.ingrid.questionDispatch) { alert('当前环境不支持派发执行'); return; }
+        el.disabled = true;
+        window.ingrid.questionDispatch(id).then(function (res) {
+          if (res && res.ok) { PendingPanel.refresh(); }
+          else { el.disabled = false; if (res && res.error) alert(res.error); }
+        }).catch(function () { el.disabled = false; });
+      });
+    });
+    updateFabBadge();
+  }
+
+  // 更新 tab 上的计数角标
+  function updateTabs() {
+    var tabs = panelEl.querySelectorAll('.pp-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i].getAttribute('data-tab');
+      if (t === 'todo') tabs[i].innerHTML = '📋 待办' + (todoOpenCount ? ' (' + todoOpenCount + ')' : '');
+      else if (t === 'questions') tabs[i].innerHTML = '❓ 相关问题' + (qOpenCount ? ' (' + qOpenCount + ')' : '');
+    }
+  }
+
+  // 更新 FAB 角标：正式待办 + 相关问题（都是「open 的工作」）
+  function updateFabBadge() {
+    var total = todoOpenCount + qOpenCount;
+    countEl.textContent = String(total);
+    countEl.style.display = total > 0 ? 'flex' : 'none';
+    updateTabs();
+  }
+
   /* ---------- 自动托管 ---------- */
   function switchTab(name) {
     currentTab = name;
@@ -272,17 +397,26 @@
       tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
     }
     bodyEl.style.display = name === 'todo' ? '' : 'none';
+    qBodyEl.style.display = name === 'questions' ? '' : 'none';
     autoBodyEl.style.display = name === 'auto' ? '' : 'none';
     panelEl.querySelector('.pp-foot').style.display = name === 'todo' ? '' : 'none';
+    if (name === 'questions') refreshQuestions();
     if (name === 'auto') renderAutopilot();
   }
 
   function renderAutopilot() {
     if (!autoBodyEl) return;
-    var st = autoState || { active: false, done: 0, blocked: 0, current: '', log: [] };
+    var st = autoState || { active: false, done: 0, blocked: 0, current: '', log: [], kinds: autoKinds };
     var active = !!st.active;
+    var kinds = active ? (st.kinds && st.kinds.length ? st.kinds : autoKinds) : autoKinds;
     var html = '';
-    html += '<button class="pp-auto-start' + (active ? ' running' : '') + '" data-act="autopilot">' + (active ? '⏹ 停止托管' : '🚀 开始自动托管') + '</button>';
+    // 托管范围：待办 / 相关问题（分别或同时勾选）
+    html += '<div class="pp-kinds">' +
+      '<span style="font-size:11px;color:#9B98B0">托管范围</span>' +
+      '<label><input type="checkbox" data-kind="todo" ' + (kinds.indexOf('todo') >= 0 ? 'checked' : '') + (active ? ' disabled' : '') + '> 📋 待办</label>' +
+      '<label><input type="checkbox" data-kind="question" ' + (kinds.indexOf('question') >= 0 ? 'checked' : '') + (active ? ' disabled' : '') + '> ❓ 相关问题</label>' +
+      '</div>';
+    html += '<button class="pp-auto-start' + (active ? ' running' : '') + '" data-act="autopilot" style="margin-top:10px">' + (active ? '⏹ 停止托管' : '🚀 开始自动托管') + '</button>';
     html += '<div class="pp-auto-status">';
     if (active) {
       html += '状态：<b>运行中…</b>';
@@ -299,13 +433,23 @@
         var it = log[i];
         var isDone = it.verdict === 'done';
         var reason = it.reason ? ' · ' + esc(it.reason) : '';
-        html += '<div class="lg-item ' + (isDone ? 'done' : 'blocked') + '"><span class="v">' + (isDone ? '✓' : '⚠') + '</span><span>' + esc(it.title) + reason + '</span></div>';
+        var kindTag = it.kind === 'question' ? '❓' : '📋';
+        html += '<div class="lg-item ' + (isDone ? 'done' : 'blocked') + '"><span class="v">' + (isDone ? '✓' : '⚠') + '</span><span>' + kindTag + ' ' + esc(it.title) + reason + '</span></div>';
       }
       html += '</div>';
     } else {
-      html += '<div class="pp-auto-status" style="margin-top:12px"><span class="dim">点击「开始自动托管」，会自动把清单里所有未完成的正式待办逐条派发执行，直到全部打勾或卡住。</span></div>';
+      html += '<div class="pp-auto-status" style="margin-top:12px"><span class="dim">勾选要托管的清单（待办 / 相关问题，可同时），点「开始自动托管」，会逐条派发执行，直到全部打勾或卡住。</span></div>';
     }
     autoBodyEl.innerHTML = html;
+    // 绑定勾选
+    autoBodyEl.querySelectorAll('.pp-kinds input[type="checkbox"]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var kind = el.getAttribute('data-kind');
+        var idx = autoKinds.indexOf(kind);
+        if (el.checked && idx < 0) autoKinds.push(kind);
+        else if (!el.checked && idx >= 0) autoKinds.splice(idx, 1);
+      });
+    });
   }
 
   function toggleAutopilot() {
@@ -313,7 +457,8 @@
     if (st.active) {
       if (window.ingrid && window.ingrid.pendingAutopilotStop) window.ingrid.pendingAutopilotStop(AGENT);
     } else if (window.ingrid && window.ingrid.pendingAutopilot) {
-      window.ingrid.pendingAutopilot(AGENT).then(function (res) {
+      var kinds = autoKinds.length ? autoKinds.slice() : ['todo'];
+      window.ingrid.pendingAutopilot(AGENT, kinds).then(function (res) {
         if (res && !res.ok && res.error) alert(res.error);
         renderAutopilot();
       });
@@ -322,12 +467,31 @@
 
   /* ---------- API ---------- */
   function refresh() {
-    if (!window.ingrid || !window.ingrid.pendingList) return;
-    window.ingrid.pendingList(AGENT).then(render).catch(function () {});
+    if (!window.ingrid) return;
+    var p1 = window.ingrid.pendingList ? window.ingrid.pendingList(AGENT).catch(function () { return null; }) : Promise.resolve(null);
+    var p2 = window.ingrid.questionList ? window.ingrid.questionList(AGENT).catch(function () { return null; }) : Promise.resolve(null);
+    Promise.all([p1, p2]).then(function (rs) {
+      if (rs[0]) render(rs[0]);
+      if (rs[1]) renderQuestions(rs[1]);
+      updateFabBadge();
+    });
+  }
+  function refreshQuestions() {
+    if (!window.ingrid || !window.ingrid.questionList) return;
+    window.ingrid.questionList(AGENT).then(renderQuestions).catch(function () {});
   }
   function scan() {
     if (!window.ingrid || !window.ingrid.pendingScan) return;
     window.ingrid.pendingScan(AGENT).then(function () { refresh(); }).catch(function () { refresh(); });
+  }
+  function discover() {
+    if (!window.ingrid || !window.ingrid.questionDiscover) return;
+    var btn = qBodyEl ? qBodyEl.querySelector('[data-act="discover"]') : null;
+    if (btn) btn.disabled = true;
+    window.ingrid.questionDiscover(AGENT).then(function (r) {
+      if (r && !r.ok && r.error) alert('发掘失败：' + r.error);
+      refresh();
+    }).catch(function () { refresh(); }).then(function () { if (btn) btn.disabled = false; });
   }
 
   function init(opts) {
@@ -341,6 +505,9 @@
     if (window.ingrid && window.ingrid.onPendingChanged) {
       window.ingrid.onPendingChanged(function () { refresh(); });
     }
+    if (window.ingrid && window.ingrid.onQuestionChanged) {
+      window.ingrid.onQuestionChanged(function () { refresh(); });
+    }
     // 监听自动托管进度广播（只响应本 agent）
     if (window.ingrid && window.ingrid.onAutopilotChanged) {
       window.ingrid.onAutopilotChanged(function (d) {
@@ -351,5 +518,5 @@
     }
   }
 
-  global.PendingPanel = { init: init, refresh: refresh, scan: scan };
+  global.PendingPanel = { init: init, refresh: refresh, refreshQuestions: refreshQuestions, scan: scan, discover: discover };
 })(window);

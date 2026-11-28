@@ -2228,11 +2228,13 @@ ipcMain.handle('chat:history:save', (_e, name, data) => {
     // 支持多会话结构 { v, sessions, activeId }，也兼容旧的扁平数组
     fs.writeFileSync(chatHistoryFile(name), JSON.stringify(data == null ? [] : data, null, 2), 'utf8');
     // 待办捕获官：保存后异步同步该 agent（正则扫历史=建议来源）；研究助手额外解析显式清单（显式来源）
+    // 相关问题发掘官：节流自动发掘高价值相关问题（发散思维，随对话不断更新）
     setImmediate(() => {
       try {
         scanAgentPending(name);
         if (name === '研究助手') { parseExplicitTodoFile(); scheduleApprovalsRefresh(); }
         broadcast('pending:changed', {});
+        maybeDiscoverQuestions(name);
       } catch { /* 同步失败不阻断 */ }
     });
     return true;
@@ -2254,6 +2256,134 @@ function getPendingTracker() {
     save: (state) => writeJson('todos.json', state),
   });
   return _pendingTracker;
+}
+
+// —— 相关问题清单（发散式发掘，独立于待办）——
+let _questionTracker = null;
+function getQuestionTracker() {
+  if (_questionTracker) return _questionTracker;
+  _questionTracker = new PendingTrackerCore.PendingTracker({
+    load: () => readJson('questions.json', null),
+    save: (state) => writeJson('questions.json', state),
+  });
+  return _questionTracker;
+}
+
+// 按清单种类取 tracker：todo → 待办；question → 相关问题
+function trackerFor(kind) {
+  return kind === 'question' ? getQuestionTracker() : getPendingTracker();
+}
+
+// 核心目的与需求锚点：优先取监事（supervisor.json）里启用的核心需求。
+function coreGoals() {
+  const s = readJson('supervisor.json', { goals: [] });
+  return (Array.isArray(s.goals) ? s.goals : [])
+    .filter((g) => g && g.text && g.active !== false)
+    .map((g) => String(g.text).trim())
+    .filter(Boolean);
+}
+
+// 聚合某 agent 的近期工作背景（供发散发掘做上下文）：会话标题 + 最近若干条对话 + 未完成待办 + 已有问题
+function gatherQuestionContext(agent) {
+  const parts = [];
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(chatHistoryFile(agent), 'utf8')); } catch { raw = null; }
+  const sessions = Array.isArray(raw) ? [{ title: '', messages: raw }] : ((raw && raw.sessions) || []);
+  const recent = sessions.slice(0, 5);
+  const titles = recent.map((s) => String((s && s.title) || '').trim()).filter(Boolean);
+  if (titles.length) parts.push('最近会话：' + titles.join('、'));
+  const msgs = [];
+  recent.forEach((s) => {
+    const list = (s && s.messages) || [];
+    for (let i = list.length - 1; i >= 0 && msgs.length < 12; i--) {
+      if (list[i] && list[i].content) msgs.unshift(list[i].content);
+    }
+  });
+  if (msgs.length) parts.push('近期对话片段：\n' + msgs.map((m) => String(m).slice(0, 300)).join('\n---\n'));
+  const todos = getPendingTracker().open(agent).slice(0, 8).map((x) => x.title);
+  if (todos.length) parts.push('未完成待办：' + todos.join('；'));
+  const qs = getQuestionTracker().open(agent).map((x) => x.title);
+  if (qs.length) parts.push('已有相关问题（避免重复）：' + qs.join('；'));
+  return parts.join('\n');
+}
+
+// 把发掘出的列表逐条入库（去重 + 打「discovered」来源标记）
+function discoverQuestionsFromList(agent, list) {
+  const tracker = getQuestionTracker();
+  let added = 0, skipped = 0;
+  (Array.isArray(list) ? list : []).forEach((q) => {
+    const title = String((q && (q.q || q.title)) || '').trim();
+    if (!title) return;
+    const res = tracker.addQuestion({
+      title: title,
+      value: String((q && (q.why || q.value)) || ''),
+      anchor: String((q && (q.anchor || q.purpose)) || ''),
+      agent: agent || '',
+      source: 'discovered',
+    });
+    if (res && res.added) added++; else skipped++;
+  });
+  return { ok: true, added: added, skipped: skipped, open: tracker.open(agent || '').length };
+}
+
+// 发散发掘：一次 cheap LLM（deepseek-flash），围绕核心目的 + 近期工作背景，产出 3~6 个高价值相关问题
+async function discoverQuestions(agent, opts) {
+  opts = opts || {};
+  const anchor = coreGoals();
+  const anchorText = anchor.length ? anchor.map((g, i) => (i + 1) + '. ' + g).join('\n') : '';
+  const ctx = gatherQuestionContext(agent);
+  const prompt = [
+    '你是「问题发掘官」。用发散性思维，围绕用户的核心目的与需求，发掘对用户有较大价值的「相关问题」。',
+    '注意：这里是「值得想清楚 / 值得进一步研究的问题」，不是待办任务。',
+    '',
+    '【用户核心目的与需求（锚点，务必对齐）】',
+    anchorText || '（监事里尚未设定核心需求，请结合下方工作背景推断用户长期关切）',
+    '',
+    '【agent「' + agent + '」近期工作与对话背景】',
+    ctx || '（暂无对话背景）',
+    '',
+    '请发散思考，找出 3~6 个对用户价值最大的相关问题。要求：',
+    '1. 必须锚定上面的核心目的/需求，不跑题；',
+    '2. 要「发散」——跳出当前任务细节，想用户接下来真正需要想清楚的问题（风险、前置条件、更优路径、被忽略的假设、长期影响、跨领域关联、下一步决策等）；',
+    '3. 每个问题一句话说清，且值得被真正研究/回答；',
+    '4. 与「已有相关问题」不重复。',
+    '',
+    '只输出一个 JSON 数组，不要其他任何文字：',
+    '[{"q":"问题","why":"为什么对用户有价值（一句话）","anchor":"锚定的核心目的（简短引用，可省略）"}]',
+  ].join('\n');
+  const r = await callBgChat('deepseek', '', [{ role: 'user', content: prompt }], null);
+  if (!r || !r.ok || !r.text) return { ok: false, error: '发掘调用失败：' + String((r && r.error) || '无返回') };
+  const raw = String(r.text).trim();
+  // 健壮解析：直接 JSON → ```json 代码块 → 裸数组块 → 包了 {questions:[...]} 的对象
+  let arr = null;
+  try { arr = JSON.parse(raw); } catch { /* 继续 */ }
+  if (!Array.isArray(arr)) {
+    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) { try { arr = JSON.parse(fence[1].trim()); } catch { arr = null; } }
+  }
+  if (!Array.isArray(arr)) {
+    const m = raw.match(/\[[\s\S]*\]/);
+    if (m) { try { arr = JSON.parse(m[0]); } catch { arr = null; } }
+  }
+  if (!Array.isArray(arr)) {
+    const obj = extractJsonText(raw);
+    if (obj && Array.isArray(obj.questions)) arr = obj.questions;
+  }
+  if (!Array.isArray(arr)) return { ok: false, error: '发掘结果无法解析为列表', raw: raw.slice(0, 200) };
+  return discoverQuestionsFromList(agent, arr);
+}
+
+const _questionDiscoverAt = {};   // { [agent]: 上次自动发掘时刻 }
+// 节流自动发掘：agent 对话保存后触发，约 3 分钟冷却，避免每次回复都烧一次 LLM。
+function maybeDiscoverQuestions(agent) {
+  if (!agent) return;
+  const now = Date.now();
+  const last = _questionDiscoverAt[agent] || 0;
+  if (now - last < 3 * 60 * 1000) return;
+  _questionDiscoverAt[agent] = now;
+  discoverQuestions(agent).then((r) => {
+    if (r && r.added > 0) broadcast('question:changed', {});
+  }).catch(() => {});
 }
 
 // 扫描某个 agent 的聊天历史，把「未完成/未开始/未查到」提炼进清单（幂等，可反复全量扫）。
@@ -2321,42 +2451,66 @@ ipcMain.handle('pending:confirm', (_e, id) => { const r = getPendingTracker().co
 ipcMain.handle('pending:remove', (_e, id) => { const r = getPendingTracker().remove(id); broadcast('pending:changed', {}); return r; });
 ipcMain.handle('pending:clear-done', (_e, agent) => { const t = getPendingTracker(); t.done(agent || '').forEach((x) => t.remove(x.id)); broadcast('pending:changed', {}); return true; });
 ipcMain.handle('pending:scan', (_e, agent) => { const r = agent ? scanAgentPending(agent) : scanAllPending(); broadcast('pending:changed', {}); return r; });
+
+/* ---------------- 相关问题清单 IPC（发散发掘 + 闭环，与待办并行） ---------------- */
+ipcMain.handle('question:list', (_e, agent) => {
+  const t = getQuestionTracker();
+  const a = agent || '';
+  return { open: t.open(a), done: t.done(a), agents: t.agents(), summary: t.summary(a) };
+});
+ipcMain.handle('question:summary', (_e, agent) => getQuestionTracker().summary(agent || ''));
+ipcMain.handle('question:add', (_e, agent, q) => { const r = getQuestionTracker().addQuestion(Object.assign({}, q || {}, { agent })); broadcast('question:changed', {}); return r; });
+ipcMain.handle('question:complete', (_e, id) => { const r = getQuestionTracker().complete(id); broadcast('question:changed', {}); return r; });
+ipcMain.handle('question:reopen', (_e, id) => { const r = getQuestionTracker().reopen(id); broadcast('question:changed', {}); return r; });
+ipcMain.handle('question:remove', (_e, id) => { const r = getQuestionTracker().remove(id); broadcast('question:changed', {}); return r; });
+ipcMain.handle('question:clear-done', (_e, agent) => { const t = getQuestionTracker(); t.done(agent || '').forEach((x) => t.remove(x.id)); broadcast('question:changed', {}); return true; });
+ipcMain.handle('question:discover', async (_e, agent) => { const r = await discoverQuestions(agent || ''); broadcast('question:changed', {}); return r; });
+ipcMain.handle('question:dispatch', async (_e, id) => dispatchListItem(id, 'question'));
+
 // 点击待办 → 派发给对应 agent 后台自主执行（全自动闭环：跑完自动判断做完/卡住并回写）
 // 建会话 + 入队 + 标记执行中 + 广播（手动点▶ 与自动托管共用），返回后台任务票据
-function enqueuePendingDispatch(item) {
+function enqueuePendingDispatch(item, kind) {
+  kind = kind || 'todo';
   const engine = agentEngineByName(item.agent) || 'deepseek';
-  const goal = buildPendingGoal(item);
+  const goal = buildPendingGoal(item, kind);
   // 留聊天记录：为本次派发新建一个会话，记下「派发指令」，执行结果在收尾时追加
-  const sessionId = appendDispatchSession(item.agent, item.title, goal);
+  const label = kind === 'question' ? '【相关问题】' : '【待办】';
+  const sessionId = appendDispatchSession(item.agent, label + item.title, goal);
   const ticket = getTaskQueue().enqueue({
     title: item.title,
     goal: goal,
     agent: item.agent,
     engine: engine,
     pendingId: item.id,
+    pendingKind: kind,
     chatSessionId: sessionId,
   });
-  getPendingTracker().markRunning(item.id);
+  trackerFor(kind).markRunning(item.id);
   broadcast('pending:changed', {});
+  broadcast('question:changed', {});
   // 通知对应助手页面刷新会话列表并选中本次派发新建的会话（让用户看到「弹出新聊天」）
   broadcast('chat:session-updated', { agent: item.agent, sessionId });
   broadcastTasks();
   return ticket;
 }
 
-ipcMain.handle('pending:dispatch', async (_e, id) => {
-  const tracker = getPendingTracker();
+// 派发清单项（待办 / 相关问题）给后台自主执行
+function dispatchListItem(id, kind) {
+  kind = kind || 'todo';
+  const tracker = trackerFor(kind);
   const item = tracker.find(id);
-  if (!item) return { ok: false, error: '待办不存在（可能已处理）' };
-  if (item.running) return { ok: false, error: '该待办正在执行中，请稍候' };
-  const ticket = enqueuePendingDispatch(item);
+  if (!item) return Promise.resolve({ ok: false, error: '条目不存在（可能已处理）' });
+  if (item.running) return Promise.resolve({ ok: false, error: '该条目正在执行中，请稍候' });
+  const ticket = enqueuePendingDispatch(item, kind);
   runBackgroundTask(ticket).catch((e) => {
     getTaskQueue().fail(ticket.id, String((e && e.message) || e));
     settlePendingAfterBgTask(ticket, 'failed', String((e && e.message) || e));
     broadcastTasks();
   });
-  return { ok: true, ticketId: ticket.id, chatSessionId: ticket.chatSessionId };
-});
+  return Promise.resolve({ ok: true, ticketId: ticket.id, chatSessionId: ticket.chatSessionId });
+}
+
+ipcMain.handle('pending:dispatch', async (_e, id) => dispatchListItem(id, 'todo'));
 
 /* ---------------- 自动托管：一键派发所有未完成待办，逐条推进直至全部打勾或卡住 ---------------- */
 const autopilotState = {};   // { [agent]: { active, stopRequested, done, blocked, current, attempted:Set, log:[] } }
@@ -2366,42 +2520,47 @@ function broadcastAutopilot(agent) {
   broadcast('autopilot:changed', st ? {
     agent: agent, active: st.active, stopRequested: st.stopRequested,
     done: st.done, blocked: st.blocked, current: st.current,
+    kinds: (st.kinds && st.kinds.length) ? st.kinds : ['todo'],
     log: (st.log || []).slice(-60),
-  } : { agent: agent, active: false, done: 0, blocked: 0, current: '', log: [] });
+  } : { agent: agent, active: false, done: 0, blocked: 0, current: '', kinds: ['todo'], log: [] });
 }
 
-// 自动托管主循环：反复取「下一条显式未完成」→ 派发 → await 跑完 → 结算，直到无进展或用户叫停。
-async function runAutopilot(agent) {
-  const st = autopilotState[agent] = { active: true, stopRequested: false, done: 0, blocked: 0, current: '', attempted: new Set(), log: [] };
+// 自动托管主循环：按勾选的清单（待办 / 相关问题）反复取「下一条未完成」→ 派发 → await 跑完 → 结算，
+// 直到无进展或用户叫停。
+async function runAutopilot(agent, kinds) {
+  const k = Array.isArray(kinds) && kinds.length ? kinds : ['todo'];
+  const st = autopilotState[agent] = { active: true, stopRequested: false, done: 0, blocked: 0, current: '', attempted: new Set(), log: [], kinds: k };
   broadcastAutopilot(agent);
-  const tracker = getPendingTracker();
   try {
     let guard = 0;
-    while (!st.stopRequested && guard++ < 500) {
-      // 只自动推进「显式」未完成项；suggested（待确认）与已尝试过卡住的项跳过，避免误判与死循环
-      const open = tracker.open(agent).filter((x) => x.source !== 'suggested' && !x.running && !st.attempted.has(x.id));
-      if (!open.length) break;
-      const item = open[0];
-      st.attempted.add(item.id);
-      st.current = item.title;
+    while (!st.stopRequested && guard++ < 800) {
+      // 只自动推进「显式/正式」未完成项；suggested（待确认）与已尝试过卡住的项跳过，避免误判与死循环
+      let items = [];
+      if (k.indexOf('todo') >= 0) items = items.concat(getPendingTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'todo' })));
+      if (k.indexOf('question') >= 0) items = items.concat(getQuestionTracker().open(agent).map((x) => Object.assign({}, x, { kind: 'question' })));
+      items = items.filter((x) => x.source !== 'suggested' && !x.running && !st.attempted.has(x.kind + ':' + x.id));
+      if (!items.length) break;
+      const item = items[0];
+      st.attempted.add(item.kind + ':' + item.id);
+      st.current = (item.kind === 'question' ? '❓ ' : '') + item.title;
       broadcastAutopilot(agent);
       let ticket;
-      try { ticket = enqueuePendingDispatch(item); }
+      try { ticket = enqueuePendingDispatch(item, item.kind); }
       catch (e) {
         st.blocked++;
         st.current = '';
-        st.log.push({ title: item.title, verdict: 'blocked', reason: String((e && e.message) || e) });
+        st.log.push({ title: item.title, kind: item.kind, verdict: 'blocked', reason: String((e && e.message) || e) });
         broadcastAutopilot(agent);
         continue;
       }
       await runBackgroundTask(ticket);
-      const settled = tracker.find(item.id);
+      const settled = trackerFor(item.kind).find(item.id);
       if (settled && settled.status === 'done') {
         st.done++;
-        st.log.push({ title: item.title, verdict: 'done' });
+        st.log.push({ title: item.title, kind: item.kind, verdict: 'done' });
       } else {
         st.blocked++;
-        st.log.push({ title: item.title, verdict: 'blocked', reason: (settled && settled.lastError) || '' });
+        st.log.push({ title: item.title, kind: item.kind, verdict: 'blocked', reason: (settled && settled.lastError) || '' });
       }
       st.current = '';
       broadcastAutopilot(agent);
@@ -2414,14 +2573,16 @@ async function runAutopilot(agent) {
   return { ok: true, done: st.done, blocked: st.blocked, log: st.log };
 }
 
-ipcMain.handle('pending:autopilot', async (_e, agent) => {
+ipcMain.handle('pending:autopilot', async (_e, agent, kinds) => {
   const a = String(agent || '').trim();
   if (!a) return { ok: false, error: '缺少 agent' };
   const st = autopilotState[a];
   if (st && st.active) return { ok: false, error: '自动托管已在运行中' };
+  const k = Array.isArray(kinds) && kinds.length ? kinds.filter((x) => x === 'todo' || x === 'question') : ['todo'];
+  if (!k.length) return { ok: false, error: '至少勾选一种清单' };
   // 后台跑，不阻塞 IPC；进度/结束通过 autopilot:changed 广播给前端
-  runAutopilot(a).catch((e) => { console.error('autopilot error', e); });
-  return { ok: true, started: true };
+  runAutopilot(a, k).catch((e) => { console.error('autopilot error', e); });
+  return { ok: true, started: true, kinds: k };
 });
 
 ipcMain.handle('pending:autopilot:stop', (_e, agent) => {
@@ -3114,13 +3275,23 @@ function agentEngineByName(name) {
   return a && a.engine ? a.engine : null;
 }
 
-// 把待办项转成清晰的任务目标（标题 + 背景线索）
-function buildPendingGoal(item) {
+// 把清单项转成清晰的任务目标（待办=完成；问题=回答并给出依据）
+function buildPendingGoal(item, kind) {
   const t = String(item.title || '').trim();
-  const ev = String(item.evidence || '').trim();
-  const parts = ['请完成下面这条待办：', t];
-  if (ev) parts.push('', '背景/线索：' + ev.slice(0, 400));
-  parts.push('', '做完后在结尾标注完成状态（【完成】或【未完成】原因）。');
+  const parts = [];
+  if (kind === 'question') {
+    parts.push('请深入思考并回答下面这个相关问题，给出有依据、可落地的答案：');
+    parts.push(t);
+    if (item.value) parts.push('', '这个问题为什么重要：' + String(item.value).slice(0, 200));
+    if (item.anchor) parts.push('锚定的核心目的：' + String(item.anchor).slice(0, 200));
+    parts.push('', '回答完后在结尾标注完成状态（【完成】或【未完成】原因）。');
+  } else {
+    const ev = String(item.evidence || '').trim();
+    parts.push('请完成下面这条待办：');
+    parts.push(t);
+    if (ev) parts.push('', '背景/线索：' + ev.slice(0, 400));
+    parts.push('', '做完后在结尾标注完成状态（【完成】或【未完成】原因）。');
+  }
   return parts.join('\n');
 }
 
@@ -3211,17 +3382,22 @@ function appendDispatchResult(agent, sessionId, content) {
   try { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); } catch { /* 写入失败不阻断 */ }
 }
 
-// 后台任务跑完后回写来源待办：done → 自动打勾；failed/blocked → 保留并记录原因
+// 后台任务跑完后回写来源清单：done → 自动打勾（问题记录答案）；failed/blocked → 保留并记录原因
 async function settlePendingAfterBgTask(ticket, outcome, payload) {
-  if (!ticket || !ticket.pendingId) return;   // 非待办派发的任务不回写
-  const tracker = getPendingTracker();
+  if (!ticket || !ticket.pendingId) return;   // 非清单派发的任务不回写
+  const kind = ticket.pendingKind || 'todo';
+  const tracker = trackerFor(kind);
   const item = tracker.find(ticket.pendingId);
-  if (!item) return;                          // 待办已被删除，跳过
+  if (!item) return;                          // 条目已被删除，跳过
   if (outcome === 'failed') {
     tracker.settle(ticket.pendingId, 'blocked', '执行失败：' + String(payload || ''));
   } else {
     const verdict = await judgePendingDone(ticket, payload);
-    tracker.settle(ticket.pendingId, verdict.verdict, verdict.reason);
+    if (kind === 'question' && verdict.verdict === 'done') {
+      tracker.answer(ticket.pendingId, payload);   // 问题：记录答案并打勾
+    } else {
+      tracker.settle(ticket.pendingId, verdict.verdict, verdict.reason);
+    }
   }
   // 留聊天记录：把执行结果追加到本次派发的会话（成功写最终输出，失败写错误）
   if (ticket.chatSessionId) {
@@ -3233,6 +3409,7 @@ async function settlePendingAfterBgTask(ticket, outcome, payload) {
     broadcast('chat:session-updated', { agent: ticket.agent, sessionId: ticket.chatSessionId });
   }
   broadcast('pending:changed', {});
+  broadcast('question:changed', {});
 }
 
 /* ---------------- 后台任务 Watchdog：定时巡检卡死任务（吸收 dsh 自愈思想） ---------------- */
