@@ -549,6 +549,18 @@
   el('enroll-input').addEventListener('change', function (e) { var f = e.target.files[0]; e.target.value = ''; if (f) doEnroll(f); });
   el('btn-enroll-rec').addEventListener('click', function () { if (enrolling) stopEnrollRec(); else startEnrollRec(); });
   el('btn-video').addEventListener('click', doVideoSummary);
+  el('btn-video-pick').addEventListener('click', function () {
+    if (!window.ingrid || !window.ingrid.pickVideo) {
+      setStatus(el('video-status'), '当前环境不支持选择本地文件，请直接粘贴文件路径', 'err');
+      return;
+    }
+    setStatus(el('video-status'), '正在打开文件选择框…');
+    window.ingrid.pickVideo().then(function (r) {
+      if (!r || !r.ok) { if (!(r && r.canceled)) setStatus(el('video-status'), '选择文件失败：' + ((r && r.error) || '未知'), 'err'); return; }
+      el('video-url').value = r.path;
+      doVideoSummary();
+    }).catch(function (e) { setStatus(el('video-status'), '选择文件失败：' + e.message, 'err'); });
+  });
 
   /* ============ 左侧功能导航切换 ============ */
   var navItems = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));

@@ -3492,7 +3492,8 @@ async function callBgChat(engine, model, messages, tools) {
   }
 }
 
-// 后台任务主循环：单任务独立会话，最多 40 轮工具，完成/失败/需决策时落库并通知
+// 后台任务主循环：单任务独立会话，最多 120 轮工具（重型研究任务如多期刊逐项比对需要更多轮次），
+// 完成/失败/需决策时落库并通知。连续失败/空回复有独立熔断，不会因放宽轮次而死循环。
 async function runBackgroundTask(ticket) {
   const q = getTaskQueue();
   const engine = String(ticket.engine || 'deepseek');
@@ -3519,7 +3520,7 @@ async function runBackgroundTask(ticket) {
     msgs.push({ role: 'user', content: String(ticket.goal || ticket.title || '') });
   }
 
-  const MAX_ROUNDS = 40;
+  const MAX_ROUNDS = 120;
   let failStreak = 0;
   let emptyStreak = 0;
 
@@ -7210,6 +7211,21 @@ async function speakMinutes(text) {
   return { ok: true, voice: voice || '系统默认' };
 }
 ipcMain.handle('meeting:speak', (_e, text) => speakMinutes(text));
+// 会议纪要官「视频总结」：弹系统文件框选本地视频/音频，返回磁盘真实路径（交给后端 video_fetch 走 ASR）
+ipcMain.handle('meeting:pick-video', async () => {
+  try {
+    const r = await dialog.showOpenDialog({
+      title: '选择要总结的视频或音频文件',
+      properties: ['openFile'],
+      filters: [
+        { name: '视频 / 音频', extensions: ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'flv', 'mp3', 'm4a', 'wav', 'flac', 'ogg', 'aac', 'ts', 'wmv'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, path: r.filePaths[0] };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
 ipcMain.handle('tool:db:query', async (_e, p) => {
   const q = String((p && p.query) || '').trim();
   const k = Math.min(Math.max(parseInt((p && p.k), 10) || 5, 1), 10);

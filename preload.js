@@ -205,6 +205,8 @@ contextBridge.exposeInMainWorld('ingrid', {
 
   // 会议纪要官：朗读纪要（macOS 原生 TTS，本地合成不上云）
   speak: (text) => ipcRenderer.invoke('meeting:speak', text),
+  // 会议纪要官：视频总结「选择本地视频」——弹系统文件框返回磁盘路径
+  pickVideo: () => ipcRenderer.invoke('meeting:pick-video'),
 
   // 工具能力（文件 / 数据库；读安全白名单，写需审批）
   toolFsList: (payload) => ipcRenderer.invoke('tool:fs:list', payload),
