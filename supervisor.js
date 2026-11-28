@@ -90,6 +90,7 @@
     '.sup-goal .d:hover{color:var(--danger);}',
     '.sup-add{display:flex;gap:6px;margin-bottom:8px;}',
     '.sup-add button{flex:none;padding:7px 11px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;}',
+    '.sup-row2{display:flex;gap:6px;margin-bottom:8px;}',
     '.sup-btn{width:100%;padding:8px 12px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:650;cursor:pointer;}',
     '.sup-btn:hover{background:var(--accent-2);}',
     '.sup-btn.ghost{background:#fff;color:var(--ink-soft);border:1px solid var(--line);}',
@@ -139,9 +140,13 @@
     '</div>' +
     '<div class="sup-body" id="supBody">' +
       '<div class="sup-pane" data-pane="needs">' +
-        '<div class="sup-sec"><label>核心需求 · 自动梳理</label><div id="supGoals"></div>' +
+        '<div class="sup-sec"><label>核心需求 · 自动 + 手动双管道</label><div id="supGoals"></div>' +
           '<div class="sup-add"><input type="text" id="supGoalInput" placeholder="手动补充一条核心需求…"><button id="supGoalAdd">＋</button></div>' +
-          '<div class="sup-hint">需求会随 agent 工作自动梳理、动态更新，无需手动触发；这里只需手动补充。</div></div>' +
+          '<div class="sup-row2">' +
+            '<button class="sup-btn ghost" id="supSynthesize" style="flex:1">✨ 立即梳理</button>' +
+            '<button class="sup-btn ghost" id="supClarify" style="flex:1">💬 对话确认</button>' +
+          '</div>' +
+          '<div class="sup-hint">自动：随 agent 工作动态梳理；手动：补充 / 立即梳理 / 对话确认。</div></div>' +
       '</div>' +
       '<div class="sup-pane hide" data-pane="roadmap">' +
         '<div class="sup-sec"><label>路线图 · 大方向</label><div id="supRoadmap"></div>' +
@@ -190,7 +195,7 @@
     var box = document.getElementById('supGoals');
     var list = goals.list();
     if (!list.length) {
-      box.innerHTML = '<div class="sup-empty">还没有核心需求。点下方「对话确认需求」，或直接新增一条。</div>';
+      box.innerHTML = '<div class="sup-empty">还没有核心需求。会自动梳理生成，也可点「✨ 立即梳理」或「💬 对话确认」，或直接在下方手动补充。</div>';
     } else {
       box.innerHTML = list.map(function (g) {
         var tag = g.agent ? '<span class="g-agent" title="仅对该 agent 生效">' + esc(g.agent) + '</span>' : '';
@@ -304,6 +309,27 @@
   document.getElementById('supGoalInput').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { addGoal(this.value); this.value = ''; }
   });
+
+  // 手动管道①：立即梳理（调用主进程「需求梳理官」，一次 LLM 动态合并需求）
+  document.getElementById('supSynthesize').addEventListener('click', function () {
+    if (!DESKTOP || !window.ingrid.synthesizeRun) { alert('当前环境不支持'); return; }
+    var btn = this;
+    btn.disabled = true; btn.textContent = '✨ 梳理中…';
+    window.ingrid.synthesizeRun().then(function (r) {
+      if (r && r.ok) {
+        sup.addLog('ok', '需求梳理：新增 ' + r.added + ' / 更新 ' + r.updated + ' / 停用 ' + r.deactivated);
+        if (r.summary) sup.addLog('info', '梳理结论：' + r.summary);
+        reloadGoals(); renderLog();
+      } else {
+        sup.addLog('warn', '需求梳理失败：' + String((r && r.error) || '未知错误'));
+        renderLog();
+      }
+    }).catch(function (e) { sup.addLog('warn', '需求梳理异常：' + String((e && e.message) || e)); renderLog(); })
+      .then(function () { btn.disabled = false; btn.textContent = '✨ 立即梳理'; });
+  });
+
+  // 手动管道②：对话确认（先把模糊需求讲清楚，再写入核心需求）
+  document.getElementById('supClarify').addEventListener('click', openClarify);
 
   document.getElementById('supActive').addEventListener('change', function (e) {
     goals.setActive(e.target.checked);
