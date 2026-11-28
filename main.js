@@ -2341,6 +2341,8 @@ ipcMain.handle('pending:dispatch', async (_e, id) => {
   });
   tracker.markRunning(item.id);
   broadcast('pending:changed', {});
+  // 通知研究助手页面刷新会话列表并选中本次派发新建的会话（让用户看到「弹出新聊天」）
+  broadcast('chat:session-updated', { agent: item.agent, sessionId });
   broadcastTasks();
   runBackgroundTask(ticket).catch((e) => {
     getTaskQueue().fail(ticket.id, String((e && e.message) || e));
@@ -3147,6 +3149,8 @@ async function settlePendingAfterBgTask(ticket, outcome, payload) {
       ? '执行失败：' + String(payload || '')
       : String(payload || '');
     appendDispatchResult(ticket.agent, ticket.chatSessionId, resultText);
+    // 结果追加后再次通知前端刷新，让会话里实时显示执行结果
+    broadcast('chat:session-updated', { agent: ticket.agent, sessionId: ticket.chatSessionId });
   }
   broadcast('pending:changed', {});
 }

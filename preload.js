@@ -315,6 +315,7 @@ contextBridge.exposeInMainWorld('ingrid', {
   pendingScan: (agent) => ipcRenderer.invoke('pending:scan', agent),
   pendingDispatch: (id) => ipcRenderer.invoke('pending:dispatch', id),
   onPendingChanged: (cb) => ipcRenderer.on('pending:changed', (_e, d) => { if (cb) cb(d || {}); }),
+  onChatSessionUpdated: (cb) => ipcRenderer.on('chat:session-updated', (_e, d) => { if (cb) cb(d || {}); }),
 
   // Agent 治理官（只读盘点 + 重叠检测 + 对账）
   governanceReport: () => ipcRenderer.invoke('governance:report'),
