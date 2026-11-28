@@ -712,8 +712,20 @@ function createMainWindow() {
 const MEETING_AUDIO_PORT = 8950;
 
 function meetingAudioBackendCmd() {
-  const dir = path.join(__dirname, 'extensions', 'meeting_audio');
-  return { dir, py: path.join(dir, '.venv', 'bin', 'python'), main: path.join(dir, 'server.py') };
+  // 会议纪要官后端 Python 固定走工作台项目内的 .venv（用户在 Dev 目录跑 setup.sh 创建）。
+  // 打包成 .app 后 __dirname 指向 Contents/Resources/app，拿不到项目目录里的 venv，
+  // 故用 os.homedir() 拼绝对路径（项目固定在 ~/Dev/Ingrids-AI-Agents，与 venv_mermaid 同款处理）。
+  // 优先环境变量 MEETING_AUDIO_PY / MEETING_AUDIO_DIR 覆盖。
+  const home = os.homedir();
+  const devDir = path.join(home, 'Dev', 'Ingrids-AI-Agents', 'extensions', 'meeting_audio');
+  const relDir = path.join(__dirname, 'extensions', 'meeting_audio');
+  const dir = process.env.MEETING_AUDIO_DIR
+    || (fs.existsSync(path.join(devDir, '.venv', 'bin', 'python')) ? devDir : relDir);
+  return {
+    dir,
+    py: process.env.MEETING_AUDIO_PY || path.join(dir, '.venv', 'bin', 'python'),
+    main: path.join(dir, 'server.py'),
+  };
 }
 
 // 打开会议纪要官窗口前调用：若本机 8950 服务未在跑，就独立拉起后端（模型懒加载，启动即监听）。

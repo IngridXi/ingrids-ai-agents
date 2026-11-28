@@ -22,6 +22,7 @@ rsync -av \
   --exclude 'node_modules/' \
   --exclude '.git/' \
   --exclude '__pycache__/' \
+  --exclude '.venv/' \
   --exclude 'build/' \
   --exclude 'dist/' \
   --exclude 'data/' \
