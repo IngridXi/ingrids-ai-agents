@@ -2289,12 +2289,16 @@ function trackerFor(kind) {
 }
 
 // 核心目的与需求锚点：优先取监事（supervisor.json）里启用的核心需求。
-function coreGoals() {
+// 传 agent 时只返回「全局通用 + 该 agent 专属」需求，避免不同任务套同一套规则。
+function coreGoals(agent) {
   const s = readJson('supervisor.json', { goals: [] });
-  return (Array.isArray(s.goals) ? s.goals : [])
-    .filter((g) => g && g.text && g.active !== false)
-    .map((g) => String(g.text).trim())
-    .filter(Boolean);
+  const all = (Array.isArray(s.goals) ? s.goals : [])
+    .filter((g) => g && g.text && g.active !== false);
+  const name = String(agent || '').trim();
+  const picked = name
+    ? all.filter((g) => !String(g.agent || '').trim() || String(g.agent).trim() === name)
+    : all;
+  return picked.map((g) => String(g.text).trim()).filter(Boolean);
 }
 
 // 聚合某 agent 的近期工作背景（供发散发掘做上下文）：会话标题 + 最近若干条对话 + 未完成待办 + 已有问题
@@ -2459,7 +2463,7 @@ function gatherNeedsContext() {
 
 // 把 LLM 梳理出的结构化需求，动态合并进 supervisor.json（保留旧 id；新增/更新/显式停用）
 function mergeSynthesizedGoals(obj) {
-  const cur = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '' });
+  const cur = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '', corrections: {} });
   const existing = (Array.isArray(cur.goals) ? cur.goals : []).map((g) => Object.assign({}, g));
   const sim = PendingTrackerCore.similarEnough;
   const gid = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -2472,6 +2476,7 @@ function mergeSynthesizedGoals(obj) {
     const weight = Math.max(1, Math.min(3, Number(g.weight) || 2));
     const action = String(g.action || 'keep');
     const ref = String(g.ref || '').trim();
+    const agent = String(g.agent || '').trim();
     let target = ref ? findExisting(ref) : null;
     if (!target) target = findExisting(text);
 
@@ -2482,30 +2487,41 @@ function mergeSynthesizedGoals(obj) {
     if (target) {
       if (target.text !== text) { target.text = text; updated++; }
       if (Number(target.weight) !== weight) { target.weight = weight; updated++; }
+      if (agent && String(target.agent || '').trim() !== agent) { target.agent = agent; updated++; }
       target.active = true;
     } else {
-      existing.push({ id: gid(), text: text, weight: weight, active: true, createdAt: Date.now() });
+      existing.push({ id: gid(), text: text, weight: weight, active: true, agent: agent, createdAt: Date.now() });
       added++;
     }
   });
 
-  writeJson('supervisor.json', { goals: existing, active: cur.active !== false, lastCorrection: String(cur.lastCorrection || '') });
+  writeJson('supervisor.json', {
+    goals: existing, active: cur.active !== false,
+    lastCorrection: String(cur.lastCorrection || ''),
+    corrections: (cur.corrections && typeof cur.corrections === 'object') ? cur.corrections : {},
+  });
   return { ok: true, added: added, updated: updated, deactivated: deactivated, summary: String(obj.summary || ''), total: existing.filter((g) => g.active !== false).length };
 }
 
 async function synthesizeNeeds(opts) {
   opts = opts || {};
   const ctx = gatherNeedsContext();
+  const agents = executableAgentNames();
   const prompt = [
     '你是「需求梳理官」（监事团队的一员）。把用户的核心目的动态梳理成结构化需求。',
     '注意：用户的需求会随不同任务动态变化，不是一次生成就一劳永逸。结合近期工作，',
     '① 保留仍有效的需求；② 补充新浮现的需求；③ 更新措辞已变化的需求；④ 停用已过时/已完成的需求。',
+    '如果某条需求只适用于某个具体的 agent（例如只跟「研究助手」有关），给它标 agent；',
+    '凡是跨 agent 通用的、或只跟整体目标有关的，agent 留空（""）。',
+    '',
+    '【可标注的 agent（务必从中选，不要臆造；留空=全局通用）】',
+    agents.join('、'),
     '',
     '【当前状态】',
     ctx || '（暂无任何工作记录，请给出一份初始的结构化需求）',
     '',
     '只输出一个 JSON 对象，不要其他文字：',
-    '{"summary":"一句话说明本次梳理的结论","goals":[{"text":"需求描述（一句话、可验证）","weight":1|2|3,"action":"keep|add|update|deactivate","ref":"对应的旧需求原文（keep/update/deactivate 尽量给出，add 留空）"}]}',
+    '{"summary":"一句话说明本次梳理的结论","goals":[{"text":"需求描述（一句话、可验证）","weight":1|2|3,"action":"keep|add|update|deactivate","agent":"具体 agent 名或空字符串","ref":"对应的旧需求原文（keep/update/deactivate 尽量给出，add 留空）"}]}',
     '要求：需求结构化、可验证、锚定用户真正目的；weight=3 表示最高优先/核心；3~8 条，宁缺毋滥。',
   ].join('\n');
   const r = await callBgChat('deepseek', '', [{ role: 'user', content: prompt }], null);
@@ -5297,7 +5313,7 @@ ipcMain.handle('presets:save', (_e, list) => {
 
 /* ---------------- IPC：监事（核心需求 / 开关 / 纠偏） ---------------- */
 ipcMain.on('supervisor:list-sync', (e) => {
-  e.returnValue = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '' });
+  e.returnValue = readJson('supervisor.json', { goals: [], active: false, lastCorrection: '', corrections: {} });
 });
 ipcMain.handle('supervisor:save', (_e, state) => {
   if (!state || typeof state !== 'object') throw new Error('supervisor 状态格式错误');
@@ -5305,10 +5321,12 @@ ipcMain.handle('supervisor:save', (_e, state) => {
     goals: (Array.isArray(state.goals) ? state.goals : []).map((g) => ({
       id: String(g.id || ''), text: String(g.text || ''),
       weight: Math.max(1, Math.min(3, Number(g.weight) || 1)),
-      active: g.active !== false, createdAt: Number(g.createdAt) || Date.now(),
+      active: g.active !== false, agent: String(g.agent || '').trim(),
+      createdAt: Number(g.createdAt) || Date.now(),
     })).filter((g) => g.text),
     active: state.active !== false,
     lastCorrection: String(state.lastCorrection || ''),
+    corrections: (state.corrections && typeof state.corrections === 'object') ? state.corrections : {},
   };
   writeJson('supervisor.json', clean);
   return true;

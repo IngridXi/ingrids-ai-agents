@@ -835,19 +835,19 @@
     if (!ids.length) { tip('⚠ 请至少勾选一个目标 Agent'); return; }
     if (!task) { tip('⚠ 请填写任务内容'); return; }
 
-    // 监事开着时：把核心需求 + 纠偏提醒自动挂在本次任务前（不断提醒、防止跑偏）
-    var supRem = (typeof window.__supervisorReminder === 'function') ? window.__supervisorReminder() : '';
-    var finalTask = task;
-    if (supRem && task.indexOf('【监事 · 核心需求】') < 0) {
-      finalTask = supRem + '\n\n【任务】\n' + task;
-    }
+    // 监事开着时：按 agent 注入各自的「核心需求 + 纠偏」提醒（不同任务不被套同一套规则）
+    var taskFor = function (target) {
+      if (typeof window.__supervisorReminder !== 'function') return task;
+      var rem = window.__supervisorReminder(target && target.name) || '';
+      return (rem && task.indexOf('【监事 · 核心需求】') < 0) ? (rem + '\n\n【任务】\n' + task) : task;
+    };
 
     btn.disabled = true; btn.textContent = '执行中…'; tip('正在读取技能正文…');
     readBodies(selectedIds.slice()).then(function (entries) {
       var built = skills.buildContext(entries);
       if (built.truncated) tip('注意：技能正文过长已截断，注入 ' + built.tokens + ' token');
       return orch.delegate({
-        commanderId: cid, targetIds: ids, task: finalTask, mode: mode,
+        commanderId: cid, targetIds: ids, task: task, taskFor: taskFor, mode: mode,
         autoApprove: auto, dryRun: dryRun, taskType: 'general',
         skillIds: built.ids, skillContext: built.text, skillTokens: built.tokens,
       });

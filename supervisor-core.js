@@ -43,6 +43,8 @@
       text: String(g.text || ''),
       weight: Math.max(1, Math.min(3, Number(g.weight) || 1)),
       active: g.active !== false,
+      // agent 归属：'' = 全局通用；'研究助手' 等 = 只对该 agent 生效（避免不同任务套同一套规则）
+      agent: String(g.agent || '').trim(),
       createdAt: g.createdAt || Date.now(),
     };
   }
@@ -52,13 +54,16 @@
     this.goals = (Array.isArray(raw.goals) ? raw.goals : []).map(normalizeGoal);
     this.active = raw.active !== false;
     this.lastCorrection = String(raw.lastCorrection || '');
+    // 纠偏按 agent 隔离：A 的纠偏不会污染 B
+    this.corrections = (raw.corrections && typeof raw.corrections === 'object') ? raw.corrections : {};
     this._save();
   }
   GoalStore.prototype._save = function () {
     var self = this;
     try {
       this.storage.save({
-        goals: this.goals, active: this.active, lastCorrection: this.lastCorrection,
+        goals: this.goals, active: this.active,
+        lastCorrection: this.lastCorrection, corrections: this.corrections,
       });
     } catch (e) {}
     return this;
@@ -67,8 +72,8 @@
     return 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   };
   GoalStore.prototype.list = function () { return this.goals.slice(); };
-  GoalStore.prototype.add = function (text, weight) {
-    var g = normalizeGoal({ id: this._id(), text: text, weight: weight || 1, active: true });
+  GoalStore.prototype.add = function (text, weight, agent) {
+    var g = normalizeGoal({ id: this._id(), text: text, weight: weight || 1, active: true, agent: agent || '' });
     this.goals.push(g); this._save(); return g;
   };
   GoalStore.prototype.update = function (id, patch) {
@@ -87,6 +92,26 @@
   };
   GoalStore.prototype.setActive = function (on) { this.active = !!on; this._save(); return this; };
   GoalStore.prototype.setCorrection = function (text) { this.lastCorrection = String(text || ''); this._save(); return this; };
+  // 按 agent 取「该 agent 专属 + 全局通用」的启用需求（供监督/提醒，避免不同任务套同一套规则）
+  GoalStore.prototype.agentGoals = function (name) {
+    var n = String(name || '').trim();
+    return this.goals.filter(function (g) {
+      if (g.active === false) return false;
+      var ga = String(g.agent || '').trim();
+      return !ga || ga === n;
+    });
+  };
+  // 按 agent 隔离纠偏
+  GoalStore.prototype.getCorrection = function (name) {
+    var n = String(name || '').trim();
+    return String(this.corrections[n] || '').trim();
+  };
+  GoalStore.prototype.setCorrectionFor = function (name, text) {
+    var n = String(name || '').trim();
+    if (!n) this.lastCorrection = String(text || '');
+    else this.corrections[n] = String(text || '');
+    this._save(); return this;
+  };
 
   /* ---------- 2. 快路径：漂移检测（便宜、同步、无需模型） ---------- */
   // 中文用「二元组」重叠判断（与 skills-core 的 recommend 同一思路），
@@ -208,8 +233,11 @@
   };
   Supervisor.prototype.isActive = function () { return this.goals.active; };
   Supervisor.prototype.setActive = function (on) { this.goals.setActive(on); return this; };
-  Supervisor.prototype.reminder = function () {
-    return this.isActive() ? buildReminder(this.goals.list(), this.goals.lastCorrection) : '';
+  Supervisor.prototype.reminder = function (agentName) {
+    if (!this.isActive()) return '';
+    var goals = agentName ? this.goals.agentGoals(agentName) : this.goals.list();
+    var correction = agentName ? this.goals.getCorrection(agentName) : this.goals.lastCorrection;
+    return buildReminder(goals, correction);
   };
 
   /**
@@ -220,7 +248,8 @@
     var self = this;
     var text = (result && result.text) || '';
     var name = (result && result.agentName) || '工作 Agent';
-    var sig = fastDriftCheck(text, this.goals.list());
+    // 只对照「该 agent 专属 + 全局通用」需求，避免把别的 agent 的规则套到本 agent 上
+    var sig = fastDriftCheck(text, this.goals.agentGoals(name));
 
     if (!this.isActive()) {
       this.addLog('info', '监督已暂停，跳过「' + name + '」');
@@ -241,13 +270,13 @@
     var template = '请回到核心需求，纠正以下偏离：' + (sig.reasons.join('；') || '上一轮输出偏离了目标') +
       '。重做这一部分，并逐条对齐监事列出的每一条核心需求。';
     if (!this.executor || !this.realMode) {
-      this.goals.setCorrection(template);
+      this.goals.setCorrectionFor(name, template);
       this.addLog('correct', '↩ 纠偏（模板）：' + template);
       this.emit('corrected', { text: template, from: 'template' });
       return;
     }
-    // 慢路径：让监事用模型写一条更精准的纠偏指令
-    var activeGoals = this.goals.list().filter(function (g) { return g.active !== false; });
+    // 慢路径：让监事用模型写一条更精准的纠偏指令（只针对当前 agent，写入其专属纠偏）
+    var activeGoals = this.goals.agentGoals(name);
     var prompt = '你是监事。以下是用户的核心需求：\n' +
       activeGoals.map(function (g, i) { return (i + 1) + '. ' + g.text; }).join('\n') +
       '\n\n工作 Agent「' + name + '」在任务「' + String(task || '').slice(0, 500) + '」中产出了：\n' +
@@ -258,14 +287,14 @@
     this.executor(agent, prompt, ctx).then(function (res) {
       var reply = String((res && res.text) || '').trim();
       if (reply && !/^ok\b/i.test(reply)) {
-        self.goals.setCorrection(reply);
+        self.goals.setCorrectionFor(name, reply);
         self.addLog('correct', '↩ 纠偏（模型）：' + reply);
         self.emit('corrected', { text: reply, from: 'model' });
       } else {
         self.addLog('ok', '✓ 监事复核：' + name + ' 未偏离（模型判定）');
       }
     }).catch(function (e) {
-      self.goals.setCorrection(template);
+      self.goals.setCorrectionFor(name, template);
       self.addLog('correct', '↩ 纠偏（模板，模型调用失败）：' + template);
     });
   };

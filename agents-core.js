@@ -655,18 +655,20 @@
       return out;
     };
 
+    var taskFor = (typeof s.taskFor === 'function') ? s.taskFor : function () { return s.task; };
     var mode = s.mode || 'parallel';
     if (mode === 'parallel') {
-      return Promise.all(targets.map(function (t) { return self._runOne(t, s.task, s, commander); })).then(finish);
+      return Promise.all(targets.map(function (t) { return self._runOne(t, taskFor(t), s, commander); })).then(finish);
     }
     // sequential / chain：一个接一个；chain 会把上一个的结果拼进下一个的任务
     var results = [], chain = Promise.resolve();
     targets.forEach(function (t) {
       chain = chain.then(function () {
         var previous = mode === 'chain' && results[results.length - 1];
+        var base = taskFor(t);
         var task = previous && previous.text
-          ? s.task + '\n\n【上一位 Agent 的结果】\n' + previous.text
-          : s.task;
+          ? base + '\n\n【上一位 Agent 的结果】\n' + previous.text
+          : base;
         var opts = Object.assign({}, s, { previousId: previous && previous.text ? previous.agentId : '' });
         return self._runOne(t, task, opts, commander).then(function (r) { results.push(r); });
       });

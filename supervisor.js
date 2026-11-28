@@ -85,6 +85,7 @@
     '.sup-goal .gx{font-size:11px;line-height:1.45;flex:1;min-width:0;word-break:break-word;}',
     '.sup-goal.off .gx{text-decoration:line-through;color:var(--ink-faint);}',
     '.sup-goal .w{flex:none;font-size:9.5px;font-weight:700;color:var(--ink-soft);background:var(--accent-softer);padding:1px 5px;border-radius:6px;margin-top:1px;}',
+    '.sup-goal .g-agent{display:inline-block;font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:0 5px;border-radius:6px;margin-left:5px;vertical-align:1px;}',
     '.sup-goal .d{flex:none;font-size:13px;color:var(--ink-faint);cursor:pointer;padding:0 2px;}',
     '.sup-goal .d:hover{color:var(--danger);}',
     '.sup-add{display:flex;gap:6px;margin-bottom:8px;}',
@@ -192,9 +193,10 @@
       box.innerHTML = '<div class="sup-empty">还没有核心需求。点下方「对话确认需求」，或直接新增一条。</div>';
     } else {
       box.innerHTML = list.map(function (g) {
+        var tag = g.agent ? '<span class="g-agent" title="仅对该 agent 生效">' + esc(g.agent) + '</span>' : '';
         return '<div class="sup-goal' + (g.active ? '' : ' off') + '" data-id="' + esc(g.id) + '">' +
           '<span class="w">' + g.weight + '</span>' +
-          '<span class="gx">' + esc(g.text) + '</span>' +
+          '<span class="gx">' + esc(g.text) + tag + '</span>' +
           '<span class="d" title="停用/启用" data-act="toggle">' + (g.active ? '◉' : '○') + '</span>' +
           '<span class="d" title="删除" data-act="del">✕</span></div>';
       }).join('');
@@ -422,7 +424,7 @@
   /* ---------- 供调度中枢调用的接口 ---------- */
   window.__supervisor = sup;
   window.__supGoals = goals;
-  window.__supervisorReminder = function () { return sup.reminder(); };
+  window.__supervisorReminder = function (agentName) { return sup.reminder(agentName); };
   window.__superviseResult = function (r, task) {
     sup.realMode = realMode;
     if (supTarget !== '__all__' && supTarget !== '__orch__' && supTarget !== r.agentId) return;
