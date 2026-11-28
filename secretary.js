@@ -64,6 +64,13 @@
     '.sec-btns button:hover{background:rgba(255,255,255,.35);}',
     '.sec-body{padding:12px 13px;max-height:236px;overflow:auto;display:flex;flex-direction:column;gap:13px;}',
     '.sec-body.hide{display:none;}',
+    '.sec-tabs{display:flex;gap:4px;padding:9px 13px 0;flex:none;border-bottom:1px solid var(--line);}',
+    '.sec-tabs button{flex:1;padding:6px 6px;border:none;background:none;color:var(--ink-faint);font-size:11.5px;font-weight:650;cursor:pointer;border-radius:8px 8px 0 0;border-bottom:2px solid transparent;white-space:nowrap;}',
+    '.sec-tabs button:hover{color:var(--ink-soft);}',
+    '.sec-tabs button.active{color:var(--accent);border-bottom-color:var(--accent);}',
+    '.sec-pane{display:flex;flex-direction:column;gap:13px;}',
+    '.sec-pane.hide{display:none;}',
+    '.sec-tabs.hide{display:none;}',
     '.sec-sec label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:var(--ink-faint);margin-bottom:6px;text-transform:uppercase;}',
     '.sec-sec textarea,.sec-sec input[type=text],.sec-sec input[type=datetime-local]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:9px;font-size:12px;color:var(--ink);background:#fff;font-family:inherit;}',
     '.sec-sec textarea{resize:vertical;min-height:44px;line-height:1.5;}',
@@ -144,38 +151,52 @@
         '<button id="secMin" title="收起/展开">—</button>' +
       '</span>' +
     '</div>' +
+    '<div class="sec-tabs" id="secTabs">' +
+      '<button class="active" data-tab="chat">💬 对话</button>' +
+      '<button data-tab="events">📅 日程</button>' +
+      '<button data-tab="mail">✉️ 邮件</button>' +
+      '<button data-tab="kb">📚 知识库</button>' +
+    '</div>' +
     '<div class="sec-body" id="secBody">' +
-      '<div class="sec-sec"><label>随时告诉秘书你的想法</label>' +
-        '<textarea id="secThought" placeholder="例如：下周有个报告要交，帮我盯着点"></textarea>' +
-        '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
-        '<div class="sec-chat" id="secChat"></div></div>' +
-      '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 识别日程（图片＋链接）</button></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 手动添加</button>' +
-        '<button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历</button></div></div>' +
-      '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
-        '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook</button></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div>' +
-        '<div class="sec-bout" id="secMailOut" hidden></div>' +
-        '<div class="sec-row"><button class="sec-btn" id="secReadAppleMail" style="flex:1">' + iconSvg('mail') + ' 读取 Apple Mail 邮件 · 识别活动</button></div>' +
-        '<div class="sec-bout" id="secAppleMailOut" hidden></div></div>' +
-      '<div class="sec-sec"><label>短信 · 确认信息</label>' +
-        '<div class="sec-row"><button class="sec-btn" id="secReadSms" style="flex:1">' + iconSvg('message') + ' 读取短信 · 识别活动</button></div>' +
-        '<div class="sec-bout" id="secSmsOut" hidden></div>' +
-        '<div class="sec-bhint">读取本机 iMessage / 短信，识别「报名成功 / 已预订 / 出票」等确认信息并帮你加日程（需授权「完全磁盘访问权限」）。</div></div>' +
-      '<div class="sec-sec"><label>知识库</label>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('book') + ' 打开知识库（Notion · Obsidian）</button></div>' +
-        '<div class="sec-bout" id="secNotionOut" hidden></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secPerm" style="flex:1">' + iconSvg('lock') + ' 系统权限自检</button></div>' +
-        '<div class="sec-bout" id="secPermOut" hidden></div></div>' +
-      '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
-        '<div class="sec-row"><input type="text" id="secUrl" placeholder="粘贴网址，如 https://arxiv.org/abs/..." style="flex:1">' +
-        '<button class="sec-btn" id="secBrowse">打开</button></div>' +
-        '<div class="sec-row"><button class="sec-btn ghost" id="secBrowseShot">' + iconSvg('camera') + ' 截图</button>' +
-        '<button class="sec-btn ghost" id="secBrowseText">提取文本</button></div>' +
-        '<div class="sec-bout" id="secBrowseOut" hidden></div>' +
-        '<div class="sec-bhint">只读：打开网页 / 截图 / 取文本 · 不绕过验证码与登录</div></div>' +
+      '<div class="sec-pane" data-pane="chat">' +
+        '<div class="sec-sec"><label>随时告诉秘书你的想法</label>' +
+          '<textarea id="secThought" placeholder="例如：下周有个报告要交，帮我盯着点"></textarea>' +
+          '<div class="sec-row"><button class="sec-btn" id="secRemember">记住</button></div>' +
+          '<div class="sec-chat" id="secChat"></div></div>' +
+      '</div>' +
+      '<div class="sec-pane hide" data-pane="events">' +
+        '<div class="sec-sec"><label>日程 · 提醒</label><div class="sec-list" id="secEvents"></div>' +
+          '<div class="sec-row"><button class="sec-btn" id="secFromShot" style="flex:1">' + iconSvg('camera') + ' 识别日程（图片＋链接）</button></div>' +
+          '<div class="sec-row"><button class="sec-btn ghost" id="secAddEvent">＋ 手动添加</button>' +
+          '<button class="sec-btn ghost" id="secSyncCal" style="flex:1">' + iconSvg('calendar') + ' 同步日历</button></div></div>' +
+      '</div>' +
+      '<div class="sec-pane hide" data-pane="mail">' +
+        '<div class="sec-sec"><label>邮件 · 分类 + 重要提醒</label><div class="sec-list" id="secEmails"></div>' +
+          '<div class="sec-row"><button class="sec-btn ghost" id="secAddEmail">＋ 导入邮件</button>' +
+          '<button class="sec-btn ghost" id="secSyncMail" style="flex:1">' + iconSvg('mail') + ' 同步 Outlook</button></div>' +
+          '<div class="sec-row"><button class="sec-btn" id="secScanMail" style="flex:1">' + iconSvg('sparkles') + ' 扫描邮件 · 识别活动</button></div>' +
+          '<div class="sec-bout" id="secMailOut" hidden></div>' +
+          '<div class="sec-row"><button class="sec-btn" id="secReadAppleMail" style="flex:1">' + iconSvg('mail') + ' 读取 Apple Mail 邮件 · 识别活动</button></div>' +
+          '<div class="sec-bout" id="secAppleMailOut" hidden></div></div>' +
+        '<div class="sec-sec"><label>短信 · 确认信息</label>' +
+          '<div class="sec-row"><button class="sec-btn" id="secReadSms" style="flex:1">' + iconSvg('message') + ' 读取短信 · 识别活动</button></div>' +
+          '<div class="sec-bout" id="secSmsOut" hidden></div>' +
+          '<div class="sec-bhint">读取本机 iMessage / 短信，识别「报名成功 / 已预订 / 出票」等确认信息并帮你加日程（需授权「完全磁盘访问权限」）。</div></div>' +
+      '</div>' +
+      '<div class="sec-pane hide" data-pane="kb">' +
+        '<div class="sec-sec"><label>知识库</label>' +
+          '<div class="sec-row"><button class="sec-btn ghost" id="secNotion" style="flex:1">' + iconSvg('book') + ' 打开知识库（Notion · Obsidian）</button></div>' +
+          '<div class="sec-bout" id="secNotionOut" hidden></div>' +
+          '<div class="sec-row"><button class="sec-btn ghost" id="secPerm" style="flex:1">' + iconSvg('lock') + ' 系统权限自检</button></div>' +
+          '<div class="sec-bout" id="secPermOut" hidden></div></div>' +
+        '<div class="sec-sec"><label>浏览器自动化 · 只读</label>' +
+          '<div class="sec-row"><input type="text" id="secUrl" placeholder="粘贴网址，如 https://arxiv.org/abs/..." style="flex:1">' +
+          '<button class="sec-btn" id="secBrowse">打开</button></div>' +
+          '<div class="sec-row"><button class="sec-btn ghost" id="secBrowseShot">' + iconSvg('camera') + ' 截图</button>' +
+          '<button class="sec-btn ghost" id="secBrowseText">提取文本</button></div>' +
+          '<div class="sec-bout" id="secBrowseOut" hidden></div>' +
+          '<div class="sec-bhint">只读：打开网页 / 截图 / 取文本 · 不绕过验证码与登录</div></div>' +
+      '</div>' +
     '</div>';
   var dock = document.getElementById('residentDock');
   (dock || document.body).appendChild(panel);
@@ -258,8 +279,21 @@
   /* ---------- 事件 ---------- */
   document.getElementById('secMin').addEventListener('click', function () {
     minimized = !minimized;
+    var tb = document.getElementById('secTabs');
+    if (tb) tb.classList.toggle('hide', minimized);
     document.getElementById('secBody').classList.toggle('hide', minimized);
     this.textContent = minimized ? '＋' : '—';
+  });
+
+  /* Tab 切换 */
+  document.getElementById('secTabs').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-tab]');
+    if (!btn) return;
+    var name = btn.getAttribute('data-tab');
+    document.querySelectorAll('#secTabs button').forEach(function (b) { b.classList.toggle('active', b === btn); });
+    document.querySelectorAll('#secBody .sec-pane').forEach(function (p) {
+      p.classList.toggle('hide', p.getAttribute('data-pane') !== name);
+    });
   });
 
   /* 想法：记住 / 分配 */

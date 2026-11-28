@@ -71,6 +71,14 @@
     '.sup-btns button:hover{background:rgba(255,255,255,.32);}',
     '.sup-body{padding:12px 13px;max-height:236px;overflow:auto;display:flex;flex-direction:column;gap:13px;}',
     '.sup-body.hide{display:none;}',
+    '.sup-tabs{display:flex;gap:4px;padding:9px 13px 0;flex:none;border-bottom:1px solid var(--line);}',
+    '.sup-tabs button{flex:1;padding:6px 6px;border:none;background:none;color:var(--ink-faint);font-size:11.5px;font-weight:650;cursor:pointer;border-radius:8px 8px 0 0;border-bottom:2px solid transparent;white-space:nowrap;}',
+    '.sup-tabs button:hover{color:var(--ink-soft);}',
+    '.sup-tabs button.active{color:var(--accent);border-bottom-color:var(--accent);}',
+    '.sup-pane{display:flex;flex-direction:column;gap:13px;}',
+    '.sup-pane.hide{display:none;}',
+    '.sup-tabs.hide{display:none;}',
+    '.sup-hint{font-size:10.5px;color:var(--ink-faint);margin-top:6px;line-height:1.5;}',
     '.sup-sec label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:var(--ink-faint);margin-bottom:6px;text-transform:uppercase;}',
     '.sup-sec select,.sup-sec input[type=text]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:9px;font-size:12px;color:var(--ink);background:#fff;font-family:inherit;}',
     '.sup-goal{display:flex;align-items:flex-start;gap:7px;padding:6px 8px;border:1px solid var(--line);border-radius:9px;margin-bottom:6px;background:var(--surface-2);}',
@@ -123,19 +131,29 @@
         '<button id="supMin" title="收起/展开">—</button>' +
       '</span>' +
     '</div>' +
+    '<div class="sup-tabs" id="supTabs">' +
+      '<button class="active" data-tab="needs">🎯 需求</button>' +
+      '<button data-tab="roadmap">🗺️ 路线图</button>' +
+      '<button data-tab="watch">👁️ 监督</button>' +
+    '</div>' +
     '<div class="sup-body" id="supBody">' +
-      '<div class="sup-sec"><label>监督的工作</label><select id="supTarget"></select></div>' +
-      '<div class="sup-sec"><label>核心需求 · 可随时增删</label><div id="supGoals"></div>' +
-        '<div class="sup-add"><input type="text" id="supGoalInput" placeholder="新增一条核心需求…"><button id="supGoalAdd">＋</button></div>' +
-        '<button class="sup-btn ghost" id="supClarify">' + iconSvg('message') + ' 对话确认需求（先讲清楚再做）</button>' +
-        '<button class="sup-btn ghost" id="supSynthesize" style="margin-top:6px">✨ 自动梳理需求（结合近期工作动态更新）</button></div>' +
-      '<div class="sup-sec"><label>路线图 · 大方向</label><div id="supRoadmap"></div>' +
-        '<div class="sup-add"><input type="text" id="supRoadmapInput" placeholder="新增一个大方向…"><button id="supRoadmapAdd">＋</button></div>' +
-        '<button class="sup-btn ghost" id="supGenSteps">🪜 根据路线图生成详细步骤</button></div>' +
-      '<div class="sup-switch-row"><label class="sup-check"><input type="checkbox" id="supActive"> 开始监督</label>' +
-        '<button class="sup-btn ghost" id="supInject" style="flex:1">' + iconSvg('megaphone') + ' 提醒当前工作</button></div>' +
-      '<div class="sup-sec" id="supCorrWrap" style="display:none"><label>当前纠偏指令</label><div class="sup-corr" id="supCorr"></div></div>' +
-      '<div class="sup-sec"><label>监督日志</label><div class="sup-log" id="supLog"></div></div>' +
+      '<div class="sup-pane" data-pane="needs">' +
+        '<div class="sup-sec"><label>核心需求 · 自动梳理</label><div id="supGoals"></div>' +
+          '<div class="sup-add"><input type="text" id="supGoalInput" placeholder="手动补充一条核心需求…"><button id="supGoalAdd">＋</button></div>' +
+          '<div class="sup-hint">需求会随 agent 工作自动梳理、动态更新，无需手动触发；这里只需手动补充。</div></div>' +
+      '</div>' +
+      '<div class="sup-pane hide" data-pane="roadmap">' +
+        '<div class="sup-sec"><label>路线图 · 大方向</label><div id="supRoadmap"></div>' +
+          '<div class="sup-add"><input type="text" id="supRoadmapInput" placeholder="新增大方向…"><button id="supRoadmapAdd">＋</button></div>' +
+          '<button class="sup-btn ghost" id="supGenSteps">🪜 根据路线图生成详细步骤</button></div>' +
+      '</div>' +
+      '<div class="sup-pane hide" data-pane="watch">' +
+        '<div class="sup-sec"><label>监督范围</label><select id="supTarget"></select></div>' +
+        '<div class="sup-switch-row"><label class="sup-check"><input type="checkbox" id="supActive"> 开始监督</label>' +
+          '<button class="sup-btn ghost" id="supInject" style="flex:1">' + iconSvg('megaphone') + ' 提醒当前工作</button></div>' +
+        '<div class="sup-sec" id="supCorrWrap" style="display:none"><label>当前纠偏指令</label><div class="sup-corr" id="supCorr"></div></div>' +
+        '<div class="sup-sec"><label>监督日志</label><div class="sup-log" id="supLog"></div></div>' +
+      '</div>' +
     '</div>';
   var dock = document.getElementById('residentDock');
   (dock || document.body).appendChild(panel);
@@ -263,6 +281,8 @@
   /* ---------- 事件 ---------- */
   document.getElementById('supMin').addEventListener('click', function () {
     minimized = !minimized;
+    var tb = document.getElementById('supTabs');
+    if (tb) tb.classList.toggle('hide', minimized);
     document.getElementById('supBody').classList.toggle('hide', minimized);
     this.textContent = minimized ? '＋' : '—';
   });
@@ -306,26 +326,15 @@
     sup.addLog('ok', '已把核心需求 + 纠偏提醒注入到本次任务');
   });
 
-  document.getElementById('supClarify').addEventListener('click', openClarify);
-
-  // 自动梳理需求：调用主进程的「需求梳理官」，把核心目的动态梳理成结构化需求
-  document.getElementById('supSynthesize').addEventListener('click', function () {
-    if (!DESKTOP || !window.ingrid.synthesizeRun) { alert('当前环境不支持'); return; }
-    var btn = this;
-    btn.disabled = true; btn.textContent = '✨ 梳理中…（调用 LLM）';
-    window.ingrid.synthesizeRun().then(function (r) {
-      if (r && r.ok) {
-        sup.addLog('ok', '需求梳理官：新增 ' + r.added + ' 条 / 更新 ' + r.updated + ' 条 / 停用 ' + r.deactivated + ' 条');
-        if (r.summary) sup.addLog('info', '梳理结论：' + r.summary);
-        reloadGoals(); renderLog();
-      } else {
-        sup.addLog('warn', '需求梳理失败：' + String((r && r.error) || '未知错误'));
-        renderLog();
-      }
-    }).catch(function (e) {
-      sup.addLog('warn', '需求梳理异常：' + String((e && e.message) || e));
-      renderLog();
-    }).then(function () { btn.disabled = false; btn.textContent = '✨ 自动梳理需求（结合近期工作动态更新）'; });
+  // Tab 切换
+  document.getElementById('supTabs').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-tab]');
+    if (!btn) return;
+    var name = btn.getAttribute('data-tab');
+    document.querySelectorAll('#supTabs button').forEach(function (b) { b.classList.toggle('active', b === btn); });
+    document.querySelectorAll('#supBody .sup-pane').forEach(function (p) {
+      p.classList.toggle('hide', p.getAttribute('data-pane') !== name);
+    });
   });
 
   // 路线图：新增大方向

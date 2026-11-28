@@ -8023,6 +8023,14 @@ if (gotSingleInstanceLock) {
         scheduleApprovalsRefresh();
       } catch { /* 忽略 */ }
     }, 6000);
+    // 需求梳理官：启动后若核心需求为空，自动梳理一次（之后随对话保存动态更新，无需手动触发）
+    setTimeout(() => {
+      try {
+        if (!coreGoals().length) {
+          synthesizeNeeds().then((r) => { if (r && r.ok) broadcast('supervisor:changed', {}); }).catch(() => {});
+        }
+      } catch { /* 忽略 */ }
+    }, 10000);
     // 统一待办中心：启动延时汇总一次 + 每 60 秒轮询（兜底捕获 CityVerse 控制台新增待审批，
     // 本地任务/经验提案变化由 broadcastTasks / settler 变更点即时触发）
     setTimeout(() => { refreshApprovals(); }, 5000);
