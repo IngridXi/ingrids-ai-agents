@@ -379,6 +379,23 @@
     setStatus(el('minutes-status'), '当前环境不支持朗读', 'err');
   }
 
+  function doVideoSummary() {
+    var url = el('video-url').value.trim();
+    if (!url) { setStatus(el('video-status'), '请输入视频链接或本地文件路径', 'err'); return; }
+    var btn = el('btn-video'); busy(btn, true, '处理中');
+    setStatus(el('video-status'), '正在抓取字幕/下载音频…（首次运行可能较慢）');
+    postJson('/video-summary', { url: url, engine: currentEngine, lang: el('video-lang').value || 'auto' })
+      .then(function (j) {
+        var srcNote = j.source === 'subtitle' ? '来自字幕' : '来自语音转写';
+        var head = '';
+        if (j.title) head += '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">' + esc(j.title) + ' · ' + esc(srcNote) + '</p>';
+        el('video-result').classList.remove('hidden');
+        el('video-result').innerHTML = head + renderMarkdown(j.summary);
+        setStatus(el('video-status'), '视频总结已生成（' + srcNote + '）', 'ok');
+      }).catch(function (e) { setStatus(el('video-status'), '视频总结失败：' + e.message, 'err'); })
+      .finally(function () { busy(btn, false, '生成视频总结'); });
+  }
+
   function renderMarkdown(md) {
     var lines = String(md || '').split('\n'), html = '', inUl = false;
     function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
@@ -531,6 +548,7 @@
   el('btn-enroll-upload').addEventListener('click', function () { el('enroll-input').click(); });
   el('enroll-input').addEventListener('change', function (e) { var f = e.target.files[0]; e.target.value = ''; if (f) doEnroll(f); });
   el('btn-enroll-rec').addEventListener('click', function () { if (enrolling) stopEnrollRec(); else startEnrollRec(); });
+  el('btn-video').addEventListener('click', doVideoSummary);
 
   /* ============ 左侧功能导航切换 ============ */
   var navItems = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));

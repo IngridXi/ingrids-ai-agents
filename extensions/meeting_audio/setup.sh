@@ -22,8 +22,8 @@ fi
 echo "==> [1/3] 安装 torch / torchaudio（macOS arm64 用 MPS，无 GPU 自动回退 CPU）"
 "$VENV/bin/pip" install torch torchaudio
 
-echo "==> [2/3] 安装 funasr / modelscope / noisereduce / python-pptx / websockets"
-"$VENV/bin/pip" install funasr modelscope noisereduce numpy python-pptx websockets
+echo "==> [2/3] 安装 funasr / modelscope / noisereduce / python-pptx / websockets / yt-dlp"
+"$VENV/bin/pip" install funasr modelscope noisereduce numpy python-pptx websockets yt-dlp
 
 echo "==> [3/3] 验证导入"
 "$VENV/bin/python" - <<'PY'
@@ -31,9 +31,9 @@ import torch
 print("torch", torch.__version__, "| mps:", torch.backends.mps.is_available())
 import funasr
 print("funasr", getattr(funasr, "__version__", "ok"))
-import modelscope, noisereduce, pptx, websockets
-print("modelscope / noisereduce / python-pptx / websockets 导入正常")
-print("依赖安装完成 ✓（实时总结与纪要还需本机 Ollama 运行 qwen3:8b）")
+import modelscope, noisereduce, pptx, websockets, yt_dlp
+print("modelscope / noisereduce / python-pptx / websockets / yt-dlp 导入正常")
+print("依赖安装完成 ✓（实时总结与纪要还需本机 Ollama 运行 qwen3:8b；视频总结依赖 yt-dlp 抓取字幕/音频）")
 PY
 
 echo "==> 下一步：下载模型权重"

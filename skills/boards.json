@@ -83,6 +83,17 @@
       ],
       "defaultEngine": "claude-code",
       "color": "#e11d48"
+    },
+    {
+      "id": "media",
+      "name": "Media",
+      "emoji": "🎬",
+      "desc": "音视频内容理解：从网页视频/本地音视频提炼字幕与转写，生成带时间戳的结构化中文总结、事实核查与追问",
+      "skillIds": [
+        "builtin:media/video-summary"
+      ],
+      "defaultEngine": "claude-code",
+      "color": "#0e9f6e"
     }
   ]
 }

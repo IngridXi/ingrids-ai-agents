@@ -38,6 +38,21 @@ _MINUTES_SYSTEM = (
 )
 
 
+_VIDEO_SYSTEM = (
+    "你是一名专业的视频内容总结助手。请根据给定的视频字幕/转写文本（可能带时间戳），"
+    "生成一份结构清晰、便于快速吸收的中文视频总结。"
+    "只依据输入内容，不得虚构未出现的事实、数字、日期、人名或引用。"
+    "用 Markdown 输出，严格包含以下小节（用二级标题 ## ）："
+    "## 视频主题（一句话概括这个视频在讲什么）"
+    "## 核心观点（分条列出，每条一句话，抓主干）"
+    "## 章节时间线（按时间顺序列出关键节点，格式：`MM:SS 内容概述`）"
+    "## 金句/关键表述（摘录原文里有价值的话，保留原意，标注大致时间）"
+    "## 事实与数据对照（列出视频中出现的具体数字、日期、人名、出处；无法核实的标注「待核实」）"
+    "## 结论与启发（总结结论，以及可迁移的启发或行动建议）"
+    "## 事实核查说明（说明哪些内容依据字幕/转写直接可得、哪些需进一步核实，明确不编造）"
+)
+
+
 def _chat(messages: list[dict], num_predict: int = 2048, temperature: float = 0.2) -> str:
     """调用本地 Ollama /api/chat，禁用思考，返回纯文本 content。"""
     payload = {
@@ -146,9 +161,64 @@ def minutes(transcript: str, notes: str = "", speakers: list[dict] | None = None
         return _rule_minutes(transcript, notes, speakers) + f"\n\n> 说明：LLM 暂不可用（{e}），以上为规则化纪要。"
 
 
+def video_summary(transcript: str, segments: list[dict] | None = None, title: str = "", engine: str = "ollama") -> str:
+    """生成带时间戳的结构化视频总结（Markdown）。"""
+    if engine == "ollama" and not available():
+        return _rule_video_summary(transcript, segments, title)
+    if engine in API_ENGINES and not _api_key(engine):
+        return _rule_video_summary(transcript, segments, title) + "\n\n> 说明：该 API 引擎未配置 Key，以上为规则化总结。"
+    text = (transcript or "").strip()
+    if not text:
+        return "（未获取到任何字幕或转写内容，无法总结）"
+    user = ""
+    if title and title.strip():
+        user += "视频标题：" + title.strip() + "\n\n"
+    user += "字幕/转写文本：\n\n" + text[-20000:]
+    if segments:
+        lines = []
+        for s in segments[:200]:
+            t = _fmt_seg_ts(s)
+            seg_text = (s.get("text") or "").strip()
+            if seg_text:
+                lines.append("`" + t + "` " + seg_text)
+        if lines:
+            user += "\n\n带时间戳的分段（供定位时间线）：\n" + "\n".join(lines)
+    user += "\n\n请生成视频总结。"
+    try:
+        return _chat_engine(
+            engine,
+            [{"role": "system", "content": _VIDEO_SYSTEM}, {"role": "user", "content": user}],
+            num_predict=2048, temperature=0.2,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _rule_video_summary(transcript, segments, title) + f"\n\n> 说明：LLM 暂不可用（{e}），以上为规则化总结。"
+
+
 # --------------------------------------------------------------------------- #
 # 无 LLM 的规则化降级
 # --------------------------------------------------------------------------- #
+def _fmt_seg_ts(s: dict) -> str:
+    sec = float(s.get("start", 0) or 0)
+    m, ss = int(sec // 60), int(sec % 60)
+    return f"{m:02d}:{ss:02d}"
+
+
+def _rule_video_summary(transcript: str, segments: list[dict] | None, title: str) -> str:
+    sents = _split_sentences(transcript)
+    head = "## 视频主题\n" + ((title + "\n") if title and title.strip() else "（规则化生成，主题待人工确认）\n") + "\n"
+    points = "## 核心观点\n" + ("\n".join(f"- {s}" for s in sents[:8]) if sents else "- （暂无）") + "\n\n"
+    if segments:
+        tl = "\n".join(f"- `{_fmt_seg_ts(s)}` {(s.get('text') or '').strip()}" for s in segments[:30])
+    else:
+        tl = "- （无时间戳信息）"
+    timeline = "## 章节时间线\n" + tl + "\n\n"
+    quote = "## 金句/关键表述\n- （需人工筛选）\n\n"
+    facts = "## 事实与数据对照\n- （需人工核对）\n\n"
+    concl = "## 结论与启发\n- （待人工确认）\n\n"
+    check = "## 事实核查说明\n- 以上为规则化降级生成，未使用大模型；所有事实均需人工核对，本总结不声称核实任何内容。\n"
+    return head + points + timeline + quote + facts + concl + check
+
+
 def _split_sentences(text: str) -> list[str]:
     text = re.sub(r"\s+", "", text or "")
     return [s for s in re.split(r"[。！？!?；;]", text) if len(s) >= 4]

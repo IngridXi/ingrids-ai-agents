@@ -16,6 +16,7 @@
     POST /summary           实时总结（JSON: {transcript, notes}）
     POST /minutes           生成会议纪要（JSON: {transcript, notes, speakers}）
     POST /ppt               生成会议总结 PPT（JSON: {minutes, title}）
+    POST /video-summary     视频总结（JSON: {url, engine, lang, title}）
     GET  /download/<file>   下载生成的 .pptx
     WS   ws://127.0.0.1:8951/realtime   实时流式转写 + 说话人识别
 """
@@ -34,6 +35,7 @@ import meeting_audio as ma
 import ppt as ppt_gen
 import realtime
 import summarize
+import video_fetch
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("MEETING_AUDIO_PORT", "8950"))
@@ -179,6 +181,49 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             return _json(self, {"error": f"注册失败：{e}"}, 500)
 
+    def _handle_video_summary(self):
+        try:
+            data = _read_json(self)
+            url = (data.get("url") or "").strip()
+            if not url:
+                return _json(self, {"error": "缺少视频链接"}, 400)
+            engine = data.get("engine", "ollama")
+            lang = data.get("lang", "auto")  # 无字幕时 ASR 转写语言（zh/yue/en/ja/ko/auto）
+            meta = video_fetch.fetch(url)
+            source = meta.get("source")
+            title = meta.get("title") or ""
+            transcript = meta.get("text") or ""
+            segments = meta.get("segments") or []
+            audio_path = meta.get("audio_path")
+            workdir = meta.get("workdir")
+            try:
+                if source == "audio" and audio_path:
+                    res = ma.transcribe(audio_path, denoise_first=True, language=lang)
+                    transcript = res.get("text") or ""
+                    segments = res.get("segments") or []
+                summary = summarize.video_summary(transcript, segments=segments, title=title, engine=engine)
+                return _json(self, {
+                    "ok": True,
+                    "summary": summary,
+                    "source": source,
+                    "title": title,
+                    "transcript": transcript,
+                    "segments": segments,
+                })
+            finally:
+                # 清理视频下载用的临时目录（本地文件时 audio_path 指向用户文件，不删）
+                if workdir:
+                    try:
+                        import shutil
+                        shutil.rmtree(workdir, ignore_errors=True)
+                    except Exception:
+                        pass
+        except ValueError as e:
+            return _json(self, {"error": str(e)}, 400)
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            return _json(self, {"error": f"视频总结失败：{e}"}, 500)
+
     def do_OPTIONS(self):
         self.send_response(204)
         for k, v in CORS.items():
@@ -223,6 +268,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_ppt()
         if path == "/enroll-segment":
             return self._handle_enroll_segment()
+        if path == "/video-summary":
+            return self._handle_video_summary()
         return _json(self, {"error": "未找到"}, 404)
 
 
