@@ -36,11 +36,47 @@ def is_url(s: str) -> bool:
     return s.startswith(("http://", "https://", "www."))
 
 
+# 微信视频号（视频号 / 视频号直播回放 / 分享短链 sph）yt-dlp 无法解析：视频真实地址需微信登录态 +
+# 动态签名 + JS 动态加载，抓取门槛高。单独识别，给出可操作的替代方案，而不是甩一个 Unsupported URL。
+_WEIXIN_CHANNELS_RE = re.compile(
+    r"(weixin\.qq\.com/sph|channels\.weixin\.qq\.com|weixin\.qq\.com/flnder|finder\.video\.qq\.com)",
+    re.I,
+)
+
+
+def _platform_hint(url: str) -> str | None:
+    """对 yt-dlp 不支持但用户常见的平台，返回针对性指引；支持则返回 None。"""
+    if _WEIXIN_CHANNELS_RE.search(url):
+        return (
+            "微信视频号暂不支持自动抓取（视频号视频需要微信登录态和动态签名，无法直接解析）。"
+            "请在微信里把该视频「转发 → 保存到手机/电脑」得到 mp4 文件后，"
+            "点「选择本地视频」导入总结；或改用 YouTube / B站 / 抖音 / 小红书等平台链接。"
+        )
+    return None
+
+
+def _friendly_dlp_error(e: Exception) -> str:
+    msg = str(e).replace("ERROR: ", "").strip()
+    msg = re.sub(r"\s+", " ", msg)
+    if "Unsupported URL" in msg or "No suitable extractor" in msg or "no suitable extractor" in msg:
+        return "暂不支持该链接/平台：" + msg
+    return "视频抓取失败：" + msg
+
+
 def _extract_info(url: str) -> dict:
+    # 先做平台识别（无需 yt-dlp），不支持直接友好拦截；再加载 yt-dlp 解析支持的平台。
+    hint = _platform_hint(url)
+    if hint:
+        raise ValueError(hint)
     yt_dlp = _load_ytdlp()
     opts = {"skip_download": True, "quiet": True, "no_warnings": True, "noplaylist": True}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    except yt_dlp.utils.UnsupportedError as e:
+        raise ValueError(_friendly_dlp_error(e)) from e
+    except yt_dlp.utils.DownloadError as e:
+        raise ValueError(_friendly_dlp_error(e)) from e
 
 
 def _pick_subtitle(info: dict):
@@ -183,7 +219,10 @@ def fetch(url_or_path: str, workdir: str | Path | None = None) -> dict:
 
     # 2) 无字幕 → 下载音频兜底
     yt_dlp = _load_ytdlp()
-    audio_path = _download_audio(target, wd, yt_dlp)
+    try:
+        audio_path = _download_audio(target, wd, yt_dlp)
+    except (yt_dlp.utils.DownloadError, yt_dlp.utils.UnsupportedError) as e:
+        raise ValueError(_friendly_dlp_error(e)) from e
     return {
         "source": "audio",
         "title": title,

@@ -222,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
             return _json(self, {"error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
-            return _json(self, {"error": f"视频总结失败：{e}"}, 500)
+            return _json(self, {"error": str(e)}, 500)
 
     def do_OPTIONS(self):
         self.send_response(204)
