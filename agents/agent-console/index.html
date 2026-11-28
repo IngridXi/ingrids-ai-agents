@@ -57,6 +57,17 @@ main{max-width:1120px;margin:0 auto;padding:20px}
 .proposal .row{font-size:13px;margin-top:7px}
 .proposal .row b{color:var(--dim);font-weight:500;margin-right:6px}
 .proposal .insight{background:var(--panel);border:1px solid var(--line2);border-radius:6px;padding:8px 10px;font-size:12.5px;color:#c9d1d9;margin-top:8px}
+/* 提案正文里的 Markdown 渲染：紧凑、无多余留白，避免大段报告撑爆卡片 */
+.mdbody p{margin:0;line-height:1.55}
+.mdbody p+p{margin-top:6px}
+.mdbody ul,.mdbody ol{margin:4px 0 0;padding-left:18px}
+.mdbody li{margin:2px 0}
+.mdbody h1,.mdbody h2,.mdbody h3,.mdbody h4{font-size:13px;font-weight:600;margin:8px 0 3px}
+.mdbody code{font:12px/1.5 var(--mono);background:var(--panel2);padding:1px 5px;border-radius:4px}
+.mdbody table{border-collapse:collapse;margin:6px 0;font-size:12px}
+.mdbody td,.mdbody th{border:1px solid var(--line);padding:3px 7px}
+.mdbody th{background:var(--panel2);font-weight:600}
+.mdbody blockquote{margin:6px 0;padding-left:10px;border-left:2px solid var(--line);color:var(--dim)}
 .proposal .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap}
 .proposal textarea{width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px;font:12.5px/1.6 var(--mono);resize:vertical;min-height:46px}
 .empty{color:var(--dim);font-size:13px;text-align:center;padding:22px 8px}
@@ -257,6 +268,7 @@ td .tag{display:inline-block;font-size:11px;padding:0 8px;border-radius:8px;marg
   </div>
 </main>
 
+<script src="../../vendor/marked.min.js"></script>
 <script>
 'use strict';
 const $ = (s) => document.querySelector(s);
@@ -264,6 +276,16 @@ const API = (window.ingrid || {});
 const CAT_LABEL = { methodology: '方法论', conclusion: '结论', both: '两者', uncertain: '待判定' };
 
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// 提案内容（根因/修复/洞察）可能含 Markdown 标记：渲染成易读富文本，而不是把 **、#、| 原样露出来。
+if (typeof marked !== 'undefined') { try { marked.setOptions({ gfm: true, breaks: true }); } catch (e) {} }
+function mdText(v) {
+  var s = String(v == null ? '' : v);
+  // 先把纯换行文本当成普通段落处理，避免单行无标记内容被 marked 吞换行
+  var html;
+  try { html = marked.parse(s); } catch (e) { html = esc(s); }
+  return html;
+}
 
 function hasApi() {
   return !!(API.settlerReport && API.settlerProposals && API.governanceReport);
@@ -311,8 +333,8 @@ async function loadProposals() {
         '<span class="badge-mini">' + esc(p.source || 'manual') + '</span></div>' +
         '<div class="meta">规则 ' + esc(p.rule || '—') + ' · 更新 ' + esc((p.updated || '').slice(0, 16).replace('T', ' ')) + '</div>' +
         (p.rootCause ? '<div class="row"><b>根因：</b>' + esc(p.rootCause) + '</div>' : '') +
-        (p.fixApproach ? '<div class="row"><b>修复：</b>' + esc(p.fixApproach) + '</div>' : '') +
-        '<div class="insight">' + esc(p.insight || '') + '</div>' +
+        (p.fixApproach ? '<div class="row"><b>修复：</b></div><div class="insight mdbody">' + mdText(p.fixApproach) + '</div>' : '') +
+        '<div class="insight mdbody">' + mdText(p.insight || '') + '</div>' +
         '<textarea class="verification" data-vid="' + esc(p.id) + '" rows="2" placeholder="验证步骤（可选，方法论强烈建议填）：如何复现 / 检验这条经验仍适用？"></textarea>' +
         '<div class="acts">' +
         '<button data-approve="' + esc(p.id) + '" data-cat="methodology">按方法论入库</button>' +

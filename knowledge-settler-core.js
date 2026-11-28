@@ -283,6 +283,18 @@
     return { id: p.id, status: ST_IGNORED };
   };
 
+  /* ---------------- 提炼回写：把冗长 fixApproach 替换为简洁总结（仅待审批，不覆盖已确认） ---------------- */
+  KnowledgeSettler.prototype.refineFix = function (id, fixApproach, insight) {
+    var p = this.state.proposals.filter(function (x) { return x.id === id || x.fingerprint === id; })[0];
+    if (!p) return { error: 'proposal not found', id: id };
+    if (p.status !== ST_PENDING) return { error: 'not pending', id: id };
+    if (fixApproach != null && fixApproach !== '') p.fixApproach = fixApproach;
+    if (insight != null && insight !== '') p.insight = insight;
+    p.updated = nowIso();
+    this._save();
+    return { id: p.id, ok: true };
+  };
+
   /* ---------------- 检索复用（Voyager 技能库式） ---------------- */
   /**
    * suggestFor({ rule?, title?, evidence? }, limit?)

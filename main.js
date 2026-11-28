@@ -1906,6 +1906,54 @@ function extractRootCause(text) {
   const m = s.match(/(?:根因|根本原因|原因|root\s*cause)\s*[:：]\s*([^\n。]{4,120})/i);
   return m ? m[1].trim() : '';
 }
+// 把任务完成报告（往往是一大段 Markdown）压成「简短易懂的纯文本总结」：优先取「核心结论」句，
+// 兜底去掉标题/表格/分隔线/内联标记后截断。零 LLM 成本，作为 LLM 提炼不可用时的兜底。
+function distillFixApproach(result) {
+  let s = String(result || '').replace(/\r\n/g, '\n');
+  const core = s.match(/(?:核心结论|结论|关键发现|查明|核实结果)\s*[:：]\s*([^\n]{8,400})/i);
+  let out = core ? core[1] : '';
+  if (!out) {
+    out = s.split('\n').filter((line) => {
+      const t = line.trim();
+      if (!t) return false;
+      if (/^\s*(#+|-{3,}|\*{3,}|_{3,}|>)\s*$/.test(t)) return false; // 标题 / 分隔线 / 引用
+      if (/^\s*#/.test(t)) return false;                              // 标题行
+      if (/^\s*\|/.test(t)) return false;                             // 表格行
+      return true;
+    }).join(' ');
+  }
+  out = out
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (out.length > 260) out = out.slice(0, 260) + '…';
+  return out;
+}
+// LLM 提炼：把任务报告压成 2~3 句简洁中文总结（说清查明了/修正了什么/结论），失败返回空串。
+async function distillFixWithLlm(result) {
+  const prompt = '下面是一段 AI 完成任务后的报告（含 Markdown）。请提炼成 2~3 句「简短易懂的中文总结」：'
+    + '说清这个任务最终查明了什么、修正了什么、结论是什么。'
+    + '不要列步骤、不要表格、不要 Markdown 符号（# * | 等）、不要复述过程、不要给建议。\n\n---\n'
+    + String(result).slice(0, 4000) + '\n---';
+  try {
+    const r = await callBgChat('deepseek', 'deepseek-flash', [{ role: 'user', content: prompt }], null);
+    if (r && r.ok && r.text) {
+      const t = String(r.text)
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/[#|`*]/g, '')
+        .replace(/^\s*[-+]\s+/gm, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (t.length >= 8 && t.length <= 400) return t;
+    }
+  } catch (e) { /* LLM 提炼失败静默降级，不阻断沉淀 */ }
+  return '';
+}
 function collectDiscoveryItems() {
   const done = getTaskQueue().list('done');
   const items = [];
@@ -1931,7 +1979,8 @@ function collectDiscoveryItems() {
       title: t.title || '已完成任务',
       evidence: 'task:' + (t.id || '') + ' @ ' + (t.updatedAt || t.createdAt || '') + (goal ? ' · ' + goal : ''),
       rootCause: extractRootCause(result),
-      fixApproach: result,
+      fixApproach: distillFixApproach(result),   // 简短纯文本总结，而非整段 Markdown 报告
+      _rawResult: result,                        // 供后续 LLM 提炼用（不落库）
       _score: score,
     });
   });
@@ -1948,11 +1997,21 @@ function purgeNonLessonProposals() {
     });
   } catch { /* 忽略 */ }
 }
-function runSettlerDiscovery() {
+async function runSettlerDiscovery() {
   try {
     purgeNonLessonProposals();
     const { items, scanned, scored } = collectDiscoveryItems();
     const r = getKnowledgeSettler().runOnce(items);
+    // 同步回写：把历史遗留/本次新建里「超长 fixApproach」压成简短版（零 LLM，立即可见），
+    // 后续再用 LLM 异步提炼更精准的 2~3 句总结。
+    const settler = getKnowledgeSettler();
+    items.forEach((it) => {
+      try {
+        const fp = KnowledgeSettlerCore.fingerprint(it);
+        const p = settler.proposals('pending_approval').find((x) => x.fingerprint === fp);
+        if (p && p.fixApproach && p.fixApproach.length > 300) settler.refineFix(p.id, it.fixApproach);
+      } catch (e) { /* 忽略单条回写失败 */ }
+    });
     const report = { scanned, scored, consumed: r.consumed, created: r.created, pending_approval: r.pending_approval, generated_at: new Date().toISOString() };
     writeJson('settler-discovery-report.json', report);
     if (r.created > 0) {
@@ -1962,6 +2021,17 @@ function runSettlerDiscovery() {
       broadcast('settler:discovered', report);
     }
     scheduleApprovalsRefresh();
+    // 后台异步：对报告较长的提案用 LLM 提炼一句更简洁的总结，成功即回写（失败静默保留规则版）。
+    items.forEach(async (it) => {
+      if (!it._rawResult || String(it._rawResult).length < 300) return;
+      try {
+        const refined = await distillFixWithLlm(it._rawResult);
+        if (!refined) return;
+        const fp = KnowledgeSettlerCore.fingerprint(it);
+        const p = getKnowledgeSettler().proposals('pending_approval').find((x) => x.fingerprint === fp);
+        if (p) { getKnowledgeSettler().refineFix(p.id, refined); scheduleApprovalsRefresh(); }
+      } catch (e) { /* 提炼回写失败静默 */ }
+    });
     return report;
   } catch (e) {
     const err = { error: String(e && e.message || e), generated_at: new Date().toISOString() };
